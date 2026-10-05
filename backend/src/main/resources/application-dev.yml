@@ -1,0 +1,68 @@
+# =====================================================================
+# 开发环境（Windows 本地）
+# 启动：mvn spring-boot:run -Dspring-boot.run.profiles=dev
+# 说明：本文件中的默认值仅用于本地开发，生产环境一律走环境变量，见 application-prod.yml
+# =====================================================================
+
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:ticket_system}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_general_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME:root}
+    # 本地 MySQL 口令。**默认留空**（不再硬编码 123456）：请在 `.env` /
+    # application-local.yml 里显式提供 MYSQL_PASSWORD，或启动时用环境变量注入。
+    password: ${MYSQL_PASSWORD:}
+  flyway:
+    # 保持 clean 保护：误执行 flyway clean 会清空整个库。确需清库时用
+    # -Dspring-boot.run.arguments=--flyway.cleanDisabled=false 显式开启，不要把它留成默认。
+    clean-disabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+
+mybatis-plus:
+  configuration:
+    # 用 Slf4j 而非 StdOutImpl：StdOut 会把含密码哈希、员工数据的完整 SQL 直接打到标准输出
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+app:
+  jwt:
+    # 仅本地开发使用的占位密钥（>=32 字节）；生产必须用 JWT_SECRET 环境变量覆盖
+    secret: ${JWT_SECRET:dev-only-secret-please-replace-in-production-32bytes}
+    cookie-secure: false
+  super-admin:
+    # ⚠️ 本次改造起 dev 也**不再写死** administrator —— 与生产同一套初始化流程。
+    #    库中没有超管时，启动日志会提示访问「初始化向导 /setup」由你现场设定；
+    #    需要无人值守时用环境变量 SUPER_ADMIN_USERNAME / SUPER_ADMIN_INIT_PASSWORD 提供。
+    username: ${SUPER_ADMIN_USERNAME:}
+    display-name: ${SUPER_ADMIN_DISPLAY_NAME:超级管理员}
+    init-password: ${SUPER_ADMIN_INIT_PASSWORD:}
+  demo:
+    # 演示数据：仅在「业务分组表为空」时创建一次，幂等；生产 profile 不加载该初始化器
+    enabled: ${DEMO_DATA_ENABLED:true}
+    # 演示 / 测试员工统一初始口令。**默认留空**（不再硬编码默认口令）：
+    # 本地开发请在 `.env` / 环境变量 / `application-local.yml` 里显式提供，例如
+    #   DEMO_USER_INIT_PASSWORD=<本地演示口令>
+    # 留空时只跳过「演示员工与口令对齐」，不影响其它演示数据（部门/设备等仍会创建）。
+    user-init-password: ${DEMO_USER_INIT_PASSWORD:}
+  upgrade:
+    # 本地沙箱打开总开关，让「上传 → 校验 → 备份 → 落盘 → 待应用 → 回滚」整条链路
+    # 都能在开发机上真实跑通并验收。
+    # ⚠️ 刻意**不**在这里配 apply-command：本地没有正常的重启托管（无 systemd / 无容器编排），
+    #    配一条命令让它去「重启」只会制造一个假象。停在 READY_TO_APPLY 正是设计中的
+    #    正式形态之一（见 UpgradeService 类注释），不是功能缺失。
+    #    端到端验证 apply 分支时可以临时用环境变量指一条无害命令，
+    #    例如 UPGRADE_APPLY_COMMAND='echo noop'，用于断言状态确实推进到 APPLYING。
+    #    注意这里只写命令**本体**：UpgradeApplier 会自动加壳（Windows 加 cmd.exe /c，
+    #    类 Unix 加 /bin/sh -c），再写成 'cmd /c echo noop' 就变成了嵌套的一层壳。
+    enabled: ${UPGRADE_ENABLED:true}
+    storage-root: ${UPGRADE_STORAGE_ROOT:./data/upgrade}
+    current-artifact-dir: ${UPGRADE_CURRENT_ARTIFACT_DIR:./data/upgrade/current}
+
+logging:
+  level:
+    root: info
+    com.enterprise.ticket: debug
+    org.springframework.security: info

@@ -1,0 +1,32 @@
+# 前端构建上下文忽略清单
+# 必须排除 node_modules：否则会把宿主（尤其是 Windows 上装的）依赖整包送进构建上下文，
+# 既慢又可能因平台差异（darwin/win32 二进制）污染 Linux 镜像内的 node_modules
+
+node_modules/
+dist/
+dist-ssr/
+
+# Vite 预构建缓存（宿主上的缓存对本镜像无用，且体积可观）
+.vite/
+node_modules/.vite/
+
+# 测试与覆盖率
+coverage/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE 与版本控制
+.idea/
+.vscode/
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+
+# 本地开发覆盖（可能含个人机器路径，不应进镜像）
+.env.local
+.env.*.local

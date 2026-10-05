@@ -1,0 +1,38 @@
+[Unit]
+Description=设备借用工单系统 · 主备心跳上报（节点状态 / 数据同步延迟）
+Documentation=file:__HA_DIR__/../../DEPLOY.md
+
+# 依赖网络与 Docker：心跳本身只需要本机环回，但同步快照要 docker compose exec 进 mysql。
+#   用 Wants（弱依赖）而不是 Requires：Docker 启动慢或临时不可用时，
+#   心跳仍应继续上报（只是不带同步快照），而不是整个单元被拖住起不来。
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# 以 root 运行：.env.ha 含 MYSQL_ROOT_PASSWORD / INTERNAL_ALERT_TOKEN，权限 600，
+#   只有 root 读得到。本单元只做「读网卡判 VIP 归属」与「向本机环回发一个 POST」两件事。
+User=root
+
+# 可选覆盖（不存在也不报错）：例如把 HA_HEARTBEAT_INTERVAL / HA_SYNC_INTERVAL 写在这里，
+#   就不必改动 deploy/ha 目录下的脚本。
+EnvironmentFile=-/etc/ticket-ha/heartbeat.env
+
+# 刻意用 /bin/bash 显式执行脚本，而不是依赖脚本自身的可执行位：
+#   本目录可能由 Windows 工作站检出（exec 位不随仓库传递），
+#   那时「文件在、权限不对」会表现为单元启动失败 —— 一个纯属环境噪音的故障。
+ExecStart=/bin/bash __HA_DIR__/scripts/ha-heartbeat.sh --loop
+
+# 上报失败不能让单元停在 failed（否则重启后节点状态永远不更新）：
+#   always + 短间隔重试，配合脚本内「单次失败继续循环」的双层兜底。
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

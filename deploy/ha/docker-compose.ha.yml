@@ -1,0 +1,333 @@
+# =====================================================================
+# 主备双机高可用编排（HA）—— 两台机器共用这一份文件
+#
+# 与 deploy/docker-compose.yml（单机版）的关系：
+#   单机版把 mysql / redis 藏在 Docker 内网里、刻意不发布端口，安全但只能单点。
+#   本文件为了跨主机寻址，必须把 mysql / redis / 哨兵发布到宿主 —— 这是 HA 的代价：
+#   安全性从「网络层不可达」转为「宿主防火墙必须放行且仅放行两节点之间」。
+#   单机版仍原样可用，本文件不做替换，二者按部署规模择一。
+#
+# 拓扑（两台机各跑一份，节点差异全部由 .env.ha 注入）：
+#
+#                客户端 ──► 外层反代(TLS) ──► VIP_WEB:${WEB_PORT}
+#                                                  │ keepalived 漂移
+#              ┌───────────────────────────────────┴────────────────────┐
+#              ▼                                                        ▼
+#   ┌────────────────────────┐                              ┌────────────────────────┐
+#   │ 节点 A（初始 MASTER）   │                              │ 节点 B（初始 BACKUP）   │
+#   │  nginx(edge) ─┐        │                              │  nginx(edge) ─┐        │
+#   │  backend      │        │                              │  backend      │        │
+#   │  frontend     │        │                              │  frontend     │        │
+#   │  redis(主)    │        │  ◄── 通用哨兵 26379 ──►       │  redis(从)    │        │
+#   │  mysql(主主)  │◄───────┼──── 双向复制 ───────────────►│  mysql(主主)  │        │
+#   └───────┬────────┘        │                              └───────┬────────┘        │
+#           │                 │  VIP_DB 由 keepalived 漂移           │                 │
+#           └──────── NAS 共享存储（attachments / exports / backup）──┘
+#
+# 使用步骤（每台机器都要执行；顺序不可调换，理由是第 5 步依赖第 4 步的容器已就绪）：
+#   1) cp .env.ha.example .env.ha  并按「一、节点身份」段改成本节点身份
+#   2) sudo bash scripts/mount-nas.sh         挂载 NAS 共享存储（附件/导出/备份都在它上面）
+#      ← 必须在 up -d 之前：否则 compose 会把挂载点当普通空目录自动建成 root 属主，
+#        后端以 uid 10001 运行时写附件会失败，而报错只出现在「上传」这一动作上
+#   3) bash scripts/preflight-ha.sh           体检变量、目录、防火墙与网络连通性
+#   4) docker compose --env-file .env.ha -f docker-compose.ha.yml up -d --build
+#      · 主节点（node-a）追加 --profile backup，备机不启用该 profile
+#   5) bash scripts/setup-replication.sh      建立 MySQL 主主双向复制（两台都执行）
+#      ← 必须在第 4 步之后：脚本用 docker exec 进 mysql 容器执行 SQL
+#   6) sudo bash scripts/install-keepalived.sh   最后接入 VIP 漂移
+#      两台都装完 keepalived 后再做切换演练（见 DEPLOY.md ）
+#
+# 硬性约定：
+#   - 两台机必须挂同一 NAS 共享目录（附件跨机可见），否则切换后附件 404；
+#   - 除 nginx / mysql / redis / sentinel 外，其余服务不发布端口；
+#   - 所有宿主路径取自 .env.ha，不硬编码平台路径。
+# =====================================================================
+
+name: ticket-system-ha
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# 两台机器共用同一份后端环境（节点差异不体现在后端上 —— 这正是「无状态」的含义）
+x-backend-env: &backend-env
+  TZ: ${TZ:-Asia/Shanghai}
+  SPRING_PROFILES_ACTIVE: prod
+  SERVER_PORT: "8080"
+
+  # ---- 数据库：固定连 DB VIP，不写死某一台 ----
+  # VIP 漂移后连接会断一次，Hikari 自动按新地址重建连接池 ——
+  # 这是连 VIP 而非「多主机连接串」的原因：连接串保持单地址，切换逻辑全在 keepalived 一处。
+  MYSQL_HOST: ${VIP_DB:?必须在 .env.ha 中设置 VIP_DB}
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+  MYSQL_USERNAME: root
+  MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env.ha 中设置 MYSQL_ROOT_PASSWORD}
+
+  # ---- Redis：走哨兵服务发现 ----
+  # Spring Boot 在检测到 SPRING_DATA_REDIS_SENTINEL_NODES 非空时会自动改用哨兵连接工厂，
+  # 因此 backend 的 Java 代码与 application-prod.yml 都无需改动（RedisConfig 用的是自动装配工厂）。
+  SPRING_DATA_REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
+  SPRING_DATA_REDIS_SENTINEL_NODES: ${REDIS_SENTINEL_NODES:?必须在 .env.ha 中设置 REDIS_SENTINEL_NODES}
+  SPRING_DATA_REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?必须在 .env.ha 中设置 REDIS_SENTINEL_PASSWORD}
+  # 数据节点（非哨兵）口令
+  SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?必须在 .env.ha 中设置 REDIS_PASSWORD}
+
+  # ---- 应用密钥 ----
+  JWT_SECRET: ${JWT_SECRET:?必须在 .env.ha 中设置 JWT_SECRET}
+  SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-administrator}
+  SUPER_ADMIN_DISPLAY_NAME: ${SUPER_ADMIN_DISPLAY_NAME:-超级管理员}
+  SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:?必须在 .env.ha 中设置 SUPER_ADMIN_INIT_PASSWORD}
+  INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env.ha 中设置 INTERNAL_ALERT_TOKEN}
+
+  # ---- 会话 Cookie ----
+  COOKIE_SECURE: ${COOKIE_SECURE:-true}
+  COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+
+  # ---- 可信反向代理 ----
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+
+  # ---- 数据落盘位置 ----
+  # attachments / exports 指向 NAS 共享挂载点（两机同一路径）；
+  # logs 留在本机（日志是节点私有的，共享写会互相覆盖）。
+  # 注意：系统参数 storage_attachment_path 若被设置，会优先于这里的 ATTACHMENT_STORAGE_ROOT ——
+  # 详见 DEPLOY.md ，两处都改错位置会导致「参数页改了、文件却还写在本机」。
+  ATTACHMENT_STORAGE_ROOT: /data/attachments
+  EXPORT_STORAGE_ROOT: /data/exports
+  LOG_PATH: /data/logs
+
+  # ---- 演示数据必须关闭 ----
+  DEMO_DATA_ENABLED: "false"
+
+services:
+
+  # ------------------------------------------------------------------
+  # MySQL 8 · 主主双向复制
+  # 两台各一个实例，通过 mysql/conf.d/node-{a,b}.cnf 错开 server-id 与自增步长。
+  # 必须发布 3306：DB VIP 是宿主层地址，容器内的后端要经 VIP 访问数据库。
+  # ------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: ticket-mysql
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env.ha 中设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+    volumes:
+      - ${DATA_ROOT:?必须在 .env.ha 中设置 DATA_ROOT}/mysql:/var/lib/mysql
+      # 基础调优复用单机版配置（utf8mb4 / +08:00 / skip-name-resolve 等），前缀 00- 保证先加载
+      - ../mysql/conf.d/my.cnf:/etc/mysql/conf.d/00-base.cnf:ro
+      # 主主复制的【共用】参数：log-bin / GTID / ROW 行格式 / log_replica_updates
+      - ./mysql/conf.d/10-replication-common.cnf:/etc/mysql/conf.d/10-replication-common.cnf:ro
+      # 节点【身份】参数：server-id 与自增偏移。前缀 zz- 保证最后加载、覆盖前面的设置
+      - ./mysql/conf.d/${MYSQL_NODE_CONF:?必须在 .env.ha 中设置 MYSQL_NODE_CONF}:/etc/mysql/conf.d/zz-node-identity.cnf:ro
+    ports:
+      # 必须发布：DB VIP 落在宿主机网卡上，容器内的后端经 VIP:3306 访问数据库。
+      # 安全边界改为宿主防火墙：只放行两台节点与运维网段，切勿暴露到公网。
+      - "${MYSQL_PUBLISH_PORT:-3306}:3306"
+    networks:
+      - data-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ------------------------------------------------------------------
+  # Redis 7 · 数据节点（A 主 B 从，运行期角色由哨兵接管）
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ticket-redis
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?必须在 .env.ha 中设置 REDIS_PASSWORD}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+      # node-a 留空（主），node-b 填 "<对端IP> 6379"（从）。
+      # 这是【初始】关系；哨兵切换后以哨兵广播的拓扑为准。
+      REDIS_REPLICAOF: ${REDIS_REPLICAOF:-}
+    volumes:
+      - ${DATA_ROOT}/redis:/data
+      - ./redis/redis-entrypoint.sh:/usr/local/bin/redis-entrypoint.sh:ro
+    entrypoint: ["sh", "/usr/local/bin/redis-entrypoint.sh"]
+    ports:
+      - "${REDIS_PUBLISH_PORT:-6379}:6379"
+    networks:
+      - data-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # Redis 哨兵（Sentinel）
+  # 两机各一个；生产建议再加第三个轻量节点，凑够 3 票 —— 原因见 DEPLOY.md 。
+  # announce-ip 必须是宿主 IP：哨兵之间跨主机通信，容器内网地址不可路由。
+  # ------------------------------------------------------------------
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: ticket-sentinel
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      SENTINEL_PORT: "26379"
+      REDIS_SENTINEL_MASTER: ${REDIS_SENTINEL_MASTER:-mymaster}
+      REDIS_INITIAL_MASTER_IP: ${REDIS_INITIAL_MASTER_IP:?必须在 .env.ha 中设置 REDIS_INITIAL_MASTER_IP}
+      REDIS_MASTER_PORT: "6379"
+      REDIS_SENTINEL_QUORUM: ${REDIS_SENTINEL_QUORUM:-2}
+      # 监控目标（数据节点）的口令，哨兵用它连上实例执行 INFO / REPLICAOF
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?必须在 .env.ha 中设置 REDIS_PASSWORD}
+      # 哨兵进程自身的口令（防止任何人连上哨兵就能命令它切换主从）
+      REDIS_SENTINEL_PASSWORD: ${REDIS_SENTINEL_PASSWORD:?必须在 .env.ha 中设置 REDIS_SENTINEL_PASSWORD}
+      REDIS_ANNOUNCE_IP: ${REDIS_ANNOUNCE_IP:?必须在 .env.ha 中设置 REDIS_ANNOUNCE_IP}
+    volumes:
+      # 哨兵运行期会重写自己的配置文件（记录当前主节点），因此必须落在可写卷上
+      - ${DATA_ROOT}/sentinel:/data
+      - ./redis/sentinel-entrypoint.sh:/usr/local/bin/sentinel-entrypoint.sh:ro
+    entrypoint: ["sh", "/usr/local/bin/sentinel-entrypoint.sh"]
+    ports:
+      - "${SENTINEL_PUBLISH_PORT:-26379}:26379"
+    networks:
+      - data-net
+    logging: *default-logging
+
+  # ------------------------------------------------------------------
+  # 后端（Spring Boot）· 两台同时对外服务，无状态
+  # 状态全部外移：会话/限流/锁在 Redis、附件在 NAS、业务数据在 MySQL。
+  # 因此不需要 sticky session，任何一台都能处理任何请求。
+  # ------------------------------------------------------------------
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: ticket-system-backend:${IMAGE_TAG:-latest}
+    container_name: ticket-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    volumes:
+      # 附件与导出走 NAS 共享卷（两机同一路径）
+      - ${SHARED_ROOT:?必须在 .env.ha 中设置 SHARED_ROOT}/attachments:/data/attachments
+      - ${SHARED_ROOT:?必须在 .env.ha 中设置 SHARED_ROOT}/exports:/data/exports
+      # 日志留在本机：两台同时写同一个日志文件会产生交错与截断
+      - ${DATA_ROOT}/logs:/data/logs
+    expose:
+      - "8080"
+    networks:
+      - edge-net
+      - data-net
+    logging: *default-logging
+
+  # ------------------------------------------------------------------
+  # 前端静态站（每台一份；内容相同，构建产物无状态）
+  # ------------------------------------------------------------------
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    image: ticket-system-frontend:${IMAGE_TAG:-latest}
+    container_name: ticket-frontend
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    networks:
+      - edge-net
+    logging: *default-logging
+
+  # ------------------------------------------------------------------
+  # 边缘 Nginx：监听宿主 ${WEB_PORT}，由 keepalived 的 VIP 承接外部流量。
+  # 复用单机版的 nginx/ 配置（限流 zone、真实 IP 解析、429/503 JSON 兜底），
+  # 因此升级边缘策略只需改一处，单机与 HA 两种拓扑行为一致。
+  # ------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ticket-nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../nginx/snippets:/etc/nginx/snippets:ro
+      - ${DATA_ROOT}/logs/nginx:/var/log/nginx
+    networks:
+      - edge-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # 备份作业：只在【主节点】启用（--profile backup）。
+  # 不在两台都跑：数据经主主复制本就一致，双份备份只是浪费 NAS 空间与 IO，
+  # 且同名归档会在同秒生成时相互覆盖。备机可在主机长期故障时临时启用该 profile 顶上。
+  # ------------------------------------------------------------------
+  backup:
+    build:
+      context: ../backup
+      dockerfile: Dockerfile
+    image: ticket-system-backup:${IMAGE_TAG:-latest}
+    container_name: ticket-backup
+    restart: unless-stopped
+    profiles: ["backup"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_DIR: /backup
+      BACKUP_NOTIFY_SUCCESS: ${BACKUP_NOTIFY_SUCCESS:-false}
+      # 经 DB VIP 导出：VIP 漂移后备份自动跟随新的数据库主节点，无需改脚本
+      MYSQL_HOST: ${VIP_DB:?必须在 .env.ha 中设置 VIP_DB}
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env.ha 中设置 MYSQL_ROOT_PASSWORD}
+      ATTACHMENTS_DIR: /source/attachments
+      CONFIG_DIR: /deploy
+      ALERT_URL: http://backend:8080/api/internal/alerts/backup
+      INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env.ha 中设置 INTERNAL_ALERT_TOKEN}
+    volumes:
+      # 备份产物落 NAS 上的独立目录（与生产数据物理分离，且可被异地同步带走）
+      - ${BACKUP_DIR:?必须在 .env.ha 中设置 BACKUP_DIR}:/backup
+      - ${SHARED_ROOT:?必须在 .env.ha 中设置 SHARED_ROOT}/attachments:/source/attachments:ro
+      # 只读挂载本目录：备份脚本要把 .env.ha 打进归档（缺它无法完整重建系统）
+      - ./:/deploy:ro
+    networks:
+      - data-net
+    logging: *default-logging
+
+networks:
+  edge-net:
+    driver: bridge
+  data-net:
+    driver: bridge

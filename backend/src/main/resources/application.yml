@@ -1,0 +1,345 @@
+# =====================================================================
+# 企业内部设备借用工单系统 —— 通用配置
+# 规范依据：第 2 章（开发/生产环境）、第 4 章（技术栈）、第 30 章（.env 注入）
+# 注意：所有可变项均通过环境变量注入，禁止在此硬编码密钥。
+# =====================================================================
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /
+  # 刻意固定为 none，不要改成 framework / native。
+  # 原因：framework 策略会用 X-Forwarded-For 的【最左】值覆盖 remoteAddr 并隐藏原始请求头，
+  # 而最左值由客户端完全可控 —— 那会让 SecurityUtils 的可信代理链判定直接失效
+  # （攻击者伪造一个 IP 就能自选身份、绕过限流并污染审计 IP）。
+  # 真实客户端 IP 与原始协议（X-Forwarded-Proto）由 SecurityUtils 自行按可信代理链解析，
+  # 可信网段见 app.security.trusted-proxies。
+  forward-headers-strategy: none
+  compression:
+    enabled: true
+    mime-types: application/json,text/html,text/css,application/javascript
+  tomcat:
+    uri-encoding: UTF-8
+    threads:
+      max: 200
+      min-spare: 10
+
+spring:
+  application:
+    name: ticket-system
+  profiles:
+    # 安全默认值：漏设 SPRING_PROFILES_ACTIVE 时回落到 prod（缺凭据即启动失败），
+    # 绝不默认 dev —— dev 携带仓库内公开的占位密钥与初始口令，误用于生产等同于失守。
+    active: ${SPRING_PROFILES_ACTIVE:prod}
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 50MB
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:ticket_system}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_general_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    hikari:
+      pool-name: TicketHikariPool
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 0
+    table: flyway_schema_history
+    validate-on-migrate: true
+    encoding: UTF-8
+    placeholder-replacement: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: 3s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3s
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.enterprise.ticket.module.**.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+      insert-strategy: not_null
+      update-strategy: not_null
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ---------------------------------------------------------------------
+# 业务自定义配置
+# ---------------------------------------------------------------------
+app:
+  jwt:
+    # 生产必须通过 JWT_SECRET 环境变量注入，长度不少于 32 字节
+    secret: ${JWT_SECRET:}
+    # 默认 720 分钟，运行期以 system_config.jwt_expire_minutes 为准
+    expire-minutes: 720
+    cookie-name: TICKET_TOKEN
+    # 生产环境开启（HTTPS），本地 http 调试关闭
+    cookie-secure: ${COOKIE_SECURE:false}
+    cookie-same-site: Lax
+    cookie-path: /
+  security:
+    # CSRF 双重防护：SameSite=Lax + 自定义请求头校验（非 GET 请求必须携带）
+    csrf-header-name: X-Requested-With
+    csrf-header-value: XMLHttpRequest
+    # 免认证白名单（Ant 风格）
+    permit-all:
+      - /api/auth/login
+      - /api/auth/csrf
+      - /api/health
+      # 初始化向导（本次新增）：系统还没有任何账号时就要能访问，否则无人能完成初始化。
+      # 安全性由「仅当库中无 super_admin 时可执行」这条业务规则保证，不靠鉴权。
+      - /api/setup/status
+      - /api/setup/initialize
+      # 备份作业结果上报（）：脚本无用户会话，靠 X-Internal-Token 共享密钥自校验
+      - /api/internal/alerts/backup
+      # 主备心跳 / 切换事件上报（）：同样由目标机器上的脚本上报，
+      # 无用户会话，走同一套 X-Internal-Token 校验（实现见 InternalTokenVerifier）。
+      # 三个端点共用一份校验实现 —— 安全判定不允许出现第二份拷贝。
+      - /api/internal/ha/report
+      # 主备配置导出（）：备节点「一键加入集群」时来拉主节点配置。
+      # ⚠️ 新增内部端点必须**同时**加进这里与 ApiRateLimitFilter 的白名单 ——
+      # 少加一处不会报错，只会让请求拿到 401（现象像「令牌不对」）， 就踩过。
+      - /api/internal/ha/config
+      # 站点品牌（）：登录页本身就要显示系统名称与 logo，此时还没有会话，
+      # 因此这两项必须免认证。注意只放行「读」：
+      #   - /api/system/site-info       读名称与 logo 描述
+      #   - /api/system/site-logo/image 读 logo 图片本体（写入口在 /api/system/site-logo，需鉴权）
+      # 两者刻意用不同的子路径 —— permit-all 是按「路径」放行、不区分 HTTP 方法，
+      # 若把写入口的路径也写进来，等于把上传/清除接口一并公开。
+      - /api/system/site-info
+      - /api/system/site-logo/image
+      # 找回密码（）：整条流程都发生在登录之前，因此必须免认证。
+      # 用 `/**` 一次覆盖 meta / channels / send-code / reset 四个端点 ——
+      # 逐个列举的写法在「新增第五个端点」时会静默漏掉，而漏掉的表现是
+      # 「用户被踢回登录页」，而不是一个能立刻看出原因的 401 提示。
+      #
+      # 放行它们不等于不设防：这一组端点自带三层约束（见 ForgotPasswordService）——
+      # ① 发码限流（同账号 10 分钟 3 次）；② 错 5 次作废；③ 验证码长度 / 有效期可配。
+      - /api/auth/forgot-password/**
+      # 密码策略说明（上线前）：找回密码的第三步要按同一策略做前端预校验，
+      # 而这一步发生在登录之前。策略内容（最小长度 / 最少字符类数）本就是
+      # 「公开展示的规则」，且接口本身不返回任何账号数据；不放行的后果是
+      # 找回密码页只能写死一份阈值，管理员调整参数后页面就会「教一条已过时的规则」。
+      - /api/auth/password-policy
+      - /error
+    # 强制改密状态下仍可访问的接口（）
+    force-change-password-whitelist:
+      - /api/auth/me
+      - /api/auth/change-password
+      - /api/auth/logout
+      # 密码策略说明（）必须放行：被强制改密的用户也要能看到「该按什么规则设密码」，
+      # 否则他会在改密页面对着一句「请修改密码」却不知道要求，只能反复试错。
+      - /api/auth/password-policy
+    # 未绑定手机 / 邮箱时仍可访问的接口（ ：强制绑定联系方式的服务端闸门）
+    contact-bind-whitelist:
+      # 身份与站点信息：绑定页需要显示「你是谁」和站点名称
+      - /api/auth/me
+      - /api/system/site-info
+      # 绑定动作本身（唯一的出口，缺了它用户永远绑不上）
+      # send-code 必须**单独**列出：本白名单用的是 AntPathMatcher 精确匹配，
+      # `/api/profile/bind-contact` 匹配不了它的子路径（不加就会「验证码发不出去」）
+      - /api/profile/bind-contact
+      - /api/profile/bind-contact/send-code
+      # 改密相关：绑定前通常要先改完临时密码，放行以免两条闸门互相锁死
+      - /api/auth/change-password
+      - /api/auth/password-policy
+      # 登出与找回密码：用户可能选择先自救或退出，堵住这两条只会让人无处可去
+      - /api/auth/logout
+      - /api/auth/forgot-password/**
+    # 可信反向代理网段（）：只有来自这些地址的 X-Forwarded-For / X-Real-IP /
+    # X-Forwarded-Proto 才会被采信，其余一律以 TCP 对端为准 —— 防止伪造转发头绕过限流、
+    # 并避免审计日志里的客户端 IP 变成任意值。
+    #
+    # ⚠️ 默认**留空**（fail-closed）：本系统为内网直连部署，若把 10/8、172.16/12、
+    #    192.168/16 等内网段当作可信代理，则任何一台内网客户端都能自选 XFF 伪造身份、
+    #    绕过 IP 限流与 IP 封禁。确有反向代理时，必须用 TRUSTED_PROXIES 精确指定
+    #    那一个代理地址（如 TRUSTED_PROXIES=127.0.0.1/32，逗号分隔，支持单 IP 与 CIDR）。
+    trusted-proxies: "${TRUSTED_PROXIES:}"
+  cors:
+    # 前后端分离开发时使用；生产由 Nginx 同源代理，可留空
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  super-admin:
+    # ⚠️ 默认**留空**（本次改造）：不再写死 administrator，也不再自动建号。
+    #    · 库中没有超管时 → 前端引导到「初始化向导 /setup」，由管理员现场设定账号名与密码；
+    #    · 需要无人值守自动建号时 → 同时提供下面两项（SUPER_ADMIN_USERNAME + SUPER_ADMIN_INIT_PASSWORD）。
+    username: ${SUPER_ADMIN_USERNAME:}
+    display-name: ${SUPER_ADMIN_DISPLAY_NAME:超级管理员}
+    init-password: ${SUPER_ADMIN_INIT_PASSWORD:}
+  demo:
+    # 演示数据（业务分组 / 最终处理小组 / 审批流程 / 演示员工），仅 dev profile 下由
+    # DemoDataInitializer 读取；生产 profile 不加载该初始化器，配置留空即可。
+    enabled: ${DEMO_DATA_ENABLED:true}
+    user-init-password: ${DEMO_USER_INIT_PASSWORD:}
+
+  # -------------------------------------------------------------------
+  # 生产初始化模式（本次新增）—— 一次性清空演示数据
+  #
+  # ⚠️ 默认关闭。打开（APP_PROD_INIT=true）后启动时清空演示员工 / 部门 / 工单 / 设备 /
+  #    演示申请数据；**保留**表结构、系统参数、权限目录与预置申请类型的表单与流程定义。
+  #    清空成功后在 system_config 落一个完成标记，之后即便开关仍在也**不再执行**
+  #    （否则忘摘开关会让每次重启都清掉新产生的数据）。
+  # -------------------------------------------------------------------
+  prod-init:
+    enabled: ${APP_PROD_INIT:false}
+  attachment:
+    # 附件上传通用能力（）：文件本体落本地磁盘/NAS，数据库只存元数据与相对路径。
+    # storage-root 默认项目内 data/attachments；生产由 ATTACHMENT_STORAGE_ROOT 指向 NAS 挂载点。
+    storage-root: ${ATTACHMENT_STORAGE_ROOT:./data/attachments}
+    # 单文件上限（MB）：与 spring.servlet.multipart.max-file-size 形成双层防护
+    max-size-mb: ${ATTACHMENT_MAX_SIZE_MB:10}
+    # 单条业务记录最多附件数，防单工单附件无限增长
+    max-per-biz: ${ATTACHMENT_MAX_PER_BIZ:10}
+    # 文档类白名单（小写、不含点）
+    allowed-extensions:
+      - pdf
+      - doc
+      - docx
+      - xls
+      - xlsx
+      - ppt
+      - pptx
+      - txt
+      - csv
+      - png
+      - jpg
+      - jpeg
+      - gif
+      - bmp
+      - webp
+      - zip
+      - rar
+      - 7z
+    # 图片扩展名：照片类附件（归还照片 / 故障照片）只能取此交集
+    image-extensions:
+      - png
+      - jpg
+      - jpeg
+      - gif
+      - bmp
+      - webp
+  export:
+    # Excel 导出（）：导出文件与附件**分开**存放 —— 附件是用户上传的
+    # 原始资料（长期保留），导出文件是系统生成的临时产物（有生命周期），
+    # 混在一起会让「按过期时间清理」误伤附件。
+    storage-root: ${EXPORT_STORAGE_ROOT:./data/exports}
+    # 行数阈值：超过该值改为异步生成 + 站内消息通知下载（ 明确 10000）
+    async-threshold: ${EXPORT_ASYNC_THRESHOLD:10000}
+    # 单次导出最大行数（防止把整库拖进内存；超出提示用户先筛选）
+    max-rows: ${EXPORT_MAX_ROWS:200000}
+    # 异步导出文件保留天数，过期后下载返回明确错误码
+    expire-days: ${EXPORT_EXPIRE_DAYS:7}
+  site:
+    # 站点品牌（：系统名称与 logo 可配置）。
+    # logo 图片落盘目录**刻意与附件、导出分开**：附件目录会被孤儿清理任务
+    # （按「文件名不在 attachments 表里」判定）扫描并删除，而 logo 不对应任何业务记录，
+    # 放进附件目录会被当垃圾清掉 —— 表现为「logo 过几小时自己消失」。
+    storage-root: ${SITE_STORAGE_ROOT:./data/site}
+    # logo 图片单文件上限（MB），与 spring.servlet.multipart 的限制形成双层防护
+    logo-max-size-mb: ${SITE_LOGO_MAX_SIZE_MB:10}
+    # logo 允许的图片扩展名（小写、不含点）
+    logo-extensions:
+      - png
+      - jpg
+      - jpeg
+  ops:
+    # 内部告警共享密钥（ 备份失败不得静默）。
+    # 备份脚本跑在独立容器里、没有用户会话，只能靠这个密钥证明身份。
+    # 留空 = 关闭该通道（接口 fail-closed 返回 500），绝不退化成「无密钥可调用」。
+    internal-alert-token: ${INTERNAL_ALERT_TOKEN:}
+
+  # -------------------------------------------------------------------
+  # 在线一键升级（）
+  #
+  # ⚠️ enabled 默认 false，这是刻意的 fail-closed：本模块的接口能替换服务器上的
+  #    可执行文件（backend.jar）与静态资源目录，等价于「拿到这台机器的代码执行能力」。
+  #    要启用必须在部署配置里显式打开，并通常同时提供 apply-command
+  #    （把「替换 + 重启」交给受控的 root 编排脚本，见 deploy/ha/scripts/upgrade-apply.sh）。
+  # -------------------------------------------------------------------
+  upgrade:
+    enabled: ${UPGRADE_ENABLED:false}
+    storage-root: ${UPGRADE_STORAGE_ROOT:./data/upgrade}
+    # 「当前生效产物」目录 —— 备份的来源。容器化部署下应指向一个同时挂进容器的宿主目录。
+    # 首次部署时它不存在是正常的（没有上一版可备份），此时备份步骤跳过并记提示。
+    current-artifact-dir: ${UPGRADE_CURRENT_ARTIFACT_DIR:./data/upgrade/current}
+    package-max-size-mb: ${UPGRADE_PACKAGE_MAX_SIZE_MB:300}
+    # 解压后总大小上限：防 zip 炸弹（1MB 的包可以解出几十 GB，只限压缩包大小挡不住）
+    extract-max-size-mb: ${UPGRADE_EXTRACT_MAX_SIZE_MB:800}
+    max-entries: ${UPGRADE_MAX_ENTRIES:5000}
+    # 留空 ⇒ 后端停在 READY_TO_APPLY，由运维手动应用（这在没有重启托管的环境里是正式形态）
+    apply-command: ${UPGRADE_APPLY_COMMAND:}
+    apply-command-timeout-seconds: ${UPGRADE_APPLY_COMMAND_TIMEOUT_SECONDS:60}
+    rollback-enabled: ${UPGRADE_ROLLBACK_ENABLED:true}
+    apply-timeout-minutes: ${UPGRADE_APPLY_TIMEOUT_MINUTES:30}
+    history-limit: ${UPGRADE_HISTORY_LIMIT:50}
+
+  # -------------------------------------------------------------------
+  # 主备双机热备（）
+  #
+  # ⚠️ dry-run 默认 true，这是刻意的 fail-safe：本模块的「手动切换主备 / 立即同步」
+  #    会调用 deploy/ha/scripts/ 下的真实运维脚本，而这些脚本的作用是操纵虚拟 IP 的归属 ——
+  #    执行成功意味着线上流量立刻从一台机器切到另一台。默认只组装并返回将执行的命令，
+  #    要真正执行必须显式配 HA_DRY_RUN=false。
+  #
+  # ⚠️ deploy-dir 留空不算配置错误：大多数单机部署根本没有 deploy/ha。
+  #    此时页面照常可用（看状态 / 看 3 步指引 / 生成配置片段），
+  #    只有两个真实运维动作会被明确拒绝（HA_DEPLOY_DIR_MISSING），绝不假装成功。
+  # -------------------------------------------------------------------
+  ha:
+    deploy-dir: ${HA_DEPLOY_DIR:}
+    dry-run: ${HA_DRY_RUN:true}
+    script-timeout-seconds: ${HA_SCRIPT_TIMEOUT_SECONDS:30}
+    # 心跳扫描间隔（毫秒）。必须明显小于心跳超时阈值，否则超时判定的精度由扫描周期决定
+    heartbeat-scan-interval-ms: ${HA_HEARTBEAT_SCAN_INTERVAL_MS:10000}
+    max-output-chars: ${HA_MAX_OUTPUT_CHARS:8000}
+
+  # 应用内数据库自动备份（P0）。与 deploy/backup 备份容器互补，不要同时开启：
+  # 侧车做「数据库 + 附件 + 配置」三合一（Docker 生产），本段只做数据库（非容器环境）。
+  backup:
+    # 备份文件目录的默认值；系统参数 backup_dir 优先（NAS 挂载点写在那里）
+    dir: ${BACKUP_DIR:./data/backup}
+    # mysqldump 完整路径。留空用 PATH 中的；Windows 常需给出 .../bin/mysqldump.exe
+    mysqldump: ${BACKUP_MYSQLDUMP:}
+    # 单次导出超时（秒）
+    timeout-seconds: ${BACKUP_TIMEOUT_SECONDS:1800}
+
+logging:
+  level:
+    root: info
+    com.enterprise.ticket: info

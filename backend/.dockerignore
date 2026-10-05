@@ -1,0 +1,25 @@
+# 后端构建上下文忽略清单
+# 目的：把构建上下文压到最小，既加快构建，也避免把本地产物 / 密钥带进镜像层
+
+# 本地产物与依赖
+target/
+!.mvn/wrapper/maven-wrapper.jar
+
+# 运行时数据（附件 / 导出 / 日志绝不能进镜像）
+logs/
+data/
+*.log
+*.log.gz
+
+# IDE 与系统文件
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 版本控制与容器自身
+.git/
+.gitignore
+Dockerfile
+.dockerignore

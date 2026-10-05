@@ -1,0 +1,1043 @@
+{
+  "$comment": [
+    "M4a 前后端流程校验器「共享金样例」。",
+    "",
+    "为什么需要它：后端 FlowDefinitionValidator 首错即抛、前端 validateFlowForPublish 返回全部问题，",
+    "两侧规则各自演化，漂移一旦发生（一端放过/一端拦下）只有在生产上才暴露。",
+    "把「同一份流程定义 + 期望被指出的问题关键片段」固化成语言无关的 JSON，",
+    "后端 JUnit 与前端 Vitest 各自加载同一文件、各自调用本侧校验器、对同一张表断言 ——",
+    "任何一端改了规则而另一端没跟上，测试立刻变红。",
+    "",
+    "匹配语义：expectedProblems 里每项是一段「应当出现的关键子串」（contains 匹配），",
+    "而不是逐字文案。理由：两端的文案本来就允许存在无害差异",
+    "（如后端 '1..720 小时' vs 前端 '1~720 小时'）；真正致命的是「同一个问题一端报了另一端没报」。",
+    "另外用 expectExactCount=true 的用例额外断言问题条数，用于对齐全量收集语义。"
+  ],
+  "formFields": [
+    { "key": "amount", "label": "金额", "type": "NUMBER" },
+    { "key": "title", "label": "标题", "type": "TEXT" },
+    { "key": "receiver", "label": "接收人", "type": "USER" },
+    { "key": "remark", "label": "备注", "type": "MULTI_SELECT" }
+  ],
+  "samples": [
+    {
+      "id": "valid-regression-flow",
+      "desc": "Wave1 基准流程：主管审批 → 金额判断（>5000 财务复核 / else 归档）→ 结束，分支汇合",
+      "expectExactCount": true,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          {
+            "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }]
+          },
+          {
+            "key": "c1", "type": "CONDITION", "name": "金额判断",
+            "branches": [
+              {
+                "key": "b1", "name": "金额大于5000", "next": "n2",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "GT", "value": 5000 }] }
+              },
+              { "key": "b2", "name": "其它情况", "next": "n3", "else": true }
+            ]
+          },
+          {
+            "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ALL_SIGN", "next": "n3",
+            "approverRules": [{ "type": "APPLICANT_CHOOSE", "scope": "ALL", "minCount": 1, "maxCount": 2 }]
+          },
+          {
+            "key": "n3", "type": "APPROVAL", "name": "归档确认", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "FORM_USER_FIELD", "fieldKey": "receiver" }]
+          },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "valid-wave2-flow",
+      "desc": "Wave2 全要素：时限审批 → 抄送 → 条件 → 直属领导（时限）→ PREV_ASSIGN → 结束",
+      "expectExactCount": true,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          {
+            "key": "n1", "type": "APPROVAL", "name": "部门负责人审批", "signType": "ANY_SIGN",
+            "next": "cc1", "timeLimitHours": 24,
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }]
+          },
+          {
+            "key": "cc1", "type": "CC", "name": "抄送管理员", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }]
+          },
+          {
+            "key": "c1", "type": "CONDITION", "name": "金额判断",
+            "branches": [
+              {
+                "key": "b1", "name": "金额大于5000", "next": "n2",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "GT", "value": 5000 }] }
+              },
+              { "key": "b2", "name": "其它情况", "next": "n3", "else": true }
+            ]
+          },
+          {
+            "key": "n2", "type": "APPROVAL", "name": "直属领导审批", "signType": "ANY_SIGN",
+            "next": "n3", "timeLimitHours": 48,
+            "approverRules": [{ "type": "LEADER" }]
+          },
+          {
+            "key": "n3", "type": "APPROVAL", "name": "上一节点指定的审批人", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "PREV_ASSIGN", "assignCount": 2 }]
+          },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "empty-definition",
+      "desc": "定义为空 → 直接拒绝",
+      "expectExactCount": true,
+      "expectedProblems": ["流程定义为空"],
+      "definition": null
+    },
+    {
+      "id": "no-nodes",
+      "desc": "零节点 → 直接拒绝",
+      "expectExactCount": true,
+      "expectedProblems": ["流程至少要有一个节点"],
+      "definition": { "start": "n1", "nodes": [] }
+    },
+    {
+      "id": "start-missing",
+      "desc": "未设置起始节点",
+      "expectExactCount": true,
+      "expectedProblems": ["未设置起始节点"],
+      "definition": {
+        "nodes": [{ "key": "n1", "type": "APPROVAL", "name": "审批", "next": "end",
+          "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }]
+      }
+    },
+    {
+      "id": "start-not-exist",
+      "desc": "起始节点指向不存在的 key",
+      "expectExactCount": true,
+      "expectedProblems": ["起始节点不存在：nope"],
+      "definition": {
+        "start": "nope",
+        "nodes": [{ "key": "n1", "type": "APPROVAL", "name": "审批", "next": "end",
+          "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }]
+      }
+    },
+    {
+      "id": "node-key-blank",
+      "desc": "存在未设置标识的节点",
+      "expectExactCount": false,
+      "expectedProblems": ["存在未设置标识（key）的节点"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "node-key-illegal",
+      "desc": "节点标识非法（数字开头）",
+      "expectExactCount": false,
+      "expectedProblems": ["节点标识不合法：1bad"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "1bad", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "node-key-duplicate",
+      "desc": "节点标识重复",
+      "expectExactCount": false,
+      "expectedProblems": ["节点标识重复：n1"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "n1", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "node-name-blank",
+      "desc": "节点未设置名称",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」未设置名称"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-no-rules",
+      "desc": "审批节点未配置审批人",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」未配置任何审批人"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-no-next",
+      "desc": "审批节点未指定下一节点",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」未指定下一节点"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-next-not-exist",
+      "desc": "审批节点的下一节点不存在",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」的下一节点不存在：ghost"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "ghost",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-bad-sign-type",
+      "desc": "签署方式不合法",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」的签署方式不合法：BOGUS"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "BOGUS", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-time-limit-out-of-range",
+      "desc": "审批时限越界（721 > 720）—— 两端文案不同（1..720 / 1~720），只断关键片段",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」的审批时限必须在", "小时之间"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN",
+            "next": "end", "timeLimitHours": 721,
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-multi-applicant-choose",
+      "desc": "同一节点配置多条「申请人自选」规则",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」配置了 2 条「申请人自选」规则"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [
+              { "type": "APPLICANT_CHOOSE", "scope": "ALL", "minCount": 1, "maxCount": 1 },
+              { "type": "APPLICANT_CHOOSE", "scope": "ALL", "minCount": 1, "maxCount": 1 }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "approval-branches-forbidden",
+      "desc": "审批节点不应配置分支",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n1」是审批节点，不应配置分支"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }],
+            "branches": [{ "key": "b1", "name": "多余", "next": "end" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "prev-assign-with-other-rule",
+      "desc": "PREV_ASSIGN 必须唯一规则（两端指出方式不同：后端「上一节点审批人指定」/ 前端「上一节点指定审批人」，故只断共有片段）",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「n2」使用", "「上一节点", "必须是该节点唯一的审批人规则"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "n2", "type": "APPROVAL", "name": "指定", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [
+              { "type": "PREV_ASSIGN", "assignCount": 1 },
+              { "type": "ROLE", "roleCode": "admin" }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "prev-assign-no-preceding-approval",
+      "desc": "PREV_ASSIGN 前面没有审批节点（图级约束）",
+      "expectExactCount": false,
+      "expectedProblems": ["但它前面没有审批节点"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "指定", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "PREV_ASSIGN", "assignCount": 1 }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "cc-with-applicant-choose",
+      "desc": "抄送节点不支持「申请人自选」",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「cc1」是抄送节点，不支持「申请人自选」"],
+      "definition": {
+        "start": "cc1",
+        "nodes": [
+          { "key": "cc1", "type": "CC", "name": "抄送", "next": "n1",
+            "approverRules": [{ "type": "APPLICANT_CHOOSE", "scope": "ALL", "minCount": 1, "maxCount": 1 }] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "cc-no-rules",
+      "desc": "抄送节点未配置抄送对象",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「cc1」未配置任何抄送对象"],
+      "definition": {
+        "start": "cc1",
+        "nodes": [
+          { "key": "cc1", "type": "CC", "name": "抄送", "next": "n1", "approverRules": [] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "cc-forbids-sign-type",
+      "desc": "抄送节点不应配置签署方式",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「cc1」是抄送节点，不应配置签署方式"],
+      "definition": {
+        "start": "cc1",
+        "nodes": [
+          { "key": "cc1", "type": "CC", "name": "抄送", "next": "n1", "signType": "ANY_SIGN",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-no-branches",
+      "desc": "条件节点未配置任何分支",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「c1」未配置任何分支", "必须且只能有一个默认出口"],
+      "definition": {
+        "start": "c1",
+        "nodes": [
+          { "key": "c1", "type": "CONDITION", "name": "判断", "branches": [] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-two-else",
+      "desc": "条件节点有两个默认出口",
+      "expectExactCount": false,
+      "expectedProblems": ["必须且只能有一个默认出口"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end", "else": true },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-forbids-next",
+      "desc": "条件节点不应额外配置 next",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「c1」是条件分支节点，出口写在分支里，不应额外配置 next"],
+      "definition": {
+        "start": "c1",
+        "nodes": [
+          { "key": "c1", "type": "CONDITION", "name": "判断", "next": "end",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "GT", "value": 1 }] } },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-branch-dup-key",
+      "desc": "条件分支标识重复",
+      "expectExactCount": false,
+      "expectedProblems": ["标识重复：b1"],
+      "definition": {
+        "start": "c1",
+        "nodes": [
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "GT", "value": 1 }] } },
+              { "key": "b1", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-numeric-op-on-text",
+      "desc": "数值运算符用于文本字段",
+      "expectExactCount": false,
+      "expectedProblems": ["只能用于数字或日期字段"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "title", "op": "GT", "value": 1 }] } },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-contains-on-number",
+      "desc": "包含运算符用于数字字段",
+      "expectExactCount": false,
+      "expectedProblems": ["只能用于文本或选项字段"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "CONTAINS", "value": "1" }] } },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-value-missing",
+      "desc": "条件运算符需要比较值但未填",
+      "expectExactCount": false,
+      "expectedProblems": ["未填写比较值"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "amount", "op": "GT", "value": null }] } },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "condition-bad-logic",
+      "desc": "条件组合逻辑不合法",
+      "expectExactCount": false,
+      "expectedProblems": ["的组合逻辑不合法：XOR"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "a", "next": "end",
+                "condition": { "logic": "XOR", "rules": [{ "field": "amount", "op": "GT", "value": 1 }] } },
+              { "key": "b2", "name": "b", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "end-forbids-next",
+      "desc": "结束节点不应配置 next",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「end」是结束节点，不应配置 next"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束", "next": "n1" }
+        ]
+      }
+    },
+    {
+      "id": "end-forbids-rules",
+      "desc": "结束节点不应配置审批人",
+      "expectExactCount": false,
+      "expectedProblems": ["节点「end」是结束节点，不应配置审批人"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] }
+        ]
+      }
+    },
+    {
+      "id": "cycle-detected",
+      "desc": "流程存在环",
+      "expectExactCount": false,
+      "expectedProblems": ["流程存在环"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批一", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "n2", "type": "APPROVAL", "name": "审批二", "signType": "ANY_SIGN", "next": "n1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "unreachable-node",
+      "desc": "存在从起始节点不可达的节点",
+      "expectExactCount": false,
+      "expectedProblems": ["存在从起始节点不可达的节点"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "island", "type": "APPROVAL", "name": "孤岛", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "dead-end",
+      "desc": "存在无法到达结束节点的死路",
+      "expectExactCount": false,
+      "expectedProblems": ["存在无法到达结束节点的"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "n2", "type": "APPROVAL", "name": "死路", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "no-approval-node",
+      "desc": "流程中至少要有一个审批节点",
+      "expectExactCount": false,
+      "expectedProblems": ["流程中至少要有一个审批节点"],
+      "definition": {
+        "start": "cc1",
+        "nodes": [
+          { "key": "cc1", "type": "CC", "name": "抄送", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "valid-runtime-flow",
+      "desc": "M2 运行期基准：主管审批 → 条件（读 process.prevNodeResult）→ 归档确认 → 结束。条件引用了运行期字段且位于审批节点之后，合法",
+      "expectExactCount": true,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "上一节点结果判断",
+            "branches": [
+              { "key": "b1", "name": "上一节点已通过", "next": "n2",
+                "condition": { "logic": "AND", "rules": [{ "field": "process.prevNodeResult", "op": "EQ", "value": "APPROVED" }] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "归档确认", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-unknown-process-field",
+      "desc": "条件引用了不在白名单里的运行期字段 process.foo（两端文案不同，只断共有片段）",
+      "expectExactCount": true,
+      "expectedProblems": ["运行期字段「process.foo」"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "错字段", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "process.foo", "op": "EQ", "value": "x" }] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-numeric-op-on-option-field",
+      "desc": "数值运算符用于「上一节点结果」（选项型运行期字段）：两端都报，只断字段名片段（后端说「只能用于数值字段…是选项」，前端说「只能用于数字或日期字段…不是」）",
+      "expectExactCount": true,
+      "expectedProblems": ["「上一节点结果」"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "判断",
+            "branches": [
+              { "key": "b1", "name": "错误比较", "next": "end",
+                "condition": { "logic": "AND", "rules": [{ "field": "process.prevNodeResult", "op": "GT", "value": "1" }] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-condition-before-first-approval",
+      "desc": "引用 process.* 的条件位于首个审批节点之前（图级硬约束）：提交后无待办能推动它，故拒绝",
+      "expectExactCount": true,
+      "expectedProblems": ["前面没有审批节点"],
+      "definition": {
+        "start": "c1",
+        "nodes": [
+          { "key": "c1", "type": "CONDITION", "name": "运行期条件（位置错误）",
+            "branches": [
+              { "key": "b1", "name": "已耗时大于24小时", "next": "n1",
+                "condition": { "logic": "AND", "rules": [{ "field": "process.elapsedHours", "op": "GT", "value": 24 }] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-reject-goto-missing-target",
+      "desc": "驳回改道 GOTO 未指定目标（不得静默降级为终止整单）",
+      "expectExactCount": true,
+      "expectedProblems": ["「驳回处理」配置不完整"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }],
+            "onReject": { "action": "GOTO" } },
+          { "key": "n2", "type": "APPROVAL", "name": "归档确认", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-timeout-add-sign-over-limit",
+      "desc": "超时加签阈值 721 超出上限 720",
+      "expectExactCount": true,
+      "expectedProblems": ["「超时加签」阈值超出上限 720 小时"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "n2",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }],
+            "onTimeout": { "action": "ADD_SIGN", "afterHours": 721 } },
+          { "key": "n2", "type": "APPROVAL", "name": "归档确认", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "runtime-forbids-applicant-choose",
+      "desc": "含运行期特性的流程里配「申请人自选」→ 拒绝（自选结果不随工单保存，运行期激活时无法复现）",
+      "expectExactCount": true,
+      "expectedProblems": ["含运行期条件的流程不支持它"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "上一节点结果判断",
+            "branches": [
+              { "key": "b1", "name": "上一节点已通过", "next": "n2",
+                "condition": { "logic": "AND", "rules": [{ "field": "process.prevNodeResult", "op": "EQ", "value": "APPROVED" }] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "自选审批人", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "APPLICANT_CHOOSE", "scope": "ALL", "minCount": 1, "maxCount": 1 }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "valid-nested-condition",
+      "desc": "M3-A 合法三层嵌套：AND（金额>5000 且 OR（标题含「紧急」 或 AND（备注含「加急」）））—— 深度 3 恰好在上限内，且 RULE/GROUP/RULE 混排",
+      "expectExactCount": true,
+      "expectRuntimeDependent": false,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "嵌套条件判断",
+            "branches": [
+              { "key": "b1", "name": "命中嵌套条件", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "kind": "RULE", "field": "amount", "op": "GT", "value": 5000 },
+                  { "kind": "GROUP", "condition": { "logic": "OR", "rules": [
+                    { "kind": "RULE", "field": "title", "op": "CONTAINS", "value": "紧急" },
+                    { "kind": "GROUP", "condition": { "logic": "AND", "rules": [
+                      { "kind": "RULE", "field": "remark", "op": "CONTAINS", "value": "加急" }
+                    ] } }
+                  ] } }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ALL_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "nested-condition-too-deep",
+      "desc": "M3-A 深度 4 层（超过上限 3）→ 两端都必须报错。这是本批「防漂移」最有价值的一条：深度上限是唯一一处两端各自数层号、最容易数错的地方",
+      "expectExactCount": true,
+      "expectedProblems": ["条件嵌套层数超过上限"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "过深条件判断",
+            "branches": [
+              { "key": "b1", "name": "四层嵌套", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "kind": "RULE", "field": "amount", "op": "GT", "value": 5000 },
+                  { "kind": "GROUP", "condition": { "logic": "AND", "rules": [
+                    { "kind": "RULE", "field": "title", "op": "CONTAINS", "value": "紧急" },
+                    { "kind": "GROUP", "condition": { "logic": "AND", "rules": [
+                      { "kind": "RULE", "field": "remark", "op": "CONTAINS", "value": "加急" },
+                      { "kind": "GROUP", "condition": { "logic": "AND", "rules": [
+                        { "kind": "RULE", "field": "amount", "op": "GT", "value": 10000 }
+                      ] } }
+                    ] } }
+                  ] } }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "nested-group-empty",
+      "desc": "M3-A 嵌套组内没有任何子条件 → 两端都必须报错（空组求值恒 false，配置者会误以为「这一项没起作用」）",
+      "expectExactCount": true,
+      "expectedProblems": ["嵌套条件组为空"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "含空组的条件",
+            "branches": [
+              { "key": "b1", "name": "含一个空组", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "kind": "RULE", "field": "amount", "op": "GT", "value": 5000 },
+                  { "kind": "GROUP", "condition": { "logic": "AND", "rules": [] } }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "nested-process-field-runtime-dependent",
+      "desc": "M3-A 嵌套组里引用运行期字段 process.prevNodeResult → 校验必须通过（0 问题），但 expectRuntimeDependent=true：提交时判不了、下游须落 INACTIVE。这一条钉的是「运行期依赖判定漏了递归」——它错起来不报任何错，只是工单走错分支",
+      "expectExactCount": true,
+      "expectRuntimeDependent": true,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "嵌套运行期条件",
+            "branches": [
+              { "key": "b1", "name": "上一节点被驳回或金额超限", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "kind": "RULE", "field": "amount", "op": "GT", "value": 5000 },
+                  { "kind": "GROUP", "condition": { "logic": "OR", "rules": [
+                    { "kind": "RULE", "field": "process.prevNodeResult", "op": "EQ", "value": "REJECTED" },
+                    { "kind": "RULE", "field": "title", "op": "CONTAINS", "value": "紧急" }
+                  ] } }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "复核", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "legacy-condition-without-kind",
+      "desc": "M3-A 向后兼容：第二期写的条件（**没有 kind 字段**）必须按 RULE 逐项解析、零问题 —— 存量已发布定义的求值语义不能因为本期扩展而改变一个字",
+      "expectExactCount": true,
+      "expectRuntimeDependent": false,
+      "expectedProblems": [],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "金额判断",
+            "branches": [
+              { "key": "b1", "name": "金额大于5000且标题含紧急", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "field": "amount", "op": "GT", "value": 5000 },
+                  { "field": "title", "op": "CONTAINS", "value": "紧急" }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    },
+    {
+      "id": "nested-group-with-stale-rule-fields",
+      "desc": "M3-A 组信封上残留了 field/op/value（设计器切换类型时写出的半残对象）→ 两端都必须报错：这三个字段在组上没有意义，留着迟早被未来版本的代码读到",
+      "expectExactCount": true,
+      "expectedProblems": ["不应携带字段"],
+      "definition": {
+        "start": "n1",
+        "nodes": [
+          { "key": "n1", "type": "APPROVAL", "name": "主管审批", "signType": "ANY_SIGN", "next": "c1",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "c1", "type": "CONDITION", "name": "含脏值的条件",
+            "branches": [
+              { "key": "b1", "name": "组上带残留字段", "next": "n2",
+                "condition": { "logic": "AND", "rules": [
+                  { "kind": "GROUP", "field": "amount", "op": "GT", "value": 5000,
+                    "condition": { "logic": "AND", "rules": [
+                      { "kind": "RULE", "field": "title", "op": "CONTAINS", "value": "紧急" }
+                    ] } }
+                ] } },
+              { "key": "b2", "name": "其它情况", "next": "end", "else": true }
+            ] },
+          { "key": "n2", "type": "APPROVAL", "name": "财务复核", "signType": "ANY_SIGN", "next": "end",
+            "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+          { "key": "end", "type": "END", "name": "结束" }
+        ]
+      }
+    }
+  ],
+  "knownDivergences": {
+    "$comment": [
+      "两端已识别、但本轮**刻意不修**的差异（避免扩大改动面 / 或差异本身无害）。",
+      "记录在这里是为了「差异被显式承认」——若哪天它悄悄变了，测试会提醒我们回来复核。",
+      "注意：M4a 的最终目标是「前端发布以后端为准」，因此这些本地预检的差异",
+      "不会影响发布结果；它们只影响设计器里的『即时预检』提示的完整度。"
+    ],
+    "items": [
+      {
+        "id": "time-limit-range-ellipsis",
+        "desc": "审批时限越界文案：后端「1..720 小时」 vs 前端「1~720 小时」（纯文案，语义相同）",
+        "backend": "节点「x」的审批时限必须在 1..720 小时之间（当前 N）",
+        "frontend": "节点「x」的审批时限必须在 1~720 小时之间（当前 N）",
+        "harmless": true
+      },
+      {
+        "id": "condition-field-missing-check",
+        "desc": "条件字段不存在 / 是布局元素：后端会报，前端本地预检**不报**（前端仅在字段表里有该项时才进一步校验类型）",
+        "backend": "引用的表单字段「x」不存在 / 引用的字段「x」是布局元素，不能作为条件",
+        "frontend": "（无）",
+        "harmless": false,
+        "mitigation": "由后端 /validate 端点覆盖；前端发布以后端结果为准，故不会漏拦",
+        "sampleDefinition": {
+          "start": "n1",
+          "nodes": [
+            { "key": "n1", "type": "APPROVAL", "name": "审批", "signType": "ANY_SIGN", "next": "c1",
+              "approverRules": [{ "type": "ROLE", "roleCode": "admin" }] },
+            { "key": "c1", "type": "CONDITION", "name": "判断",
+              "branches": [
+                { "key": "b1", "name": "a", "next": "end",
+                  "condition": { "logic": "AND", "rules": [{ "field": "nope", "op": "EQ", "value": "x" }] } },
+                { "key": "b2", "name": "b", "next": "end", "else": true }
+              ] },
+            { "key": "end", "type": "END", "name": "结束" }
+          ]
+        }
+      },
+      {
+        "id": "condition-branch-dup-key-fixed",
+        "desc": "【M4a 已修复】前端「分支标识重复」检查此前从未生效：代码写成 `!branchKeys.add(key)`，而 JS 的 Set.prototype.add 返回 Set 自身（恒为真），导致 `!` 恒为 false。已改为 has+add 两步。",
+        "backend": "分支标识重复：b1",
+        "frontend": "分支标识重复：b1（M4a 修复后与后端一致）",
+        "harmless": false,
+        "mitigation": "已修复，并由金样例用例 condition-branch-dup-key 长期看护"
+      },
+      {
+        "id": "condition-type-mismatch-wording",
+        "desc": "条件运算符与字段类型不匹配文案：后端带字段类型名（…而「金额」是文本），前端只到「不是」",
+        "backend": "…只能用于数字或日期字段，而「x」是文本",
+        "frontend": "…只能用于数字或日期字段，而「x」不是",
+        "harmless": true
+      },
+      {
+        "id": "prev-assign-wording",
+        "desc": "图级 PREV_ASSIGN 文案：后端「上一节点审批人指定」 vs 前端「上一节点指定审批人」（纯文案）",
+        "backend": "使用了「上一节点审批人指定」",
+        "frontend": "使用了「上一节点指定审批人」",
+        "harmless": true
+      },
+      {
+        "id": "end-time-limit-check",
+        "desc": "结束节点配置审批时限：前端会报「不应配置审批时限」，后端不报（后端 END 分支不检查 timeLimitHours）",
+        "backend": "（无）",
+        "frontend": "节点「x」是结束节点，不应配置审批时限",
+        "harmless": true,
+        "mitigation": "前端多报一项，属于更严格的自检，不影响正确流程；如需完全一致可在后端补齐"
+      },
+      {
+        "id": "condition-rule-where-wording",
+        "desc": "条件规则定位文案：后端用「节点「c1」的第 1 个分支」，前端用「…的第 N 条条件」",
+        "backend": "节点「c1」的第 1 个分支的「大于」未填写比较值",
+        "frontend": "节点「c1」的第 1 个分支的第 1 条条件的「大于」未填写比较值",
+        "harmless": true
+      },
+      {
+        "id": "approval-count-upper-bound",
+        "desc": "审批节点数上限：后端有「审批节点数量超过上限 50」，前端无（仅在总节点数 > 50 时报）",
+        "backend": "审批节点数量超过上限 50",
+        "frontend": "（无）",
+        "harmless": true,
+        "mitigation": "总节点数上限已覆盖现实风险（审批节点数 ≤ 总节点数）"
+      },
+      {
+        "id": "null-node-handling",
+        "desc": "数组里含 null 节点：后端报「存在空节点」，前端会跳过或走 '?' 占位（JS 端 null 成员非常见）",
+        "backend": "存在空节点",
+        "frontend": "（跳过 / 依赖非法类型分支）",
+        "harmless": true
+      },
+      {
+        "id": "process-field-unknown-wording",
+        "desc": "未知运行期字段文案：后端「引用了未知的运行期字段「x」，可用字段：…」（附可用清单，便于自查） vs 前端「引用的运行期字段「x」不存在」",
+        "backend": "引用了未知的运行期字段「process.foo」，可用字段：…",
+        "frontend": "引用的运行期字段「process.foo」不存在",
+        "harmless": true,
+        "mitigation": "金样例用例 runtime-unknown-process-field 只断共有片段「运行期字段「process.foo」」，语义一致"
+      },
+      {
+        "id": "process-field-type-wording",
+        "desc": "数值运算符用于非数值运行期字段文案：后端「只能用于数值字段，而运行期字段「x」是选项」 vs 前端「只能用于数字或日期字段，而「x」不是」（前端沿用表单字段那套措辞，未为运行期字段改写）",
+        "backend": "…的「大于」只能用于数值字段，而运行期字段「上一节点结果」是选项",
+        "frontend": "…的「大于」只能用于数字或日期字段，而「上一节点结果」不是",
+        "harmless": true,
+        "mitigation": "金样例用例 runtime-numeric-op-on-option-field 只断字段名片段「「上一节点结果」」；两端都会拦下"
+      },
+      {
+        "id": "process-field-contains-check",
+        "desc": "运行期字段是否做「包含 / 不包含」类型校验：前端会做（仅文本/选项类字段可用），后端不检查（后端只对运行期字段做数值可比性判定，表单字段分支才有 CONTAINS 检查）",
+        "backend": "（无）",
+        "frontend": "…的「包含」只能用于文本或选项字段，而「上一节点耗时(小时)」不是",
+        "harmless": true,
+        "mitigation": "前端多报一项（更严格的自检），不影响发布结果；因两端结论不同，此场景**不纳入**金样例用例"
+      }
+    ]
+  }
+}

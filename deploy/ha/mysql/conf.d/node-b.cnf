@@ -1,0 +1,18 @@
+# =====================================================================
+# MySQL 节点身份 · node-b（初始备节点）
+#
+# 本文件与 node-a.cnf 只有两处不同：server-id 与 auto_increment_offset。
+# 由 .env.ha 的 MYSQL_NODE_CONF 选择挂载哪一份（见 docker-compose.ha.yml）。
+# =====================================================================
+
+[mysqld]
+
+# 集群内唯一标识（node-a=1 / node-b=2）
+server-id = 2
+
+# ---------------- 自增错开（主主复制的防撞机制） ----------------
+# 步长同为 2，偏移取 2 与 node-a 的 1 错开：
+#   node-a 取 1,3,5,7…   node-b 取 2,4,6,8…
+# 详见 node-a.cnf 中对「为什么需要错开」的完整说明。
+auto_increment_increment = 2
+auto_increment_offset    = 2

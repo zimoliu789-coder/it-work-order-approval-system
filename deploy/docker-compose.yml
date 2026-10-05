@@ -1,0 +1,287 @@
+# =====================================================================
+# Docker Compose 编排（：同一套 compose 支持群晖 NAS 与通用 Linux 服务器）
+#
+# 使用步骤：
+#   1) cp .env.production.example .env  并按注释填写（务必改掉全部占位值）
+#   2) bash scripts/preflight.sh        体检 .env、创建数据目录（含正确的属主）
+#   3) docker compose up -d --build
+#   4) docker compose ps                等待各容器 healthy
+#
+# 拓扑：
+#   客户端 → 外层反代(TLS: 群晖 DSM / 宿主 Nginx / Caddy)
+#          → nginx 容器:80（宿主 ${WEB_PORT}）  ← 唯一对宿主暴露的入口
+#               ├→ frontend:80    前端静态资源
+#               └→ backend:8080   接口
+#   数据网内：backend → mysql / redis；backup → mysql / backend
+#
+# 硬性约定：
+#   - 所有宿主路径取自 .env（DATA_ROOT / BACKUP_DIR），不硬编码 /volume1 等平台路径；
+#   - 除 nginx 外任何服务都【不发布端口】，数据库与缓存在网络层就不可从宿主直达；
+#   - 全部服务开启日志滚动，避免 json-file 日志把 NAS 磁盘写满。
+# =====================================================================
+
+name: ticket-system
+
+# 日志滚动策略（）。集中定义后由各服务引用，避免漏配某一个服务。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ------------------------------------------------------------------
+  # MySQL 8（ / ：持久化到 ${DATA_ROOT}/mysql）
+  # 不发布端口：只有同一网络内的 backend / backup 能连上
+  # ------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: ticket-mysql
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # :? 语法 = 缺失即报错退出。宁可起不来，也不要让容器用空口令跑起来
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env 中设置 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+    volumes:
+      - ${DATA_ROOT:?必须在 .env 中设置 DATA_ROOT}/mysql:/var/lib/mysql
+      - ./mysql/conf.d:/etc/mysql/conf.d:ro
+    networks:
+      - data-net
+    logging: *default-logging
+    healthcheck:
+      # 用 mysqladmin ping 判断：只有服务真正接受连接才算健康。
+      # 端口探测在 MySQL 初始化阶段就会「看起来正常」，会导致后端过早启动并连接失败。
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ------------------------------------------------------------------
+  # Redis 7（ 限流计数器 /  临时锁 / 令牌黑名单）
+  # 口令通过命令行参数注入而不是 redis.conf：
+  #   redis 配置文件不支持环境变量插值，若用配置文件就必须把口令写进文件 ——
+  #   那会让人产生「往仓库里的配置文件填真实口令」的冲动，与 禁止提交密钥直接冲突。
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ticket-redis
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?必须在 .env 中设置 REDIS_PASSWORD}
+    command:
+      - redis-server
+      - --dir
+      - /data
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?必须在 .env 中设置 REDIS_PASSWORD}
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      # noeviction 是刻意选择：本实例存的是临时锁、限流计数、令牌黑名单。
+      # 若用 LRU 淘汰，被淘汰的锁会让「同一设备只能被一人锁定」静默失效，
+      # 被淘汰的黑名单会让已登出的令牌重新可用。宁可写入失败（可观测）也不要静默丢安全数据。
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - ${DATA_ROOT}/redis:/data
+    networks:
+      - data-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # 后端（Spring Boot 3.2.5 / JDK 21）
+  # ------------------------------------------------------------------
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: ticket-system-backend:${IMAGE_TAG:-latest}
+    container_name: ticket-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 生产 profile：缺凭据即启动失败，绝不回落 dev（dev 携带公开占位密钥与演示口令）
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+
+      # ---- 数据库 ----
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env 中设置 MYSQL_ROOT_PASSWORD}
+
+      # ---- 缓存 ----
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?必须在 .env 中设置 REDIS_PASSWORD}
+
+      # ---- 应用密钥（：一律由 .env 注入，不写死进镜像）----
+      JWT_SECRET: ${JWT_SECRET:?必须在 .env 中设置 JWT_SECRET}
+      SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-administrator}
+      SUPER_ADMIN_DISPLAY_NAME: ${SUPER_ADMIN_DISPLAY_NAME:-超级管理员}
+      SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:?必须在 .env 中设置 SUPER_ADMIN_INIT_PASSWORD}
+      INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env 中设置 INTERNAL_ALERT_TOKEN}
+
+      # ---- 会话 Cookie ----
+      # 外层反代已做 HTTPS，因此必须为 true，否则 Cookie 会在明文 HTTP 上传输
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
+      # 生产同源代理，默认关闭跨域
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+
+      # ---- 可信反向代理网段（ /  限流维度的前提）----
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+
+      # ---- 数据落盘位置（全部在 DATA_ROOT 之下，便于整体备份与迁移）----
+      ATTACHMENT_STORAGE_ROOT: /data/attachments
+      EXPORT_STORAGE_ROOT: /data/exports
+      LOG_PATH: /data/logs
+
+      # ---- 演示数据必须关闭 ----
+      # DemoDataInitializer 会创建演示员工与分组；生产开着等于凭空多出一批可登录账号
+      DEMO_DATA_ENABLED: "false"
+    volumes:
+      - ${DATA_ROOT}/attachments:/data/attachments
+      - ${DATA_ROOT}/exports:/data/exports
+      - ${DATA_ROOT}/logs:/data/logs
+    # 仅声明端口供同网络服务访问，不映射到宿主
+    expose:
+      - "8080"
+    networks:
+      - edge-net
+      - data-net
+    logging: *default-logging
+
+  # ------------------------------------------------------------------
+  # 前端静态站（构建产物 + 仅托管静态文件的 Nginx）
+  # ------------------------------------------------------------------
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: ticket-system-frontend:${IMAGE_TAG:-latest}
+    container_name: ticket-frontend
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    networks:
+      - edge-net
+    logging: *default-logging
+
+  # ------------------------------------------------------------------
+  # 边缘 Nginx：唯一对宿主暴露的入口（${WEB_PORT} → 容器 80）
+  # TLS 由外层反代处理，本容器不需要 443，也不需要证书
+  # ------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ticket-nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      # 访问日志持久化到 DATA_ROOT（），并同样受宿主磁盘容量约束
+      - ${DATA_ROOT}/logs/nginx:/var/log/nginx
+    networks:
+      - edge-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # 备份作业容器（：每日全量备份 + 失败不得静默）
+  # 不用宿主 crontab 而用容器内 cron 的原因：
+  #   群晖的「任务计划」与 Linux 的 crontab 语法完全不同，容器内 cron 让两个平台
+  #   共用同一套调度配置（BACKUP_CRON），符合「同一套 compose 跨平台」。
+  # ------------------------------------------------------------------
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: ticket-system-backup:${IMAGE_TAG:-latest}
+    container_name: ticket-backup
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # cron 表达式（容器时区为 TZ，默认每天凌晨 2 点）
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+      BACKUP_DIR: /backup
+      BACKUP_NOTIFY_SUCCESS: ${BACKUP_NOTIFY_SUCCESS:-false}
+
+      # 数据库导出参数
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ticket_system}
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env 中设置 MYSQL_ROOT_PASSWORD}
+
+      # 打包内容：附件目录 + 配置文件（.env 所在目录，只读挂载）
+      ATTACHMENTS_DIR: /source/attachments
+      CONFIG_DIR: /deploy
+
+      # 失败告警通道（：备份失败必须通知超管）
+      ALERT_URL: http://backend:8080/api/internal/alerts/backup
+      INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env 中设置 INTERNAL_ALERT_TOKEN}
+    volumes:
+      # 备份产物落在宿主独立目录，与生产数据物理分离（ 明确要求）
+      - ${BACKUP_DIR:?必须在 .env 中设置 BACKUP_DIR}:/backup
+      - ${DATA_ROOT}/attachments:/source/attachments:ro
+      # 只读挂载整个 deploy 目录：备份脚本需要读取 .env 打进归档。
+      # 之所以挂目录而不是挂单个 .env 文件：Docker 在源文件不存在时会把挂载点建成【目录】，
+      # 出现「.env 变成一个空目录」的诡异结果，而脚本随后读到的内容为空却不会报错。
+      - ./:/deploy:ro
+    networks:
+      - data-net
+    logging: *default-logging
+
+networks:
+  # 边缘网络：nginx ↔ frontend ↔ backend
+  edge-net:
+    driver: bridge
+  # 数据网络：backend ↔ mysql / redis，以及 backup ↔ mysql / backend
+  #
+  # 说明：这里刻意没有设 internal: true。
+  # internal: true 可以进一步切断 mysql/redis/backup 的公网出口，属于更严的加固；
+  # 但若后续希望备份容器把归档推送到异地（rsync / 对象存储 / Webhook），
+  # 内网模式会让它直接连不通，且现象是「超时」而非明确的拒绝，排查成本高。
+  # 当前的实际隔离手段是：本网络内没有任何服务发布端口，宿主与公网都无法直达数据库。
+  data-net:
+    driver: bridge

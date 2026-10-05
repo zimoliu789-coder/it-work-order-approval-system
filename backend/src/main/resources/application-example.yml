@@ -1,0 +1,170 @@
+# =====================================================================
+# 配置模板（application-example.yml）—— 逐项说明怎么填
+#
+# 用法（三选一）：
+#   1. 本地开发：把本文件复制为 `application-local.yml`（已被 .gitignore 忽略，
+#      不会误提交），用 `--spring.profiles.active=local` 启动；
+#   2. 服务器部署：**推荐用环境变量**（下文每个 ${XXX} 都可在 .env / compose 中注入），
+#      不要把真实密码写进本文件；
+#   3. 需要静态文件时，复制为 `application-prod.yml` 的同级文件并在其上覆盖。
+#
+# ⚠️ 注意：文件名不是 `application.yml` / `application-{profile}.yml`，
+#    因此 Spring Boot **不会自动加载**它；只有显式 `spring.profiles.active=example`
+#    才会生效。请勿把真实密钥写在这里并提交。
+#
+# ⚠️ 生产环境**绝不允许**出现明文密码、密钥。带 `${VAR}` 的项请用环境变量注入。
+# =====================================================================
+
+server:
+  # 后端监听端口。默认 8080；被占用时改这里（前端 Vite 代理也要同步改）。
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /
+  # 保持 none（不要改成 framework/native）：真实客户端 IP 由 SecurityUtils 按可信代理链解析，
+  # 交给容器解析会让 X-Forwarded-For 的最左值（客户端可伪造）覆盖真实来源。
+  forward-headers-strategy: none
+  compression:
+    enabled: true
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+
+spring:
+  profiles:
+    # dev = 加载演示数据（DemoDataInitializer，仅 dev）；prod = 加载 application-prod.yml
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    # 主机 / 端口 / 库名 / 账号 / 密码 —— 生产一律用环境变量，不要写明文
+    # 例：MYSQL_HOST=192.168.1.20  MYSQL_PASSWORD=<强密码>
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:ticket_system}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_general_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  flyway:
+    enabled: true
+    # 生产禁止 clean（避免误清库）
+    clean-disabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+
+  data:
+    redis:
+      # 用于限流计数、登录锁定、令牌黑名单、异常登录基线。**必配**，否则限流退化为内存态。
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+
+mybatis-plus:
+  configuration:
+    # 生产建议关 SQL 日志（NoLoggingImpl）；排查问题时临时改 StdOutImpl
+    log-impl: ${MYBATIS_LOG_IMPL:org.apache.ibatis.logging.nologging.NoLoggingImpl}
+
+app:
+  jwt:
+    # JWT 签名密钥。生产**必填**，不少于 32 字节随机串。
+    # 生成示例（Linux）：openssl rand -base64 48
+    secret: ${JWT_SECRET:}
+    # 登录有效期（分钟）。运行期以「系统参数 → jwt_expire_minutes」为准，这里只是缺省值。
+    expire-minutes: 720
+    # HTTPS 环境置 true（Cookie 只走加密通道）；本地 http 调试置 false
+    cookie-secure: ${COOKIE_SECURE:false}
+    cookie-same-site: Lax
+
+  security:
+    # 可信反向代理网段。**默认留空 = 不采信任何 X-Forwarded-For / X-Real-IP**，
+    # 即只认 TCP 对端地址（最安全，内网直连部署用这个）。
+    # ⚠️ 部署在 Nginx / 群晖反代之后时**必须**填代理自己的地址，否则：
+    #    · 不填 → 后端看到的客户端 IP 全是代理地址，登录限流会把整片人当成一个人；
+    #    · 填成整个内网段（如 10.0.0.0/8）→ 任何内网客户端都能伪造 XFF 绕过限流。
+    # 取值示例：TRUSTED_PROXIES=127.0.0.1/32（同机代理）或 192.168.1.10（独立代理机）
+    trusted-proxies: "${TRUSTED_PROXIES:}"
+
+  cors:
+    # 前后端分离开发时填前端地址；生产由 Nginx 同源代理，留空（不开启跨域）
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+
+  # -------------------------------------------------------------------
+  # 超级管理员初始化
+  #   默认留空：库中没有超管时，访问系统会跳到「初始化向导」，由你现场设定账号名与密码。
+  #   仅当需要无人值守自动建号时，才同时提供下面两项（账号名不能用 employee 的纯数字规则，
+  #   这里允许字母）。
+  # -------------------------------------------------------------------
+  super-admin:
+    username: ${SUPER_ADMIN_USERNAME:}
+    display-name: ${SUPER_ADMIN_DISPLAY_NAME:超级管理员}
+    init-password: ${SUPER_ADMIN_INIT_PASSWORD:}
+
+  # -------------------------------------------------------------------
+  # 演示数据（仅 dev profile 生效；生产请保持 enabled=false）
+  #   enabled=true 时会创建演示部门 / 员工 / 设备 / 工单，便于开箱走查。
+  #   ⚠️ app.demo.apply-config-enabled 生产**必须为 false**：它会在每次启动重建
+  #      演示申请类型与演示流程，与「清空演示数据」直接冲突。
+  # -------------------------------------------------------------------
+  demo:
+    enabled: ${DEMO_DATA_ENABLED:false}
+    user-init-password: ${DEMO_USER_INIT_PASSWORD:}
+    apply-config-enabled: ${DEMO_APPLY_CONFIG_ENABLED:false}
+
+  # -------------------------------------------------------------------
+  # 生产初始化清库（一次性）
+  #   首次上线若库中带演示数据，置 APP_PROD_INIT=true 启动一次即可清空：
+  #   演示员工 / 部门（只留根节点「公司」）/ 工单 / 设备 / 演示申请数据。
+  #   保留：表结构、系统参数、权限目录、预置申请类型的表单与流程定义。
+  #   清空成功后自动落标记，**再次启动不会重跑**（可放心保留该环境变量）。
+  # -------------------------------------------------------------------
+  prod-init:
+    enabled: ${APP_PROD_INIT:false}
+
+  attachment:
+    # 附件本体落盘目录。生产建议指向 NAS 挂载点（如 /mnt/nas/ticket/attachments）
+    storage-root: ${ATTACHMENT_STORAGE_ROOT:./data/attachments}
+    max-size-mb: ${ATTACHMENT_MAX_SIZE_MB:10}
+    max-per-biz: ${ATTACHMENT_MAX_PER_BIZ:10}
+
+  export:
+    # 导出文件目录（与附件分开，便于按过期清理）
+    storage-root: ${EXPORT_STORAGE_ROOT:./data/exports}
+    async-threshold: ${EXPORT_ASYNC_THRESHOLD:10000}
+    max-rows: ${EXPORT_MAX_ROWS:200000}
+    expire-days: ${EXPORT_EXPIRE_DAYS:7}
+
+  site:
+    # 站点 logo 落盘目录（与附件分开：logo 不对应业务记录，混放会被孤儿清理任务删掉）
+    storage-root: ${SITE_STORAGE_ROOT:./data/site}
+    logo-max-size-mb: ${SITE_LOGO_MAX_SIZE_MB:10}
+
+  ops:
+    # 备份失败 / 主备心跳上报的内部通道密钥（脚本 → 应用，无用户会话）。
+    # 留空 = 关闭该通道（fail-closed）。建议与 JWT_SECRET 一样用随机串。
+    internal-alert-token: ${INTERNAL_ALERT_TOKEN:}
+
+  # 数据库自动备份（应用内。Docker 侧车备份与本项**不要同时开启**）
+  backup:
+    dir: ${BACKUP_DIR:./data/backup}
+    # mysqldump 完整路径；Windows 常需 .../bin/mysqldump.exe，Linux 用 /usr/bin/mysqldump
+    mysqldump: ${BACKUP_MYSQLDUMP:}
+    timeout-seconds: ${BACKUP_TIMEOUT_SECONDS:1800}
+
+  # 在线一键升级：默认关闭（能替换服务器上的可执行文件，等价于代码执行能力）
+  upgrade:
+    enabled: ${UPGRADE_ENABLED:false}
+    storage-root: ${UPGRADE_STORAGE_ROOT:./data/upgrade}
+    apply-command: ${UPGRADE_APPLY_COMMAND:}
+
+  # 主备双机热备：dry-run 默认 true（只组装命令不执行）
+  ha:
+    deploy-dir: ${HA_DEPLOY_DIR:}
+    dry-run: ${HA_DRY_RUN:true}
+
+logging:
+  level:
+    root: ${LOG_LEVEL_ROOT:info}
+    com.enterprise.ticket: ${LOG_LEVEL_APP:info}

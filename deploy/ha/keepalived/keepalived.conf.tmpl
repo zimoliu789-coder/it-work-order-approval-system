@@ -1,0 +1,135 @@
+# =====================================================================
+# keepalived 配置模板（两台机器共用）
+#
+# 本文件不是可直接使用的配置，而是模板：由 scripts/install-keepalived.sh
+# 读取 .env.ha 把 __占位符__ 替换掉，再安装到 /etc/keepalived/keepalived.conf。
+#
+# 为什么用模板渲染，而不是维护 node-a.conf / node-b.conf 两份手写配置：
+#   两份手写配置里 90% 内容相同，任何一次改动（换网卡、调超时、改 VIP）
+#   都要改两处，而漏改一处不会报错 —— 表现为「一台正常、另一台行为诡异」，
+#   属于最难排查的一类问题。模板 + 单一数据源（.env.ha）从根上消除这个风险。
+# =====================================================================
+
+global_defs {
+    # 节点标识，出现在日志里，用于区分是哪台机发出的 VRRP 报文
+    router_id __ROUTER_ID__
+
+    # 要求 track_script 指定的脚本必须属 root 且不可被非 root 写 ——
+    # 否则任何能改写该脚本的用户都等于能操纵 VIP，是提权路径。
+    enable_script_security
+    script_user root
+}
+
+# ---------------------------------------------------------------------
+# 健康检查：本机「Nginx → 后端」链路是否真的可用。
+#
+# weight -30：检查失败时本机优先级降 30（150→120、100→70），
+#   从而让对端胜出并接管 VIP。
+# fall / rise 各 2 次：连续 2 次失败才判故障、连续 2 次成功才判恢复，
+#   避免一次 JVM GC 停顿或网络抖动就直接触发切换。
+# 探测链路选 /api/health（经 Nginx 打后端）而不是单探 Nginx：
+#   单探 Nginx 会在「Nginx 活着但后端已死」时仍判健康，用户拿到一堆 503 却不切换。
+# ---------------------------------------------------------------------
+vrrp_script chk_ticket {
+    script "/etc/keepalived/check-ticket.sh"
+    interval 5
+    timeout 4
+    weight -30
+    fall 2
+    rise 2
+}
+
+# ---------------------------------------------------------------------
+# VIP ①：Web 入口（外层反向代理 / DNS 指向它）
+#
+# state 两侧都固定为 BACKUP，而不是 MASTER/BACKUP 一主一备：
+#   配合 nopreempt（不抢占），避免「主机修好后重新抢回 VIP」造成的第二次中断 ——
+#   对用户而言，一次故障只应打断一次。
+#   谁是主由 priority 决定（150 胜 100），发生漂移后不会自动回切。
+#   注意：nopreempt 仅在 state BACKUP 下有效；写 MASTER 会被 keepalived 忽略并告警。
+# ---------------------------------------------------------------------
+vrrp_instance VI_WEB {
+    state BACKUP
+    interface __IFACE__
+    virtual_router_id __VRRP_ID_WEB__
+    priority __PRIORITY__
+    advert_int 1
+    nopreempt
+
+    # 单播 VRRP：默认的多播（224.0.0.18）常被交换机 IGMP snooping 或云安全组拦掉，
+    #   现象是「两台都认为自己是主」从而同时持有同一个 VIP（脑裂）。
+    #   单播只在一对已知地址之间通信，可控且便于在防火墙上精确放行。
+    unicast_src_ip __NODE_IP__
+    unicast_peer {
+        __PEER_IP__
+    }
+
+    # PASS 认证：两台必须使用同一口令，否则双方互相忽略报文（同样是脑裂）
+    authentication {
+        auth_type PASS
+        auth_pass __VRRP_AUTH_PASS__
+    }
+
+    virtual_ipaddress {
+        __VIP_WEB__/__VIP_MASK__
+    }
+
+    track_script {
+        chk_ticket
+    }
+
+    # -----------------------------------------------------------------
+    # 状态变化通知（Phase 19 批次 G）
+    #
+    # 「切换发生时通知管理员」这条要求，后端无法自己发现 —— 它看不到 VRRP
+    #   状态机，唯一能告知它的就是 keepalived 自己。因此在这三个钩子上
+    #   调用 notify-ha.sh，由它把事件 POST 给本机后端。
+    #
+    # 为什么【只挂在 VI_WEB】上，不挂 VI_DB：
+    #   两个 VIP 独立漂移（见上方 VI_DB 的注释），而管理员关心的是
+    #   「服务由哪台机器提供」—— 那是由 Web VIP 决定的。
+    #   若两个实例都挂，一次整机故障会对同一件事推两条通知；
+    #   而 DB VIP 单独漂移（Web 没动）时推通知又会让人以为服务切过了。
+    #   DB VIP 的归属可通过「数据同步」与页面的 VIP 展示观察。
+    #
+    # notify_fault 也接上：本机判自身不健康、放弃 VIP 时留一条日志。
+    #   它【不】上报「切换发生」（接管方尚未确定），由接管方自己上报。
+    # -----------------------------------------------------------------
+    notify_master "/etc/keepalived/notify-ha.sh MASTER"
+    notify_backup "/etc/keepalived/notify-ha.sh BACKUP"
+    notify_fault  "/etc/keepalived/notify-ha.sh FAULT"
+}
+
+# ---------------------------------------------------------------------
+# VIP ②：数据库入口（后端与备份容器的连接串固定指向它）
+#
+# 与 VI_WEB 相互独立，因此可能出现「Web VIP 在 A、DB VIP 在 B」的分离状态：
+#   这样「已建立的会话仍能读取页面」而「新的写请求会失败」，
+#   故障域比「两个 VIP 绑在一起整体切换」更小，也更容易判断问题出在哪一层。
+# ---------------------------------------------------------------------
+vrrp_instance VI_DB {
+    state BACKUP
+    interface __IFACE__
+    virtual_router_id __VRRP_ID_DB__
+    priority __PRIORITY__
+    advert_int 1
+    nopreempt
+
+    unicast_src_ip __NODE_IP__
+    unicast_peer {
+        __PEER_IP__
+    }
+
+    authentication {
+        auth_type PASS
+        auth_pass __VRRP_AUTH_PASS__
+    }
+
+    virtual_ipaddress {
+        __VIP_DB__/__VIP_MASK__
+    }
+
+    track_script {
+        chk_ticket
+    }
+}

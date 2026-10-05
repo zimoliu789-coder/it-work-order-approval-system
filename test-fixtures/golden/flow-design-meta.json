@@ -1,0 +1,18 @@
+{
+  "conditionMaxDepth": 3,
+  "scopes": [
+    { "code": "CUSTOM", "forbiddenRuleTypes": [] },
+    { "code": "BORROW", "forbiddenRuleTypes": ["FORM_USER_FIELD", "APPLICANT_CHOOSE"] }
+  ],
+  "ruleTypes": [
+    { "code": "SPECIFIC_USER", "params": ["userIds"] },
+    { "code": "ROLE", "params": ["roleCode"] },
+    { "code": "LEADER", "params": [] },
+    { "code": "BIZ_GROUP_APPROVERS", "params": [] },
+    { "code": "PARENT_DEPT_APPROVERS", "params": [] },
+    { "code": "HANDLER_GROUP", "params": ["handlerGroupId"] },
+    { "code": "FORM_USER_FIELD", "params": ["fieldKey"] },
+    { "code": "PREV_ASSIGN", "params": ["assignCount", "assignScope"] },
+    { "code": "APPLICANT_CHOOSE", "params": ["choose"] }
+  ]
+}

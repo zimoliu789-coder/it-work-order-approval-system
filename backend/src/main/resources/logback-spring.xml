@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  日志配置（ 日志、 操作日志保留、 Docker 日志滚动）
+  日志目录通过环境变量 LOG_PATH 注入，Docker 中指向 ${DATA_ROOT}/logs，不硬编码平台特定路径。
+  控制台保留彩色输出便于 Windows 本地调试，文件按天 + 按大小双维度滚动。
+-->
+<configuration scan="false">
+
+  <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="ticket-system"/>
+
+  <property name="LOG_PATH"  value="${LOG_PATH:-./logs}"/>
+  <property name="LOG_FILE"  value="${LOG_PATH}/${APP_NAME}"/>
+  <property name="PATTERN"   value="%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-}] %logger{40} - %msg%n"/>
+  <!-- 操作日志/业务日志文件保留天数（ 默认 90 天） -->
+  <property name="MAX_HISTORY" value="${LOG_MAX_HISTORY:-90}"/>
+  <property name="MAX_FILE_SIZE" value="${LOG_MAX_FILE_SIZE:-50MB}"/>
+  <property name="TOTAL_SIZE_CAP" value="${LOG_TOTAL_SIZE_CAP:-5GB}"/>
+
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %highlight(%-5level) [%X{traceId:-}] %cyan(%logger{36}) - %msg%n</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <appender name="FILE_ALL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_FILE}-all.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_FILE}-all.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+      <maxHistory>${MAX_HISTORY}</maxHistory>
+      <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+      <cleanHistoryOnStart>false</cleanHistoryOnStart>
+    </rollingPolicy>
+    <encoder>
+      <pattern>${PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <appender name="FILE_ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_FILE}-error.log</file>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>WARN</level>
+    </filter>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_FILE}-error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+      <maxHistory>${MAX_HISTORY}</maxHistory>
+      <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>${PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <!-- 审计日志单独落文件，便于合规检查与追溯 -->
+  <appender name="FILE_AUDIT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${LOG_FILE}-audit.log</file>
+    <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+      <fileNamePattern>${LOG_FILE}-audit.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+      <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+      <maxHistory>${MAX_HISTORY}</maxHistory>
+      <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+    </rollingPolicy>
+    <encoder>
+      <pattern>${PATTERN}</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <logger name="AUDIT" level="INFO" additivity="false">
+    <appender-ref ref="FILE_AUDIT"/>
+    <appender-ref ref="CONSOLE"/>
+  </logger>
+
+  <logger name="org.springframework" level="INFO"/>
+  <logger name="com.baomidou.mybatisplus" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="FILE_ALL"/>
+    <appender-ref ref="FILE_ERROR"/>
+  </root>
+</configuration>

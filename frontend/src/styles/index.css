@@ -1,0 +1,146 @@
+/**
+ * 全局样式与响应式断点（ 浏览器兼容性与响应式 UI、 前端 UI 规范）
+ *
+ * 断点定义：
+ *   0-767px    手机
+ *   768-1199px 平板
+ *   1200px+    PC
+ */
+
+:root {
+  --ts-primary: #1f3a5f;
+  --ts-primary-light: #2f5b8f;
+  --ts-accent: #1668dc;
+  --ts-bg: #f4f6f9;
+  --ts-surface: #ffffff;
+  --ts-border: #e3e8ef;
+  --ts-text: #1f2937;
+  --ts-text-secondary: #5b6472;
+  --ts-text-hint: #97a0ad;
+  --ts-danger: #d93025;
+  --ts-warning: #d48806;
+
+  /* 布局尺寸 */
+  --ts-header-height: 56px;
+  --ts-sidebar-width: 220px;
+  --ts-radius: 10px;
+
+  /* 移动端安全区域（刘海屏 / 底部手势条） */
+  --ts-safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ts-text);
+  background-color: var(--ts-bg);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* 禁止无意义的横向滚动（ 明确要求） */
+body {
+  overflow-x: hidden;
+}
+
+a {
+  color: var(--ts-accent);
+  text-decoration: none;
+}
+
+/* 触控友好：移动端保证足够点击面积（） */
+@media (max-width: 767px) {
+  .el-button {
+    min-height: 40px;
+  }
+
+  /* 移动端弹窗贴合屏幕，避免超出可视区域 */
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin: 12vh auto 0 !important;
+  }
+
+  .el-dialog__body {
+    padding: 16px;
+  }
+
+  /* 表单在手机上单列展开 */
+  .el-form-item {
+    margin-bottom: 16px;
+  }
+}
+
+/* 通用工具类 */
+.ts-page {
+  padding: 16px;
+}
+
+.ts-card {
+  background: var(--ts-surface);
+  border-radius: var(--ts-radius);
+  border: 1px solid var(--ts-border);
+  padding: 20px;
+}
+
+.ts-text-secondary {
+  color: var(--ts-text-secondary);
+}
+
+.ts-text-hint {
+  color: var(--ts-text-hint);
+}
+
+.ts-mt-8 {
+  margin-top: 8px;
+}
+
+.ts-mt-16 {
+  margin-top: 16px;
+}
+
+.ts-mb-16 {
+  margin-bottom: 16px;
+}
+
+.ts-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 移动端隐藏 PC 专用元素 */
+.ts-pc-only {
+  display: block;
+}
+
+.ts-mobile-only {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .ts-pc-only {
+    display: none !important;
+  }
+
+  .ts-mobile-only {
+    display: block !important;
+  }
+
+  .ts-page {
+    padding: 12px;
+  }
+}

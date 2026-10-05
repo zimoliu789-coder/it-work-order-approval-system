@@ -1,0 +1,66 @@
+# =====================================================================
+# 生产环境（Synology NAS Docker / 通用 Linux 服务器）
+# 启动：docker compose up -d（.env 由 compose 注入环境变量）
+# 规范依据：第 2.2 章、第 30 章
+# 硬性要求：本文件中不得出现任何真实密码、密钥；
+#           JWT_SECRET / MYSQL_PASSWORD / SUPER_ADMIN_INIT_PASSWORD 必须由 .env 注入。
+# =====================================================================
+
+spring:
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:ticket_system}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_general_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD}
+    hikari:
+      maximum-pool-size: 30
+      minimum-idle: 10
+  flyway:
+    # 生产环境禁止 clean
+    clean-disabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      database: ${REDIS_DATABASE:0}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    # HTTPS 下必须为 true。TLS 在外层反向代理（群晖反代 / 宿主 Nginx / Caddy）终止，
+    # 容器内是明文 HTTP，因此这里只能由配置显式声明，不能靠 request.isSecure() 推断。
+    cookie-secure: ${COOKIE_SECURE:true}
+    cookie-same-site: ${COOKIE_SAME_SITE:Lax}
+  cors:
+    # 生产由 Nginx 同源代理，默认为空表示不开启跨域
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  security:
+    # ⚠️ 默认**留空**（fail-closed），不采信任何转发头。
+    # 若默认信任 10/8、172.16/12、192.168/16，则任何内网客户端都能自选 XFF 伪造身份。
+    # 确在反向代理之后时，必须用 TRUSTED_PROXIES 精确指定那一个代理地址
+    # （如 TRUSTED_PROXIES=192.168.1.10 或 127.0.0.1/32），否则后端看到的客户端 IP
+    # 会退化成代理地址、登录限流误伤全部用户（启动日志有 WARN 提示）。
+    trusted-proxies: "${TRUSTED_PROXIES:}"
+  ops:
+    # 备份失败告警通道密钥（）；必填，留空则告警接口不可用
+    internal-alert-token: ${INTERNAL_ALERT_TOKEN}
+  super-admin:
+    # ⚠️ 本次改造起**留空**：不再写死 administrator、也不再自动建号。
+    #    · 库中无超管时 → 前端引导到「初始化向导 /setup」，由管理员现场设定账号名与密码；
+    #    · 需要无人值守建号时才同时提供 SUPER_ADMIN_USERNAME + SUPER_ADMIN_INIT_PASSWORD。
+    username: ${SUPER_ADMIN_USERNAME:}
+    display-name: ${SUPER_ADMIN_DISPLAY_NAME:超级管理员}
+    init-password: ${SUPER_ADMIN_INIT_PASSWORD:}
+  # 生产初始化清库（一次性）：默认 false。首次上线若库中带演示数据，
+  # 置 APP_PROD_INIT=true 启动一次即可清空；完成后自动落标记，再次启动不会重跑。
+  prod-init:
+    enabled: ${APP_PROD_INIT:false}
+
+logging:
+  level:
+    root: warn
+    com.enterprise.ticket: info

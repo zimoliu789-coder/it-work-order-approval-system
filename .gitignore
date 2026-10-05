@@ -1,0 +1,64 @@
+# ---------------- 通用 ----------------
+.env
+.env.local
+.env.*.local
+# HA 部署的环境变量文件（含全部密钥）。必须与 .env 同等对待。
+# 注意：.env.ha.example / .env.production.example 是模板，要提交，故不能用 .env.* 通用模式。
+.env.ha
+*.log
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.swp
+
+# ---------------- 后端（Maven） ----------------
+backend/target/
+backend/logs/
+!backend/src/**/target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# ---------------- 前端（Vite） ----------------
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/logs/
+# unplugin 生成的类型声明为构建产物
+frontend/src/types/auto-imports.d.ts
+frontend/src/types/components.d.ts
+
+# ---------------- 运行期数据 ----------------
+# 这些是【项目根目录】下的运行期数据目录，必须用前导 / 锚定到根目录。
+# 不加前导 / 时模式会匹配任意层级同名目录，从而误伤部署配置：
+#   mysql/  → 连带忽略 deploy/mysql/（单机版 MySQL 调优配置）与 deploy/ha/mysql/（主主复制配置）
+#   redis/  → 连带忽略 deploy/ha/redis/（哨兵配置）
+# 这类误伤不会报错，只是那些配置文件静默不进版本库 —— 克隆出来的仓库缺文件，极难排查。
+/data/
+/mysql/
+/redis/
+/attachments/
+/backups/
+
+# ---------------- 上传 GitHub 前必须忽略的项（本次新增） ----------------
+# 本地配置：里面会有数据库口令 / SMTP 授权码，绝不能进版本库
+application-local.yml
+# 构建产物与依赖
+target/
+node_modules/
+dist/
+# 运行期上传与备份目录（可能存在于任意层级）
+uploads/
+/backup/
+/backups/
+# 本机开发工作区与运行期数据（不应进版本库）
+.docs/
+.workbuddy/
+.tmp-m1-hdr/
+backend/data/
+# 例外：测试资源下的 target 目录需保留（与上方 backend 段的说明一致，必须是最后一条，
+# 否则会被上面的 target/ 规则重新忽略掉）
+!backend/src/**/target/
