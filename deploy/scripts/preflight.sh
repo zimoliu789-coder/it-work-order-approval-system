@@ -7,7 +7,7 @@
 #   - .env 仍留着 __CHANGE_ME__ 占位值（最常见）→ 容器能起来但登录不上 / 密钥无效
 #   - 密钥过短（JWT_SECRET < 32 字节）→ 后端启动即报错退出，日志要翻很久才看懂
 #   - 数据目录属主不对 → 后端（以 uid 10001 运行）写不了日志，健康检查永远不通过
-#   - BACKUP_DIR 与 DATA_ROOT 同盘 → 磁盘故障时备份与生产数据一起消失
+#   - BACKUP_DIR 与 DATA_ROOT 同盘 → 磁盘故障时备份与生产数据一起消失（仅启用备份容器时相关）
 #   - WEB_PORT 被占用 → nginx 起不来，报「address already in use」
 #   - 磁盘空间不足 → mysqldump 跑到一半把盘写满，连带影响生产库
 #
@@ -72,7 +72,9 @@ set +a
 # 需要检查的必填项
 # 注意：SUPER_ADMIN_INIT_PASSWORD **不在必填之列** —— 留空表示走「初始化向导」，
 #       由管理员首次访问时现场设定账号名与密码，这是推荐的默认路径。
-for VAR in DATA_ROOT BACKUP_DIR MYSQL_ROOT_PASSWORD REDIS_PASSWORD JWT_SECRET INTERNAL_ALERT_TOKEN; do
+# 注意：BACKUP_DIR 不在必填之列 —— 备份容器默认不启动（docker compose --profile backup 才启用），
+#       启用后留空会自动落到 ${DATA_ROOT}/backup。
+for VAR in DATA_ROOT MYSQL_ROOT_PASSWORD REDIS_PASSWORD JWT_SECRET INTERNAL_ALERT_TOKEN; do
   eval "VALUE=\"\${$VAR:-}\""
   if [ -z "$VALUE" ]; then
     err "$VAR 未设置或为空"
@@ -122,7 +124,9 @@ case "${DATA_ROOT:-}" in
 esac
 
 case "${BACKUP_DIR:-}" in
-  "" | "/") err "BACKUP_DIR 取值非法（${BACKUP_DIR:-空}）：不允许使用根目录" ;;
+  # 未填 = 未启用备份容器（profile backup 未激活），合法
+  "") : ;;
+  "/") err "BACKUP_DIR 取值非法：不允许使用根目录" ;;
   *) ok "BACKUP_DIR = $BACKUP_DIR" ;;
 esac
 
