@@ -200,6 +200,13 @@ git clone <仓库地址> ticket-system      # 或用你现有的同步方式
 cd ticket-system/deploy/ha
 ```
 
+> **镜像来源（免本地编译）**：应用镜像 `backend` / `frontend` / `backup` 已由 GitHub Actions 自动构建并推送到
+> **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取**。
+> 部署只需：clone 仓库 → 进入 `deploy` 目录 → 复制并填写 `.env` → 执行 `docker compose up -d`，
+> 会自动从 GHCR 拉取镜像，**无需本地编译**。
+> （单机部署用 `deploy/docker-compose.yml`，见仓库 README §6.2；本手册为双机高可用，用 `deploy/ha/docker-compose.ha.yml`。）
+> ⚠️ 首次使用请在 GHCR 的 Package 页面把镜像设为 **Public**（Settings → Change visibility → Public），否则拉取会报权限错误。
+
 ### 3.3 生成本地 `.env.ha`
 
 ```bash
