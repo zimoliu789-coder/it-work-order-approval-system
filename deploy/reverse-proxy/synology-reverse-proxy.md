@@ -141,7 +141,9 @@ curl -s https://ticket.你的域名.com/api/health
 
 浏览器访问 `https://ticket.你的域名.com`：
 
-- 用超管 `administrator` 登录，应被强制跳转到修改密码页（首次登录）
+- 库中还没有超管时：浏览器访问 `https://ticket.你的域名.com` 会自动跳到**「初始化向导」**，
+  由你现场设定超管账号名与密码；设定完成后该页面不再出现
+- 已有超管时：用它登录即可（超管账号不可改、不可被重置）
 - 打开 DevTools → Application → Cookies，确认 `TICKET_TOKEN` 同时有
   **HttpOnly ✅**、**Secure ✅**、**SameSite=Lax**
 
@@ -150,7 +152,7 @@ curl -s https://ticket.你的域名.com/api/health
 连续快速提交 6 次错误密码（或在 DevTools Console 里循环调用登录接口），
 应在第 4~6 次开始收到 **429**，且提示带明确秒数（如「该账号登录请求过于频繁，请 58 秒后重试」）。
 
-> 提醒：这会触发「连续失败 5 次锁定 15 分钟」。测试请用专门的测试账号，别拿 `administrator` 试。
+> 提醒：这会触发「连续失败 5 次锁定 30 分钟」。测试请用专门的测试账号，别拿超管账号试。
 
 ---
 
