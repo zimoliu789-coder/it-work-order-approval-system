@@ -55,6 +55,8 @@ set -a
 . "${ENV_FILE}" || { bad "无法载入 ${ENV_FILE}（检查是否有语法错误）"; exit 1; }
 set +a
 
+# 注：SUPER_ADMIN_INIT_PASSWORD 不列入必填 —— 留空表示首次访问走「初始化向导」，
+#     由管理员现场设定超管账号名与密码（推荐）。仅无人值守自动建号时才需要填。
 for v in HA_NODE_NAME HA_NODE_IP HA_PEER_IP HA_NODE_PRIORITY \
          MYSQL_NODE_CONF VIP_WEB VIP_DB VIP_MASK HA_VRRP_IFACE \
          HA_VRRP_ROUTER_ID_WEB HA_VRRP_ROUTER_ID_DB HA_VRRP_AUTH_PASS \
@@ -62,7 +64,7 @@ for v in HA_NODE_NAME HA_NODE_IP HA_PEER_IP HA_NODE_PRIORITY \
          REDIS_ANNOUNCE_IP REDIS_SENTINEL_PASSWORD REDIS_PASSWORD \
          SHARED_ROOT SHARED_TYPE NAS_SERVER NAS_EXPORT \
          DATA_ROOT BACKUP_DIR MYSQL_ROOT_PASSWORD MYSQL_REPL_PASSWORD \
-         JWT_SECRET SUPER_ADMIN_INIT_PASSWORD INTERNAL_ALERT_TOKEN; do
+         JWT_SECRET INTERNAL_ALERT_TOKEN; do
   if [ -z "${!v:-}" ]; then bad "变量为空或未设置：${v}"; else ok "${v} 已设置"; fi
 done
 
