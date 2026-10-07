@@ -239,16 +239,33 @@ spring:
 3. 用环境变量注入所有敏感配置（数据库密码、SMTP 授权码、TRUSTED_PROXIES）；
 4. 首次启动走**超管初始化向导**（见 3.6）。
 
-### 6.2 Docker 部署
+### 6.2 Docker 部署（从 GHCR 拉取，推荐）
+
+应用镜像（backend / frontend / backup）已由 GitHub Actions 自动构建并推送到 **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取，无需本地编译**：
 
 ```bash
-# 复制环境变量模板
-cp .env.example .env   # 填写数据库密码、SMTP 等
+# 1. clone 仓库
+git clone https://github.com/zimoliu789-coder/it-work-order-approval-system.git
+cd it-work-order-approval-system/deploy
 
+# 2. 复制并填写 .env（数据库密码、JWT_SECRET、端口、TRUSTED_PROXIES 等）
+cp .env.production.example .env
+
+# 3. 一键启动：自动从 GHCR 拉取镜像，无需本地编译
 docker compose up -d
 ```
 
-`docker-compose.yml` 兼容群晖与 Linux 服务器。生产环境务必：
+`docker-compose.yml` 中三个应用服务的 `image` 已指向：
+
+```
+ghcr.io/zimoliu789-coder/it-work-order-approval-system/{backend,frontend,backup}:${IMAGE_TAG:-latest}
+```
+
+- 不指定 `IMAGE_TAG` 时拉取 `latest`；设置 `IMAGE_TAG=v1.0.0` 则拉取对应版本（推 `v*` tag 会自动产出对应版本镜像）。
+- 保留 `build` 段作为本地构建 fallback：`docker compose up -d --build` 可改为本地编译。
+- ⚠️ **镜像首次需在 Package 页面设为 Public**（Settings → Change visibility → Public），否则 NAS 拉取会报权限错误。
+
+生产环境务必：
 
 1. `APP_PROD_INIT=true` 或等效开关 → 触发**生产初始化清库**（见下）；
 2. `app.demo.apply-config-enabled=false`；
