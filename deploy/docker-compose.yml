@@ -4,7 +4,8 @@
 # 使用步骤：
 #   1) cp .env.production.example .env  并按注释填写（务必改掉全部占位值）
 #   2) bash scripts/preflight.sh        体检 .env、创建数据目录（含正确的属主）
-#   3) docker compose up -d --build
+#   3) docker compose pull && docker compose up -d
+#      （可选）需要独立的备份容器时：docker compose --profile backup up -d
 #   4) docker compose ps                等待各容器 healthy
 #
 # 拓扑：
@@ -225,12 +226,16 @@ services:
       start_period: 10s
 
   # ------------------------------------------------------------------
-  # 备份作业容器（：每日全量备份 + 失败不得静默）
+  # 备份作业容器：每日全量备份 + 失败不得静默（默认不启动，见下方 profiles）
   # 不用宿主 crontab 而用容器内 cron 的原因：
   #   群晖的「任务计划」与 Linux 的 crontab 语法完全不同，容器内 cron 让两个平台
   #   共用同一套调度配置（BACKUP_CRON），符合「同一套 compose 跨平台」。
   # ------------------------------------------------------------------
   backup:
+    # ⚠️ 默认**不启动**。需要备份容器时显式启用：
+    #      docker compose --profile backup up -d
+    # 归档落盘位置取 .env 的 BACKUP_DIR；留空则写入 ${DATA_ROOT}/backup。
+    profiles: ["backup"]
     build:
       context: ./backup
       dockerfile: Dockerfile
@@ -266,7 +271,7 @@ services:
       INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env 中设置 INTERNAL_ALERT_TOKEN}
     volumes:
       # 备份产物落在宿主独立目录，与生产数据物理分离（ 明确要求）
-      - ${BACKUP_DIR:?必须在 .env 中设置 BACKUP_DIR}:/backup
+      - ${BACKUP_DIR:-${DATA_ROOT}/backup}:/backup
       - ${DATA_ROOT}/attachments:/source/attachments:ro
       # 只读挂载整个 deploy 目录：备份脚本需要读取 .env 打进归档。
       # 之所以挂目录而不是挂单个 .env 文件：Docker 在源文件不存在时会把挂载点建成【目录】，
