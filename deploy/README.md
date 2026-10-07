@@ -95,11 +95,10 @@ cp .env.production.example .env
 ```bash
 openssl rand -base64 48    # → JWT_SECRET            （必须 ≥ 32 字节）
 openssl rand -base64 24    # → MYSQL_ROOT_PASSWORD / REDIS_PASSWORD
-openssl rand -base64 18    # → SUPER_ADMIN_INIT_PASSWORD（首次登录会强制改）
 openssl rand -hex 32       # → INTERNAL_ALERT_TOKEN  （备份失败上报共用密钥）
 ```
 
-必须填写的 7 个变量：
+必须填写的 6 个变量：
 
 | 变量 | 群晖示例 | Linux 示例 |
 |---|---|---|
@@ -108,8 +107,11 @@ openssl rand -hex 32       # → INTERNAL_ALERT_TOKEN  （备份失败上报共�
 | `MYSQL_ROOT_PASSWORD` | 随机 | 随机 |
 | `REDIS_PASSWORD` | 随机 | 随机 |
 | `JWT_SECRET` | `openssl rand -base64 48` | 同 |
-| `SUPER_ADMIN_INIT_PASSWORD` | 随机 | 随机 |
 | `INTERNAL_ALERT_TOKEN` | `openssl rand -hex 32` | 同 |
+
+> **超管账号不在这里填**：`SUPER_ADMIN_*` 留空即可 —— 首次用浏览器访问会自动跳到
+> 「初始化向导」，由你现场设定超管账号名与密码（设定后向导不再出现，且该账号不可改、不可被重置）。
+> 仅当需要无人值守自动建号时，才填 `SUPER_ADMIN_USERNAME` + `SUPER_ADMIN_INIT_PASSWORD`。
 
 > ⚠️ `.env` 内含全部密钥，**绝不能提交到代码仓库**（`.gitignore` 已忽略）。
 > ⚠️ 拥有 Docker 权限 = 拥有全部密钥（`docker inspect` 能读到环境变量），宿主机账号权限本身就是安全边界。
@@ -178,8 +180,10 @@ curl -s http://127.0.0.1:8080/api/health
 | `trustedProxyRules` | `5`（默认） | 同 | `0` 表示 `TRUSTED_PROXIES` 配空了 |
 
 ```bash
-# 3) 首次登录（浏览器走外层反代的 https://域名/）
-#    administrator / <SUPER_ADMIN_INIT_PASSWORD> 登录后会被强制改密
+# 3) 首次登录：浏览器打开 https://你的域名/
+#    库中还没有超管 → 会自动跳到「初始化向导」/setup
+#    在此自己设定超管账号名与密码（用户名自取，密码需满足强度要求）
+#    设定完成后该页面不再出现；该账号不可改、不可被重置
 # 4) 确认 Cookie：DevTools → Application → Cookies → TICKET_TOKEN
 #    应同时具备 HttpOnly ✅ / Secure ✅ / SameSite=Lax
 ```
