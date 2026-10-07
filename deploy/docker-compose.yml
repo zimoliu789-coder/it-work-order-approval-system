@@ -136,9 +136,13 @@ services:
 
       # ---- 应用密钥（：一律由 .env 注入，不写死进镜像）----
       JWT_SECRET: ${JWT_SECRET:?必须在 .env 中设置 JWT_SECRET}
-      SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-administrator}
+      # ---- 超管账号：默认留空 = 走「初始化向导」 ----
+      # 留空时首次用浏览器访问系统会跳到 /setup，由你现场设定账号名与密码；
+      # 设定完成后向导不再出现，且该账号不可改、不可被重置。
+      # 仅当需要「无人值守自动建号」时，才同时填写下面两项（此时不再出现向导）。
+      SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-}
       SUPER_ADMIN_DISPLAY_NAME: ${SUPER_ADMIN_DISPLAY_NAME:-超级管理员}
-      SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:?必须在 .env 中设置 SUPER_ADMIN_INIT_PASSWORD}
+      SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:-}
       INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env 中设置 INTERNAL_ALERT_TOKEN}
 
       # ---- 会话 Cookie ----
