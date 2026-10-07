@@ -70,7 +70,9 @@ set -a
 set +a
 
 # 需要检查的必填项
-for VAR in DATA_ROOT BACKUP_DIR MYSQL_ROOT_PASSWORD REDIS_PASSWORD JWT_SECRET SUPER_ADMIN_INIT_PASSWORD INTERNAL_ALERT_TOKEN; do
+# 注意：SUPER_ADMIN_INIT_PASSWORD **不在必填之列** —— 留空表示走「初始化向导」，
+#       由管理员首次访问时现场设定账号名与密码，这是推荐的默认路径。
+for VAR in DATA_ROOT BACKUP_DIR MYSQL_ROOT_PASSWORD REDIS_PASSWORD JWT_SECRET INTERNAL_ALERT_TOKEN; do
   eval "VALUE=\"\${$VAR:-}\""
   if [ -z "$VALUE" ]; then
     err "$VAR 未设置或为空"
