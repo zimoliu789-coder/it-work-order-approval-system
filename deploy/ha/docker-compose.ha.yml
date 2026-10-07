@@ -320,7 +320,7 @@ services:
       INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env.ha 中设置 INTERNAL_ALERT_TOKEN}
     volumes:
       # 备份产物落 NAS 上的独立目录（与生产数据物理分离，且可被异地同步带走）
-      - ${BACKUP_DIR:?必须在 .env.ha 中设置 BACKUP_DIR}:/backup
+      - ${BACKUP_DIR:-${DATA_ROOT}/backup}:/backup
       - ${SHARED_ROOT:?必须在 .env.ha 中设置 SHARED_ROOT}/attachments:/source/attachments:ro
       # 只读挂载本目录：备份脚本要把 .env.ha 打进归档（缺它无法完整重建系统）
       - ./:/deploy:ro
