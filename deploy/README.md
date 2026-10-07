@@ -98,16 +98,19 @@ openssl rand -base64 24    # → MYSQL_ROOT_PASSWORD / REDIS_PASSWORD
 openssl rand -hex 32       # → INTERNAL_ALERT_TOKEN  （备份失败上报共用密钥）
 ```
 
-必须填写的 6 个变量：
+必须填写的 5 个变量：
 
 | 变量 | 群晖示例 | Linux 示例 |
 |---|---|---|
 | `DATA_ROOT` | `/volume1/docker/ticket-system/data` | `/opt/ticket-system/data` |
-| `BACKUP_DIR` | `/volume1/backups/ticket-system` | `/var/backups/ticket-system` |
 | `MYSQL_ROOT_PASSWORD` | 随机 | 随机 |
 | `REDIS_PASSWORD` | 随机 | 随机 |
 | `JWT_SECRET` | `openssl rand -base64 48` | 同 |
 | `INTERNAL_ALERT_TOKEN` | `openssl rand -hex 32` | 同 |
+
+> **`BACKUP_DIR` 也可以留空**：备份容器挂在 profile `backup` 下、**默认不启动**。
+> 需要时执行 `docker compose --profile backup up -d`；留空则归档写入 `$DATA_ROOT/backup`。
+> 但要写到**另一块盘**才叫备份 —— 需要时在 `.env` 补 `BACKUP_DIR=/volume1/backups/ticket-system`。
 
 > **超管账号不在这里填**：`SUPER_ADMIN_*` 留空即可 —— 首次用浏览器访问会自动跳到
 > 「初始化向导」，由你现场设定超管账号名与密码（设定后向导不再出现，且该账号不可改、不可被重置）。
