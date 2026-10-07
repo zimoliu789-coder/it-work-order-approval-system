@@ -202,10 +202,15 @@ cd ticket-system/deploy/ha
 
 > **镜像来源（免本地编译）**：应用镜像 `backend` / `frontend` / `backup` 已由 GitHub Actions 自动构建并推送到
 > **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取**。
-> 部署只需：clone 仓库 → 进入 `deploy` 目录 → 复制并填写 `.env` → 执行 `docker compose up -d`，
+> 部署只需：clone 仓库 → 进入仓库目录 → 复制并填写 `.env` → `docker compose pull` → `docker compose up -d`，
 > 会自动从 GHCR 拉取镜像，**无需本地编译**。
 > （单机部署用 `deploy/docker-compose.yml`，见仓库 README §6.2；本手册为双机高可用，用 `deploy/ha/docker-compose.ha.yml`。）
-> ⚠️ 首次使用请在 GHCR 的 Package 页面把镜像设为 **Public**（Settings → Change visibility → Public），否则拉取会报权限错误。
+> ⚠️ 镜像包已设为 **Public**，可匿名拉取，无需 `docker login`。
+> ⚠️ **别把 `.github/workflows/docker-build.yml` 当 compose 用**：那是 GitHub Actions 流水线，
+> 交给 `docker compose` 会报 `invalid interpolation format for env.IMAGE_NAME ... ${{ github.repository }}`。
+> ⚠️ 本编排依赖仓库内配套目录（`nginx/`、`mysql/conf.d/`、`backup/`）与 `.env`，
+> **必须把整个仓库放到机器上**，只复制一个 compose 文件会因找不到这些路径而启动失败。
+> ⚠️ 因为保留了 `build` 段作本地编译 fallback，请**先 `docker compose pull`**，否则本地无镜像时 compose 会尝试相对路径编译。
 
 ### 3.3 生成本地 `.env.ha`
 
