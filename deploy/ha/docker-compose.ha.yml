@@ -77,9 +77,11 @@ x-backend-env: &backend-env
 
   # ---- 应用密钥 ----
   JWT_SECRET: ${JWT_SECRET:?必须在 .env.ha 中设置 JWT_SECRET}
-  SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-administrator}
+  # ---- 超管账号：默认留空 = 首次访问走「初始化向导」 ----
+  # 留空时自动跳到 /setup，由管理员现场设定账号名与密码；仅无人值守建号才填下面两项。
+  SUPER_ADMIN_USERNAME: ${SUPER_ADMIN_USERNAME:-}
   SUPER_ADMIN_DISPLAY_NAME: ${SUPER_ADMIN_DISPLAY_NAME:-超级管理员}
-  SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:?必须在 .env.ha 中设置 SUPER_ADMIN_INIT_PASSWORD}
+  SUPER_ADMIN_INIT_PASSWORD: ${SUPER_ADMIN_INIT_PASSWORD:-}
   INTERNAL_ALERT_TOKEN: ${INTERNAL_ALERT_TOKEN:?必须在 .env.ha 中设置 INTERNAL_ALERT_TOKEN}
 
   # ---- 会话 Cookie ----
