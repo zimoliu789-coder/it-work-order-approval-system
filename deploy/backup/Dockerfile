@@ -17,8 +17,9 @@ LABEL org.opencontainers.image.title="ticket-system-backup" \
 
 # 同时兼容 Oracle Linux(microdnf) 与 Debian(apt) 两种基础镜像形态：
 # mysql:8.0 官方标签在不同阶段切换过基础镜像，写死一种包管理器会在换标签时直接构建失败。
+# 注意：microdnf 不支持 --allowerasing（那是 dnf 的选项），参数不能照搬 dnf。
 RUN if command -v microdnf >/dev/null 2>&1; then \
-      microdnf install -y --setopt=install_weak_deps=0 --allowerasing \
+      microdnf install -y --setopt=install_weak_deps=0 \
         cronie gzip findutils tzdata curl \
       && microdnf clean all \
       && rm -rf /var/cache/dnf /var/cache/yum; \
