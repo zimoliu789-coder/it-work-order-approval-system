@@ -241,17 +241,24 @@ spring:
 
 ### 6.2 Docker 部署（从 GHCR 拉取，推荐）
 
-应用镜像（backend / frontend / backup）已由 GitHub Actions 自动构建并推送到 **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取，无需本地编译**：
+应用镜像（backend / frontend / backup）已由 GitHub Actions 自动构建并推送到 **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取，无需本地编译**。
+
+> ⚠️ **先用对文件**：`.github/workflows/docker-build.yml` 是 GitHub Actions 的**流水线**配置（负责构建并推送镜像），**不是** compose 文件。把它交给 `docker compose` 会报
+> `invalid interpolation format for env.IMAGE_NAME ... ${{ github.repository }}`。
+> **启动服务只用 `deploy/docker-compose.yml`。**
 
 ```bash
-# 1. clone 仓库
+# 1. 把整个仓库放到 NAS / 服务器上（不能只复制 compose 文件，原因见下）
 git clone https://github.com/zimoliu789-coder/it-work-order-approval-system.git
 cd it-work-order-approval-system/deploy
 
 # 2. 复制并填写 .env（数据库密码、JWT_SECRET、端口、TRUSTED_PROXIES 等）
 cp .env.production.example .env
 
-# 3. 一键启动：自动从 GHCR 拉取镜像，无需本地编译
+# 3. 先拉取镜像：确保走 GHCR，不触发本地编译
+docker compose pull
+
+# 4. 启动
 docker compose up -d
 ```
 
@@ -263,7 +270,9 @@ ghcr.io/zimoliu789-coder/it-work-order-approval-system/{backend,frontend,backup}
 
 - 不指定 `IMAGE_TAG` 时拉取 `latest`；设置 `IMAGE_TAG=v1.0.0` 则拉取对应版本（推 `v*` tag 会自动产出对应版本镜像）。
 - 保留 `build` 段作为本地构建 fallback：`docker compose up -d --build` 可改为本地编译。
-- ⚠️ **镜像首次需在 Package 页面设为 Public**（Settings → Change visibility → Public），否则 NAS 拉取会报权限错误。
+  **正因保留了 `build` 段，必须先执行 `docker compose pull`** —— 否则本地没有镜像时，compose 会按 `../backend` / `../frontend` 相对路径尝试编译。
+- ⚠️ 镜像包必须是 **Public**，否则 NAS 拉取会报权限错误。本项目的三个包**已设为 public**，可匿名拉取，无需 `docker login`。
+- 📁 **为什么不能「只粘贴一个 compose 文件」**：本编排除镜像外，还依赖 `deploy/` 下的配套文件 —— `nginx/`（边缘网关配置）、`mysql/conf.d/`（数据库调优）、`backup/`（备份脚本），以及 `.env`。必须把**整个仓库**放到 NAS 上再进 `deploy/` 执行；只贴 compose 会因找不到这些路径而启动失败。
 
 生产环境务必：
 
