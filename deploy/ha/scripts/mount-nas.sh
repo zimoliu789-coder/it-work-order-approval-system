@@ -110,7 +110,12 @@ echo "== 3/4 创建子目录（attachments / exports / backup）=="
 mkdir -p "${SHARED_ROOT}/attachments" "${SHARED_ROOT}/exports"
 # 备份目录落在共享盘而不是本机：本机磁盘故障是双机高可用要防的场景之一，
 # 备份若只在故障机本地，等于没有备份。
-mkdir -p "${BACKUP_DIR:?请在 .env.ha 中设置 BACKUP_DIR}"
+# BACKUP_DIR 留空 = 暂不使用备份容器（默认不启动），此处跳过，不再阻断脚本。
+if [ -n "${BACKUP_DIR:-}" ]; then
+  mkdir -p "${BACKUP_DIR}"
+else
+  echo "  · 未设置 BACKUP_DIR，跳过备份目录创建（启用备份容器时请补上）"
+fi
 
 echo "== 4/4 校正属主为 ${APP_UID}:${APP_GID}（容器内后端运行用户）=="
 # NFS 上 chown 可能因 root_squash 失败，此时不视为致命错误：
