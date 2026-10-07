@@ -3,7 +3,8 @@
 # 启动：docker compose up -d（.env 由 compose 注入环境变量）
 # 规范依据：第 2.2 章、第 30 章
 # 硬性要求：本文件中不得出现任何真实密码、密钥；
-#           JWT_SECRET / MYSQL_PASSWORD / SUPER_ADMIN_INIT_PASSWORD 必须由 .env 注入。
+#           JWT_SECRET / MYSQL_PASSWORD / INTERNAL_ALERT_TOKEN 必须由 .env 注入；
+#           SUPER_ADMIN_* 留空即可 —— 留空表示首次部署走「初始化向导」。
 # =====================================================================
 
 spring:
