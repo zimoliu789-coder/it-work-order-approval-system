@@ -44,9 +44,17 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service.name }}
+          # 标签规则（注意：块标量里的 # 会被当成内容，注释只能写在这里）：
+          #   type=ref,event=branch           → :main（⚠️ 不会产出 :latest）
+          #   type=semver,...                 → 推 v1.0.0 时产出 :1.0.0
+          #   type=raw,value=latest,...       → :latest，只在默认分支产出。
+          #     这一行必须保留：deploy/docker-compose.yml 默认拉
+          #     ${IMAGE_TAG:-latest}，缺了它 docker compose pull 会报 manifest unknown。
+          #   type=sha,prefix=commit-         → :commit-ab12cd3（不可变，便于锁定/回滚）
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=commit-
 
       - name: Build and Push
