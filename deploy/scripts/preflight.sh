@@ -179,7 +179,30 @@ if [ -n "${BACKUP_DIR:-}" ] && [ "$BACKUP_DIR" != "/" ]; then
 fi
 
 # ---------------------------------------------------------------------
-head_ "5. 端口与磁盘"
+head_ "5. 配置文件可读性"
+# ---------------------------------------------------------------------
+# 容器内 mysqld 以 uid 999(mysql) 运行，nginx 也以非 root 运行，二者都要**读取**
+# 从本目录 bind-mount 进去的配置。若 deploy/ 是经 Windows 共享 / 文件管理器 / U 盘
+# 拷贝来的，目录权限常为 0700（仅所有者可进入），容器内非 root 用户就会被 EACCES 挡住：
+#   mysqld: Can't read dir of '/etc/mysql/conf.d/' (OS errno 13 - Permission denied)
+#   mysqld: [ERROR] Fatal error in defaults handling. Program aborted!
+# 现象：mysql 反复重启，backend / nginx 因 depends_on 不满足而根本不启动。
+if [ "$(id -u)" = "0" ]; then
+  # X 只给「目录」和「原本就可执行的文件」加 x，不会把普通文件变成可执行
+  if chmod -R a+rX . 2>/dev/null; then
+    # .env 含数据库口令，必须收回为仅 root 可读（读它的备份容器本身以 root 运行）
+    chmod 600 .env 2>/dev/null || true
+    ok "已放开 deploy/ 配置对容器内非 root 用户可读（.env 保持 600）"
+  else
+    warn "chmod -R a+rX . 执行失败；若 mysql 反复重启，请手动执行后再 docker compose up -d"
+  fi
+else
+  warn "当前不是 root，无法自动放开权限。若 mysql 反复重启，请以 root 执行："
+  warn "  chmod -R a+rX \"$(pwd)\"    # 并确保上级目录可进入，如 chmod o+rx /vol1/1000/docker"
+fi
+
+# ---------------------------------------------------------------------
+head_ "6. 端口与磁盘"
 # ---------------------------------------------------------------------
 WEB_PORT_VALUE="${WEB_PORT:-8080}"
 if command -v ss >/dev/null 2>&1; then
@@ -223,7 +246,7 @@ if [ -n "${BACKUP_DIR:-}" ] && [ -d "$BACKUP_DIR" ]; then
 fi
 
 # ---------------------------------------------------------------------
-head_ "6. Compose 配置校验"
+head_ "7. Compose 配置校验"
 # ---------------------------------------------------------------------
 if docker compose config -q >/dev/null 2>&1; then
   ok "docker-compose.yml 语法与变量引用校验通过"
