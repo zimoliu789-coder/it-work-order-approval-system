@@ -422,6 +422,8 @@ sudo docker compose up -d
 | 现象 | 原因与处理 |
 |---|---|
 | 容器起不来，日志报 `.env` 变量为空 | `docker compose up` 报 `必须设置 XXX` → 回到第三节补 `.env`，或先跑 `preflight.sh` |
+| **mysql 反复重启**，日志报 `Can't read dir of '/etc/mysql/conf.d/' (OS errno 13 - Permission denied)` | 宿主上 `deploy/` 对容器内 mysql 用户（uid 999）不可读 —— 经 Windows 共享 / 文件管理器拷来的目录常是 `0700`。以 root 执行 `chmod -R a+rX <deploy 目录>`，并确保上级目录可进入（如 `chmod o+rx /vol1/1000/docker`），再 `docker compose up -d`。`preflight.sh` 第 5 步已会自动处理 |
+| `docker compose pull` 报 `manifest unknown` | `.env` 的 `IMAGE_TAG` 指向了仓库上不存在的标签。可用标签：`latest`（默认）/ `main` / `commit-<sha>` |
 | backend 反复重启，健康检查不通过 | 多为 `${DATA_ROOT}/logs` 属主不对（后端以 `10001` 运行）。执行 `sudo chown -R 10001:10001 "$DATA_ROOT"/{logs,attachments,exports}` |
 | `clientIp` 全是反代地址 / 所有用户算同一人 | `TRUSTED_PROXIES` 未覆盖反代网段 → 追加后 `docker compose up -d backend` |
 | `scheme` 是 `http`（实际走 https） | 反代缺少 `X-Forwarded-Proto` 头（群晖需在「自定义标题」手工加） |
