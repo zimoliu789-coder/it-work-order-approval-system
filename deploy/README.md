@@ -452,13 +452,78 @@ sudo docker compose up -d --remove-orphans    # 拉起全部
 
 ### 升级 / 回滚
 
-镜像标签由 `IMAGE_TAG` 控制（建议每次发版填版本号，如 `1.1.0`）：
+镜像标签由 `IMAGE_TAG` 控制（默认 `latest`；也可填不可变标签 `commit-<短sha>` 用于锁定或回滚）。
+
+#### 方式一：拉取预构建镜像（推荐）
+
+CI（GitHub Actions，push `main` 触发）会把 backend / frontend / backup 三个镜像推到 GHCR，
+这些包是 **public**，无需 `docker login`：
 
 ```bash
-# 升级
-git pull && sudo docker compose up -d --build
-# 回滚：把 .env 的 IMAGE_TAG 改回旧版本号，然后用旧镜像重建
-sudo docker compose up -d
+cd <deploy 目录>
+docker compose pull
+# ⚠️ 必须 --force-recreate：镜像内容变了但标签名（:latest）没变时，
+#    compose 会判定「服务定义无变化」而跳过重建，容器仍跑旧镜像。
+docker compose up -d --force-recreate backend frontend
+# 确认容器真的换上了新镜像（created 应为当天）
+docker image inspect -f '{{.Id}} created={{.Created}}' \
+  ghcr.io/zimoliu789-coder/it-work-order-approval-system/backend:latest
+```
+
+随后 `docker compose ps` 等 backend 变 `(healthy)` 即可。**mysql / redis / nginx 不受影响**（数据都在 `${DATA_ROOT}`）。
+
+> - 只重建 `backend` / `frontend`，**不要**用不带服务名的 `--force-recreate`（那会把数据库与缓存一并重建）。
+> - 后端启动较慢（首次可达数分钟），期间 Nginx 对 backend 返回 503 属正常现象。
+
+#### 方式二：源码本地构建
+
+```bash
+cd <仓库根目录>
+# 若你手工改过 deploy/nginx/conf.d/ticket.conf（本地打过补丁），先收起本地改动，拉完再 drop；
+# 没有本地改动可跳过这两条 stash。
+git stash push -- deploy/nginx/conf.d/ticket.conf
+git pull
+git stash drop
+cd deploy
+docker compose up -d --build
+```
+
+#### ⚠️ 更新后必查：`COOKIE_SECURE`
+
+**每次更新镜像后，第一件事就是确认 `.env` 的 `COOKIE_SECURE`。**
+配错的症状是「登录接口返回 200，但立刻被弹回登录页」—— Cookie 带 `Secure` 标记时，
+浏览器**只在 HTTPS 下**才保存它；用明文 HTTP 访问会被直接丢弃，随后所有鉴权请求 401。
+**无痕窗口同样复现**（属性由服务端下发，与浏览器缓存无关）。
+
+```bash
+grep -n COOKIE_SECURE .env
+docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' ticket-backend | grep -i COOKIE
+```
+
+| 你的访问方式 | 应设的值 |
+|---|---|
+| 前面挂了 HTTPS 反代 | `true`（默认，推荐） |
+| 纯 `http://<IP>:<端口>` 联调 | **必须 `false`** |
+
+改完**必须重建** backend 才生效（`docker restart` 不重读 `.env`）：
+
+```bash
+sed -i '/^COOKIE_SECURE=/d' .env && echo 'COOKIE_SECURE=false' >> .env
+docker compose up -d --force-recreate backend
+```
+
+> 排查口诀：F12 → Network → `login` → 响应头 `Set-Cookie` 里出现 `Secure` 字样，
+> 而地址栏是 `http://` —— 就是这里配错了。
+
+#### 回滚
+
+```bash
+# 回到上一版（把 commit-<旧sha> 换成目标版本）
+sed -i '/^IMAGE_TAG=/d' .env && echo 'IMAGE_TAG=commit-<旧sha>' >> .env
+docker compose pull && docker compose up -d --force-recreate backend frontend
+# 回到最新版
+sed -i '/^IMAGE_TAG=/d' .env
+docker compose pull && docker compose up -d --force-recreate backend frontend
 ```
 
 > 数据库结构由 **Flyway** 在 backend 启动时自动迁移，**降级不会自动回滚 SQL**。跨大版本回滚前，务必先用 `restore.sh` 把库恢复到大版本升级前的备份点。
