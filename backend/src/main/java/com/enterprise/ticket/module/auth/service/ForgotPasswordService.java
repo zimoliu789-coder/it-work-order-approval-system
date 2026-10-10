@@ -11,6 +11,7 @@ import com.enterprise.ticket.module.auth.dto.vo.ForgotPasswordSendCodeVO;
 import com.enterprise.ticket.module.log.service.OperationLogService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.system.support.ContactRecovery;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.service.UserService;
 import com.enterprise.ticket.security.RateLimitGuard;
@@ -123,20 +124,17 @@ public class ForgotPasswordService {
      * <p>只回传「功能级」信息，不含任何账号数据（见 {@link ForgotPasswordMetaVO}）。
      */
     public ForgotPasswordMetaVO meta() {
-        boolean smsEnabled = systemConfigService.smsVerifyEnabled();
-        boolean emailEnabled = systemConfigService.emailVerifyEnabled();
+        VerificationChannelStatus channels = systemConfigService.verificationChannels();
 
         ForgotPasswordMetaVO vo = new ForgotPasswordMetaVO();
-        vo.setEnabled(!ContactRecovery.allChannelsDisabled(smsEnabled, emailEnabled));
-        List<String> channels = new ArrayList<>();
-        if (smsEnabled) {
-            channels.add(ContactRecovery.CONTACT_SMS);
-        }
-        if (emailEnabled) {
-            channels.add(ContactRecovery.CONTACT_EMAIL);
-        }
-        vo.setChannels(channels);
+        // 「可用」而不是「开关开着」：SMTP 未配齐 / 短信网关未接入时渠道发不出验证码，
+        // 此时若仍显示登录页的「无法登录？」入口，用户点进去只会一步步走进死路。
+        vo.setEnabled(channels.anyUsable());
+        vo.setChannels(channels.usableChannels());
         vo.setCodeLength(systemConfigService.forgotCodeLength());
+        // 逐渠道的不可用原因一并下发：绑定页 / 个人资料页据此置灰输入框并说明原因，
+        // 前端不再自己拼文案（三种成因写成三处判断，后端加第四种时前端会静默说错话）。
+        vo.setChannelDisabledReasons(channels.unusableReasons());
         return vo;
     }
 
@@ -158,8 +156,7 @@ public class ForgotPasswordService {
         User user = requireAccount(account);
         ensureLocalAccount(user);
 
-        boolean smsEnabled = systemConfigService.smsVerifyEnabled();
-        boolean emailEnabled = systemConfigService.emailVerifyEnabled();
+        VerificationChannelStatus channelStatus = systemConfigService.verificationChannels();
         boolean hasPhone = StringUtils.hasText(user.getPhone());
         boolean hasEmail = StringUtils.hasText(user.getEmail());
 
@@ -173,17 +170,18 @@ public class ForgotPasswordService {
 
         ForgotPasswordChannelsVO vo = new ForgotPasswordChannelsVO();
         List<String> channels = new ArrayList<>();
-        if (smsEnabled && hasPhone) {
+        if (channelStatus.smsUsable() && hasPhone) {
             channels.add(ContactRecovery.CONTACT_SMS);
             vo.setMaskedPhone(AccountFormats.maskContact(user.getPhone()));
         }
-        if (emailEnabled && hasEmail) {
+        if (channelStatus.emailUsable() && hasEmail) {
             channels.add(ContactRecovery.CONTACT_EMAIL);
             vo.setMaskedEmail(AccountFormats.maskContact(user.getEmail()));
         }
         if (channels.isEmpty()) {
             throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED,
-                    "该账号绑定的联系方式均已被管理员关闭，请联系管理员重置密码");
+                    "该账号绑定的联系方式当前均不可用（已被管理员关闭，或对应通道尚未配置完成），"
+                            + "请联系管理员重置密码");
         }
         vo.setChannels(channels);
         vo.setDisplayName(StringUtils.hasText(user.getDisplayName())
@@ -301,8 +299,9 @@ public class ForgotPasswordService {
 
     /** 两个验证渠道都关时，找回密码整体不可用（） */
     private void ensureEnabled() {
-        if (ContactRecovery.allChannelsDisabled(
-                systemConfigService.smsVerifyEnabled(), systemConfigService.emailVerifyEnabled())) {
+        // 「一个渠道都发不出去」即视为功能关闭 —— 开关全关与「开关开着但链路没配好」
+        // 对用户是同一件事：他收不到验证码。
+        if (!systemConfigService.verificationChannels().anyUsable()) {
             throw new BusinessException(ErrorCode.FORGOT_PASSWORD_DISABLED);
         }
     }
@@ -337,11 +336,11 @@ public class ForgotPasswordService {
     }
 
     private void ensureChannelEnabled(String channel) {
-        boolean enabled = ContactRecovery.CONTACT_SMS.equals(channel)
-                ? systemConfigService.smsVerifyEnabled()
-                : systemConfigService.emailVerifyEnabled();
-        if (!enabled) {
-            throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED);
+        VerificationChannelStatus status = systemConfigService.verificationChannels();
+        if (!status.usable(channel)) {
+            // 带上具体原因：三种成因（管理员关闭 / 网关未接入 / SMTP 未配齐）对应的下一步动作
+            // 完全不同 —— 只说「渠道不可用」会让人反复重试一个永远不会成功的动作。
+            throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED, status.unusableReason(channel));
         }
     }
 

@@ -155,10 +155,19 @@ export type ContactType = 'SMS' | 'EMAIL'
  */
 export interface ForgotPasswordMeta {
   enabled: boolean
-  /** 当前可用的渠道（已按系统开关过滤） */
+  /** 当前**真正可用**的渠道（已按「管理员开关 + 发送链路是否就绪」双重过滤） */
   channels: ContactType[]
-  /** 验证码位数（：管理员可配，默认 6） */
+  /** 验证码位数（管理员可配，默认 6） */
   codeLength: number
+  /**
+   * 不可用渠道 → 原因（键为渠道编码 `SMS` / `EMAIL`，值为服务端生成的中文原因）。
+   *
+   * 只包含**不可用**的渠道，可用渠道不出现在本对象里。
+   * 三种成因（管理员关闭 / 短信网关未接入 / SMTP 未配置完成）的文案全部由服务端给出，
+   * 前端只负责展示 —— 这样后端将来新增第四种成因时界面会自动说对话，
+   * 而不是继续显示一句已经过时的旧文案。
+   */
+  channelDisabledReasons: Record<string, string>
 }
 
 /**

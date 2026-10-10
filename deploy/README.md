@@ -191,6 +191,63 @@ curl -s http://127.0.0.1:8080/api/health
 #    应同时具备 HttpOnly ✅ / Secure ✅ / SameSite=Lax
 ```
 
+### 4.1 「强制绑定联系方式」闸门是怎么判的（重要）
+
+登录后是否弹出「绑定手机号 / 邮箱」引导，**完全由服务端判定**，规则是下列三条判据的**与**：
+
+| 判据 | 说明 |
+|---|---|
+| 库中手机与邮箱**都为空** | 绑了任意一个即视为已完成，不再打扰 |
+| **至少一个渠道真的能发出验证码** | 短信 = 「启用短信通知」打开 **且**网关已接入；邮箱 = 「启用邮箱通知」打开 **且** SMTP 四项配齐 |
+| **不是内置超级管理员** | 内置超管**单独豁免**，任何配置状态下都直达工作台 |
+
+由此得到两条必须知道的现场结论：
+
+1. **全新部署不会有人被拦住。** SMTP 一个字都没配、短信网关也尚未接入 ⇒ 两个渠道都不可用 ⇒
+   闸门对**全部用户**放行。此时「找回密码」入口同样整体不可用（没有任何渠道能发出验证码）。
+2. **配好 SMTP 之后，普通账号才会被要求绑定邮箱。** 在「系统参数 → 通知与验证 → 邮件通知」里把
+   **SMTP 服务器地址 / SMTP 端口 / 发件邮箱账号 / SMTP 授权码**四项填齐并保存，**保存即生效**
+   （参数缓存立即刷新，无需重启容器）。之后：
+
+   - 普通员工登录 → 进入绑定页，用**邮箱验证码**自助完成绑定；
+   - **内置超管登录 → 依旧不弹绑定页**，需要绑定时自行进「个人资料」页操作。
+
+   第 2 条的后半句是刻意的：内置超管是唯一能配 SMTP 的账号，若它也被拦住，就会出现
+   「想解锁得先配好 SMTP，而配 SMTP 的入口又只有它能进」的自锁。
+
+> **当前短信网关尚未接入**，因此短信渠道**恒为不可用**（参数页的短信卡片可以正常保存，
+> 但验证码只会投递到应用日志：`docker logs --tail=300 ticket-backend` 里找 `FORGOT-CODE`）。
+> **对外宣导时只要求员工绑定邮箱即可。**
+
+#### 4.2 上线前临时绕过（老库升级场景）
+
+若库里已经有一批**既没手机号也没邮箱**的历史账号，而 SMTP 已经配好，
+它们下次登录就会被引导到绑定页。升级窗口内若不想让这批账号被拦，
+可以先用下面的 SQL **预置**联系方式（正式做法仍然是让员工自助绑定）：
+
+```sql
+-- ⚠️ 临时手段，仅限升级窗口使用。用完请通知员工到「个人资料」自助改绑成真实邮箱。
+
+-- 1) 先看清楚哪些账号会被拦（手机与邮箱都为空）
+SELECT id, username, email, phone
+  FROM `users`
+ WHERE (phone IS NULL OR phone = '') AND (email IS NULL OR email = '');
+
+-- 2) 为指定账号预置邮箱。email 与 phone 在 users 上都是唯一索引
+--    （uk_users_email / uk_users_phone），批量写入时不要用同一个邮箱 —— 会直接撞索引。
+UPDATE `users` SET email = 'zhangsan@example.com' WHERE username = '10001';
+
+-- 3) 若想「全站临时关掉闸门」，把两个验证开关都关掉即可。
+--    改完等 60 秒兜底刷新，或 `docker compose restart backend` 立即生效；恢复时把值改回 '1'。
+UPDATE `system_config` SET config_value = '0'
+ WHERE config_key IN ('sms_verify_enabled', 'email_verify_enabled');
+```
+
+**回滚**：`UPDATE users SET email = NULL WHERE email = 'zhangsan@example.com';`（只清你写进去的那批）。
+
+**不要**用 `UPDATE users SET email = CONCAT(username, '@example.invalid')` 之类的批量造数 ——
+唯一索引会拦住重复值，而且假邮箱一旦被员工沿用，找回密码的验证码将永远发不到人手上。
+
 ---
 
 ## 五、外层反代接入（按平台二选一）
@@ -424,6 +481,8 @@ sudo docker compose up -d
 | 容器起不来，日志报 `.env` 变量为空 | `docker compose up` 报 `必须设置 XXX` → 回到第三节补 `.env`，或先跑 `preflight.sh` |
 | **mysql 反复重启**，日志报 `Can't read dir of '/etc/mysql/conf.d/' (OS errno 13 - Permission denied)` | 宿主上 `deploy/` 对容器内 mysql 用户（uid 999）不可读 —— 经 Windows 共享 / 文件管理器拷来的目录常是 `0700`。以 root 执行 `chmod -R a+rX <deploy 目录>`，并确保上级目录可进入（如 `chmod o+rx /vol1/1000/docker`），再 `docker compose up -d`。`preflight.sh` 第 5 步已会自动处理 |
 | `docker compose pull` 报 `manifest unknown` | `.env` 的 `IMAGE_TAG` 指向了仓库上不存在的标签。可用标签：`latest`（默认）/ `main` / `commit-<sha>` |
+| **边缘 Nginx 容器反复重启**，日志报 `[emerg] "set" directive is not allowed here in /etc/nginx/conf.d/ticket.conf:20`，宿主端口无人监听（浏览器 `ERR_CONNECTION_REFUSED`） | `nginx.conf` 的 `include /etc/nginx/conf.d/*.conf;` 位于 `http {}` 块内 ⇒ conf.d 下文件的**顶层等价于 http 上下文**，而 `set` 只允许出现在 `server` / `location` / `if` 中。把 `set` 移进 `server {}` 即可（注意 `resolver` 允许在 http 上下文，可留在顶层）。判断容器是否真在跑看 `docker inspect ticket-nginx --format '{{.State.Status}} {{.RestartCount}}'`，`RestartCount` 不为 0 即崩溃循环 |
+| **登录成功，但之后任何操作都被踢回登录页**（接口 401） | `.env` 里 `COOKIE_SECURE=true`，而你用**明文 HTTP** 访问（如 `http://192.168.1.60:8080`）—— 浏览器会直接丢弃带 `Secure` 标记的 Cookie，于是每个需要鉴权的请求都 401。纯 HTTP 联调请设 `COOKIE_SECURE=false` 后 `docker compose up -d backend`（须重建容器，`restart` 不生效），并**重新登录一次**。正式上线应改为前面挂 HTTPS 反代并把该值调回 `true` |
 | backend 反复重启，健康检查不通过 | 多为 `${DATA_ROOT}/logs` 属主不对（后端以 `10001` 运行）。执行 `sudo chown -R 10001:10001 "$DATA_ROOT"/{logs,attachments,exports}` |
 | `clientIp` 全是反代地址 / 所有用户算同一人 | `TRUSTED_PROXIES` 未覆盖反代网段 → 追加后 `docker compose up -d backend` |
 | `scheme` 是 `http`（实际走 https） | 反代缺少 `X-Forwarded-Proto` 头（群晖需在「自定义标题」手工加） |
@@ -432,6 +491,7 @@ sudo docker compose up -d
 | 接口 503，响应体是 JSON「后端服务暂不可用」 | 边缘 Nginx 连不上 backend，`docker compose ps` 看 backend 是否 healthy，再 `logs --tail=100 backend` |
 | 备份一直失败，日志说口令为空 | cron 不继承环境变量。`entrypoint.sh` 已把变量写进 crontab，若仍为空说明 `.env` 里 `MYSQL_ROOT_PASSWORD` 未设置 |
 | 备份失败但没收到站内消息 | 检查 `INTERNAL_ALERT_TOKEN` 两端一致、`ALERT_URL` 可达；同时看 `$BACKUP_DIR/ALERT-SEND-FAILED.log` |
+| **登录后一直停在「绑定手机号 / 邮箱」页，收不到验证码** | 该页只在「至少一个渠道真的能发出验证码」时才会出现。先确认「系统参数 → 通知与验证 → 邮件通知」里 SMTP 四项是否填齐（保存即生效）；若确认没配好却仍被拦，是浏览器还拿着旧标志 —— 退出重新登录一次。短信渠道当前**恒不可用**（网关未接入），验证码只写日志：`docker logs --tail=300 ticket-backend` 里找 `FORGOT-CODE` |
 | 磁盘被容器日志写满 | 已在 compose 里配 json-file 滚动（10m×3）。若仍占满，检查 `${DATA_ROOT}` 所在盘容量 |
 
 ---
@@ -480,6 +540,8 @@ deploy/
 - [ ] 直连 `/api/health` 返回 UP
 - [ ] 经外层反代 `clientIp` 为真实 IP、`scheme` 为 `https`
 - [ ] 超管首次登录被强制改密；`TICKET_TOKEN` Cookie 具 HttpOnly + Secure + SameSite
+- [ ] 确认强制绑定闸门行为：SMTP 未配齐时对**所有人**放行；配齐后普通账号弹邮箱绑定、**内置超管不弹**
+- [ ] 已对外说明「本期只绑邮箱」（短信网关未接入，短信渠道恒不可用）
 - [ ] 连测 6 次错误密码，第 4~6 次收到 429 且前端提示带秒数
 - [ ] `BACKUP_RUN_ON_START=true` 跑通一次备份，归档权限为 600
 - [ ] 执行过一次恢复演练

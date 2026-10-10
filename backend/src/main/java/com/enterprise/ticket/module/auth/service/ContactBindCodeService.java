@@ -6,6 +6,7 @@ import com.enterprise.ticket.common.util.AccountFormats;
 import com.enterprise.ticket.module.auth.dto.vo.BindContactSendCodeVO;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.system.support.ContactRecovery;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.module.user.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -183,11 +184,11 @@ public class ContactBindCodeService {
 
     /** ：渠道被管理员关闭后，对应方式不能再用于绑定 / 改绑 */
     private void ensureChannelEnabled(String channel) {
-        boolean enabled = ContactRecovery.CONTACT_SMS.equals(channel)
-                ? systemConfigService.smsVerifyEnabled()
-                : systemConfigService.emailVerifyEnabled();
-        if (!enabled) {
-            throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED);
+        // 判据是「渠道可用」而不是开关本身：SMTP 未配齐时邮箱渠道发不出验证码，
+        // 此时放行只会让用户白等一封永远不来的邮件。
+        VerificationChannelStatus status = systemConfigService.verificationChannels();
+        if (!status.usable(channel)) {
+            throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED, status.unusableReason(channel));
         }
     }
 

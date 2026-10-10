@@ -3,7 +3,9 @@ package com.enterprise.ticket.module.auth.dto.vo;
 import lombok.Data;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 找回密码功能对外的「元信息」—— 供登录页决定是否显示入口（ / 六.3）。
@@ -28,4 +30,14 @@ public class ForgotPasswordMetaVO {
 
     /** 验证码长度（位），供输入框 maxlength 使用 */
     private int codeLength;
+
+    /**
+     * 不可用渠道 → 原因（键为渠道编码 {@code SMS} / {@code EMAIL}，值为服务端生成的中文原因）。
+     *
+     * <p>只登记<b>不可用</b>的渠道，可用渠道不出现在本表里。
+     * 三种成因（管理员关闭 / 短信网关未接入 / SMTP 未配置完成）的文案由服务端生成，
+     * 前端只负责展示 —— 这样后端将来新增第四种成因时界面会自动说对话，
+     * 而不是继续显示一句已经过时的旧文案。
+     */
+    private Map<String, String> channelDisabledReasons = new LinkedHashMap<>();
 }

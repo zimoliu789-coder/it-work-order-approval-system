@@ -43,6 +43,8 @@ const formRef = ref<FormInstance>()
 const submitting = ref(false)
 const errorMessage = ref('')
 const channels = ref<ContactType[]>([])
+/** 不可用渠道 → 原因（服务端下发）。值为可直接展示的中文原因，前端不再自己拼文案。 */
+const channelReasons = ref<Record<string, string>>({})
 const metaLoaded = ref(false)
 
 const form = reactive({
@@ -220,6 +222,7 @@ onMounted(async () => {
   try {
     const meta = await authApi.forgotPasswordMeta()
     channels.value = meta.channels
+    channelReasons.value = meta.channelDisabledReasons ?? {}
     metaLoaded.value = true
     // 两个验证开关都被关时，用户**无法**完成绑定（没有渠道能验证号码归属）。
     // 后端在这种情况下不会下发 requireContactBinding=true，但用户可能手工敲本页 URL ——
@@ -230,6 +233,7 @@ onMounted(async () => {
   } catch {
     // 元信息拿不到时保守放行两种渠道，真正的唯一性与格式校验都在服务端
     channels.value = ['SMS', 'EMAIL']
+    channelReasons.value = {}
     metaLoaded.value = true
   }
 })
@@ -293,7 +297,7 @@ onUnmounted(() => {
             <template #prefix><el-icon><Iphone /></el-icon></template>
           </el-input>
           <p v-if="metaLoaded && !phoneEnabled" class="ts-bc__field-hint">
-            管理员已关闭手机验证，请改用邮箱绑定。
+            {{ channelReasons.SMS || '手机验证当前不可用，请改用邮箱绑定。' }}
           </p>
         </el-form-item>
 
@@ -326,7 +330,7 @@ onUnmounted(() => {
             <template #prefix><el-icon><Message /></el-icon></template>
           </el-input>
           <p v-if="metaLoaded && !emailEnabled" class="ts-bc__field-hint">
-            管理员已关闭邮箱验证，请改用手机号绑定。
+            {{ channelReasons.EMAIL || '邮箱验证当前不可用，请改用手机号绑定。' }}
           </p>
         </el-form-item>
 

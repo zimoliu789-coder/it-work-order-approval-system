@@ -63,7 +63,9 @@ backend/data/
 # 否则会被上面的 target/ 规则重新忽略掉）
 !backend/src/**/target/
 
-# 本地一次性操作脚本（批量上传/清理等，含临时凭据，勿提交）
+# 本地一次性操作脚本（批量上传/清理等，可能含临时凭据，勿提交）
 _gh_*.py
 _scrub*.py
 _fix_*.py
+_apply_*.py
+_push_*.py

@@ -4,6 +4,7 @@ import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.auth.dto.vo.BindContactSendCodeVO;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.module.user.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -80,9 +81,23 @@ class ContactBindCodeServiceTest {
         when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(false);
     }
 
+    /** 两条链路都就绪 —— 大多数用例的默认前提。 */
     private void channelsEnabled() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(true);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, true, true));
+    }
+
+    /**
+     * 构造渠道有效性快照。
+     *
+     * <p>{@code smsGatewayIntegrated} 由参数给出而不是读生产常量：短信网关当前尚未接入
+     * （{@code SmsSettings.GATEWAY_INTEGRATED = false}），传 {@code true} 即可覆盖
+     * 「将来接入网关后」的分支，不必为了测试去改生产常量。
+     */
+    private static VerificationChannelStatus channelStatus(boolean smsOn, boolean emailOn,
+                                                          boolean smsGateway, boolean smtpComplete) {
+        return new VerificationChannelStatus(smsOn, emailOn, smsGateway, smtpComplete,
+                smtpComplete ? null : "未填写 SMTP 服务器地址");
     }
 
     private static ErrorCode codeOf(BusinessException ex) {
@@ -96,7 +111,8 @@ class ContactBindCodeServiceTest {
     @Test
     @DisplayName("渠道被管理员关闭：拒绝发码，且不落任何 Redis 键")
     void rejectsWhenChannelDisabled() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(false, true, false, true));
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.sendCode(USER_ID, SMS, PHONE));
@@ -104,6 +120,21 @@ class ContactBindCodeServiceTest {
         assertEquals(ErrorCode.CONTACT_CHANNEL_DISABLED, codeOf(ex));
         verify(valueOps, never()).set(anyString(), anyString(), any(Duration.class));
         verify(codeSender, never()).send(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    @DisplayName("邮箱开关开着但 SMTP 未配齐：同样拒绝发码（链路没就绪 = 不可用）")
+    void rejectsWhenSmtpIncomplete() {
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, false, false));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendCode(USER_ID, EMAIL_CH, EMAIL));
+
+        assertEquals(ErrorCode.CONTACT_CHANNEL_DISABLED, codeOf(ex));
+        verify(valueOps, never()).set(anyString(), anyString(), any(Duration.class));
+        verify(codeSender, never()).send(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test

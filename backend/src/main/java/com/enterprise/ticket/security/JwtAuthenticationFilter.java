@@ -2,6 +2,7 @@ package com.enterprise.ticket.security;
 
 import com.enterprise.ticket.config.AppProperties;
 import com.enterprise.ticket.common.api.ErrorCode;
+import com.enterprise.ticket.common.permission.BuiltinAdmin;
 import com.enterprise.ticket.common.web.ResponseWriter;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.system.support.ContactRecovery;
@@ -122,12 +123,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      * （两个开关默认开），不会抛异常中断请求。
      */
     private boolean needsContactBinding(LoginUser loginUser) {
-        if (loginUser.hasContact()) {
-            return false;
-        }
-        boolean smsEnabled = systemConfigService.smsVerifyEnabled();
-        boolean emailEnabled = systemConfigService.emailVerifyEnabled();
-        return !ContactRecovery.allChannelsDisabled(smsEnabled, emailEnabled);
+        // 本方法只负责「取数」，规则本身收敛在 ContactRecovery#requiresContactBinding 一处 ——
+        // 与 AuthService#requiresContactBinding 共用同一份真值表。这是刻意的：
+        // 内置超管豁免曾经只加在登录响应那一侧，结果是「登录时没弹、刷新页面后被拦住」，
+        // 而用户只会觉得系统时灵时不灵。
+        return ContactRecovery.requiresContactBinding(
+                loginUser.hasContact(),
+                systemConfigService.verificationChannels().anyUsable(),
+                BuiltinAdmin.isBuiltinAdmin(appProperties, loginUser.getRole(), loginUser.getUsername()));
     }
 
     private boolean isForceChangePasswordAllowed(HttpServletRequest request) {

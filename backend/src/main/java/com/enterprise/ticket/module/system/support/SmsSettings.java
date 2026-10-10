@@ -78,6 +78,30 @@ public final class SmsSettings {
     /** 默认服务商（空 = 未选择，不预置 —— 预留阶段不该假装已经选好了） */
     public static final String DEFAULT_PROVIDER = "";
 
+    // ------------------------------------------------------------------
+    // 能力就绪（上线前加固新增）
+    // ------------------------------------------------------------------
+
+    /**
+     * <b>短信网关是否已经真的接入</b>（当前 {@code false} = 尚未接入）。
+     *
+     * <h2>为什么需要一个常量，而不是「开关开着就算能用」</h2>
+     * <p>本类注释第一段已经写明：短信在本期是<b>预留</b> ——
+     * {@code RoutingVerificationCodeSender} 对 SMS 必然落到日志实现。
+     * 也就是说，就算管理员把「手机验证」开关打开、把 AccessKey / 签名 / 模板
+     * 全部填对，用户依然<b>一条短信都收不到</b>（验证码只会写进应用日志）。
+     * 只判开关的旧逻辑在这里会得出「渠道可用」的结论，进而把用户强制推到绑定页 ——
+     * 而他会永远卡在「收不到验证码」上，既进不了系统也无人可求助。
+     *
+     * <h2>接入网关那一天要改什么</h2>
+     * <p>① 把本常量改成 {@code true}；② 在 {@code RoutingVerificationCodeSender}
+     * 的 SMS 分支接上真实服务商客户端。
+     * 除此之外，全系统「渠道是否可用」的判定会自动跟着变 ——
+     * 因为唯一的消费入口是 {@link VerificationChannelStatus#smsUsable()}，
+     * 没有任何地方会绕过它单独读开关。
+     */
+    public static final boolean GATEWAY_INTEGRATED = false;
+
     /** 配置页展示的说明（不参与运行时判定） */
     public static final String[] REFERENCE_NOTES = {
             "短信通道当前未接入：本卡片参数会正常保存，但验证码仍投递到应用日志（grep FORGOT-CODE 可取）。",

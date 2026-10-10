@@ -5,6 +5,7 @@ import com.enterprise.ticket.module.system.dto.vo.ConfigCatalogVO;
 import com.enterprise.ticket.module.system.entity.SystemConfig;
 import com.enterprise.ticket.module.system.support.MailSettings;
 import com.enterprise.ticket.module.system.support.SmsSettings;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -245,6 +246,28 @@ public interface SystemConfigService extends IService<SystemConfig> {
 
     /** 是否启用邮箱验证（邮件渠道），配置键 {@code email_verify_enabled}，默认开 */
     boolean emailVerifyEnabled();
+
+    /**
+     * 验证渠道的<b>有效性快照</b> —— 开关意愿与发送能力合并后的唯一事实源。
+     *
+     * <h2>它与上面两个「开关读取」是什么关系</h2>
+     * <p>{@link #smsVerifyEnabled()} / {@link #emailVerifyEnabled()} 返回的是
+     * <b>管理员的意愿</b>（那两个布尔开关本身），语义单一，适合「配置页回显」这类场景。
+     * 而本方法返回的是<b>系统此刻真的能发什么</b>：
+     * <ul>
+     *   <li>短信：开关开 <b>且</b> 网关已接入（当前 {@code GATEWAY_INTEGRATED=false}，故恒不可用）；</li>
+     *   <li>邮箱：开关开 <b>且</b> SMTP 四项（host / port / username / password）配齐。</li>
+     * </ul>
+     *
+     * <h2>凡「能不能发出去」的判断都必须走本方法</h2>
+     * <p>登录强制绑定闸门、找回密码整体可用性与渠道列表、个人资料绑定校验，
+     * 全部改为读本方法。改造前的缺陷正是「只看开关」：
+     * 一个 SMTP 都没配的全新部署，两个开关默认开着，闸门就会把人推到绑定页 ——
+     * 而那条链路一步也走不通。
+     *
+     * @return 渠道有效性快照（永不为 {@code null}）
+     */
+    VerificationChannelStatus verificationChannels();
 
     // ------------------------------------------------------------------
     // ：卡片式系统参数页（目录接口）

@@ -20,10 +20,18 @@ import java.util.Set;
  * 而验证渠道开关一旦被关掉，<b>全站所有人都无法自助找回密码</b>——
  * 这是「能让别人失去自救能力」的开关，因此和站点品牌同级，只归内置超管。
  *
- * <h2>「两个都关 = 找回密码整体不可用」这条推导放在这里</h2>
- * <p>它是纯粹的布尔推导（{@code !sms && !email}），与 Spring、数据库都无关，
- * 因此做成静态方法，供服务层与单测共用同一份判定 —— 避免「页面说不可用、
- * 后端仍然放行」这类两处各写一遍导致的漂移。
+ * <h2>「是否需要强制绑定」这条推导为什么放在这里</h2>
+ * <p>它是纯粹的布尔合取，与 Spring、数据库都无关，因此做成静态方法，
+ * 供登录响应（{@code AuthService}）与每请求闸门（{@code JwtAuthenticationFilter}）
+ * 共用同一份判定 —— 避免「登录时说不必绑定、刷新页面后又被拦住」这类漂移。
+ * 这条规则历史上踩过坑：内置超管豁免曾经只加在登录响应一处，
+ * 导致刷新页面后行为变回去（见 {@code AuthService#fillPermissionInfo} 的注释）。
+ *
+ * <h2>渠道「可用」而不是「开关开着」</h2>
+ * <p>本方法收到的第二个参数是 {@code anyChannelUsable} 而不是「开关状态」，
+ * 两者的差别是本轮修复的核心：开关开着但 SMTP 没配齐 / 短信网关没接入时，
+ * 渠道<b>发不出验证码</b>，此时强制绑定等于把用户永久堵在绑定页上。
+ * 可用性判定收敛在 {@link VerificationChannelStatus} 一处，本类不重复推导。
  */
 public final class ContactRecovery {
 
@@ -107,14 +115,30 @@ public final class ContactRecovery {
     }
 
     /**
-     * 两个验证渠道是否都已关闭。
+     * 是否需要把用户强制引导到「绑定联系方式」页。
      *
-     * <p>为 {@code true} 时：找回密码整体不可用（登录页隐藏「无法登录？」入口、
-     * 后端接口直接拒绝），且首次登录不再弹出绑定引导 —— 因为没有渠道能验证，
-     * 强制绑定只会把用户堵在门外（）。
+     * <h2>三条判据，缺一不可</h2>
+     * <ol>
+     *   <li><b>{@code !hasContact}</b> —— 库中手机与邮箱<b>都</b>为空。
+     *       绑了任意一个即视为已完成，不再打扰；</li>
+     *   <li><b>{@code anyChannelUsable}</b> —— 至少有一个验证渠道此刻真的能发出验证码。
+     *       注意收的是「可用」而不是「开关开着」：SMTP 尚未配齐 / 短信网关尚未接入时
+     *       渠道不可用，此时强制引导只会把用户永久堵在绑定页上（他收不到任何验证码）；</li>
+     *   <li><b>{@code !builtinAdmin}</b> —— 内置超级管理员单独豁免。
+     *       它是「系统永远能被救回来」的最后入口，必须在<b>任何</b>配置状态下都能直达工作台
+     *       去配置 SMTP —— 让唯一的救火入口被「自己还没配好的渠道」挡住，是自锁。
+     *       超管想绑定时自行进个人资料页操作，不受闸门影响。</li>
+     * </ol>
+     * <p>第 2 条是治本逻辑（渠道真的就绪才拦人），第 3 条是叠加在内置超管身份上的单独豁免，
+     * 两者是<b>与</b>关系：渠道就绪了也不拦超管。
+     *
+     * @param hasContact        库中是否已有手机号或邮箱
+     * @param anyChannelUsable  是否至少有一个渠道真的能发出验证码（见 {@link VerificationChannelStatus#anyUsable()}）
+     * @param builtinAdmin      是否为内置超级管理员
      */
-    public static boolean allChannelsDisabled(boolean smsEnabled, boolean emailEnabled) {
-        return !smsEnabled && !emailEnabled;
+    public static boolean requiresContactBinding(boolean hasContact, boolean anyChannelUsable,
+                                                 boolean builtinAdmin) {
+        return !hasContact && anyChannelUsable && !builtinAdmin;
     }
 
     private static String safe(String value) {

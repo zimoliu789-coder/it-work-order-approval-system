@@ -21,6 +21,7 @@ import com.enterprise.ticket.module.system.support.SmsSettings;
 import com.enterprise.ticket.module.security.support.SecuritySettings;
 import com.enterprise.ticket.module.system.support.StorageSettings;
 import com.enterprise.ticket.module.system.support.SystemConfigCatalog;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.security.SecretCipher;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -904,6 +905,14 @@ public class SystemConfigServiceImpl extends ServiceImpl<SystemConfigMapper, Sys
     @Override
     public boolean emailVerifyEnabled() {
         return getBoolean(ContactRecovery.KEY_EMAIL_ENABLED, ContactRecovery.DEFAULT_EMAIL_ENABLED);
+    }
+
+    @Override
+    public VerificationChannelStatus verificationChannels() {
+        // 一次性把「意愿」与「能力」装配成一个不可变快照：调用方只能整取，无法局部重算。
+        // SMTP 那一项走 mailSettings()（密文已解密）—— 与真正发信时用的是同一份判定，
+        // 因此不会出现「闸门说渠道可用、发码却因 SMTP 不完整退回日志」的错位。
+        return VerificationChannelStatus.of(smsVerifyEnabled(), emailVerifyEnabled(), mailSettings());
     }
 
     /**

@@ -545,24 +545,40 @@ public class AuthService {
     }
 
     /**
-     * 是否需要强制绑定手机号或邮箱（、）。
+     * 是否需要强制绑定手机号或邮箱。
      *
-     * <p>两条判据，缺一不可：
+     * <h2>三条判据，与服务端闸门严格同源</h2>
+     * <p>规则本身收敛在 {@link ContactRecovery#requiresContactBinding} 一处，本方法只负责取数：
      * <ol>
-     *   <li><b>手机号与邮箱都为空</b> —— 只要绑了一个就算已绑定，不再打扰（）；</li>
-     *   <li><b>至少还有一个验证渠道开着</b> —— 两个开关都关时用户<b>不可能</b>完成绑定
-     *       （没有渠道能验证号码归属），此时仍然强制引导会把他永远堵在引导页上，
-     *       既进不了系统也无人可求助。明确要求这种情况「直接用临时密码进系统」，
-     *       由管理员在后台补录。</li>
+     *   <li><b>库中手机与邮箱都为空</b> —— 绑了任意一个即视为已绑定，不再打扰；</li>
+     *   <li><b>至少有一个渠道此刻真的可用</b> —— 收的是「可用」而不是「开关开着」：
+     *       SMTP 未配齐 / 短信网关未接入时渠道发不出验证码，用户<b>不可能</b>完成绑定，
+     *       此时仍然强制引导会把他永远堵在引导页上，既进不了系统也无人可求助。
+     *       这种情况直接放行，由管理员在后台补录联系方式；</li>
+     *   <li><b>不是内置超级管理员</b> —— 内置超管单独豁免（见下段）。</li>
      * </ol>
+     *
+     * <h2>为什么内置超管必须豁免</h2>
+     * <p>内置超管是「系统永远能被救回来」的最后入口，也是唯一能配置 SMTP 的人。
+     * 若把它也纳入强制绑定，会出现一个不自洽的闭环：想让它不被拦，得先配好 SMTP；
+     * 而配 SMTP 的入口又只有它能进。因此无论渠道是否就绪，内置超管一律直达工作台，
+     * 需要绑定时自行进个人资料页操作。
+     *
+     * <h2>为什么这条规则不能只写在这里</h2>
+     * <p>登录响应（本方法）与每请求闸门（{@code JwtAuthenticationFilter#needsContactBinding}）
+     * 必须同源。内置超管豁免曾经只加在登录响应一侧，结果是「登录时没弹、刷新页面后被拦住」——
+     * 用户只会觉得系统时灵时不灵。因此两侧都改为调用同一个静态方法，规则不再有第二个副本。
      */
     private boolean requiresContactBinding(User user) {
-        boolean smsEnabled = systemConfigService.smsVerifyEnabled();
-        boolean emailEnabled = systemConfigService.emailVerifyEnabled();
-        if (ContactRecovery.allChannelsDisabled(smsEnabled, emailEnabled)) {
-            return false;
-        }
-        return !StringUtils.hasText(user.getPhone()) && !StringUtils.hasText(user.getEmail());
+        // 三条判据全部收敛在 ContactRecovery#requiresContactBinding，这里只取数：
+        // 库中是否有联系方式 / 渠道此刻是否真的可用 / 是否内置超管。
+        // 「渠道可用」与每请求闸门读的是同一个 verificationChannels()，
+        // 因此登录响应下发的标志与过滤器的判定不可能分歧。
+        boolean hasContact = StringUtils.hasText(user.getPhone()) || StringUtils.hasText(user.getEmail());
+        return ContactRecovery.requiresContactBinding(
+                hasContact,
+                systemConfigService.verificationChannels().anyUsable(),
+                BuiltinAdmin.isBuiltinAdmin(appProperties, user.getRole(), user.getUsername()));
     }
 
     /**

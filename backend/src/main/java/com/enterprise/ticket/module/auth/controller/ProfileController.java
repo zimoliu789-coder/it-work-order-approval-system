@@ -15,6 +15,7 @@ import com.enterprise.ticket.module.auth.service.ContactBindCodeService;
 import com.enterprise.ticket.module.log.service.OperationLogService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.system.support.ContactRecovery;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.service.UserService;
 import jakarta.validation.Valid;
@@ -121,13 +122,16 @@ public class ProfileController {
         // ：验证渠道被管理员关闭后，对应方式就**不能**再用于绑定 / 改绑。
         // 只拦「本人自助」这一条路径：管理员在员工管理页补录联系方式不受此限
         // （后台配置能力不应被前台开关绑住，否则关掉开关就再也没有补救手段）。
-        if (phoneChanged && !systemConfigService.smsVerifyEnabled()) {
+        // 判据是「渠道可用」而不是「开关开着」——SMTP 未配齐时邮箱渠道发不出验证码，
+        // 此时放行只会让用户白等一封永远不来的邮件。原因文案由服务端统一生成。
+        VerificationChannelStatus channelStatus = systemConfigService.verificationChannels();
+        if (phoneChanged && !channelStatus.usable(ContactRecovery.CONTACT_SMS)) {
             throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED,
-                    "管理员已关闭手机验证，暂不能绑定或修改手机号");
+                    channelStatus.unusableReason(ContactRecovery.CONTACT_SMS));
         }
-        if (emailChanged && !systemConfigService.emailVerifyEnabled()) {
+        if (emailChanged && !channelStatus.usable(ContactRecovery.CONTACT_EMAIL)) {
             throw new BusinessException(ErrorCode.CONTACT_CHANNEL_DISABLED,
-                    "管理员已关闭邮箱验证，暂不能绑定或修改邮箱");
+                    channelStatus.unusableReason(ContactRecovery.CONTACT_EMAIL));
         }
 
         //  ：**发生变化的渠道必须带对验证码**。

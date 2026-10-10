@@ -50,6 +50,8 @@ const contactForm = reactive({ phone: '', email: '', phoneCode: '', emailCode: '
  * 默认两项都开，避免接口未返回时把输入框误锁成不可用。
  */
 const enabledChannels = ref<ContactType[]>(['SMS', 'EMAIL'])
+/** 不可用渠道 → 原因（服务端下发）。前端只展示，不自己拼文案。 */
+const channelReasons = ref<Record<string, string>>({})
 const phoneEnabled = computed(() => enabledChannels.value.includes('SMS'))
 const emailEnabled = computed(() => enabledChannels.value.includes('EMAIL'))
 
@@ -251,6 +253,7 @@ onMounted(async () => {
   try {
     const meta = await authApi.forgotPasswordMeta()
     enabledChannels.value = meta.channels
+    channelReasons.value = meta.channelDisabledReasons ?? {}
   } catch {
     // 拉不到就保守放行两种渠道；真正的写入校验在服务端
   }
@@ -327,7 +330,9 @@ onUnmounted(() => {
             placeholder="请输入 11 位手机号"
             clearable
           />
-          <p v-if="!phoneEnabled" class="ts-text-hint">管理员已关闭手机验证，暂不能使用手机号</p>
+          <p v-if="!phoneEnabled" class="ts-text-hint">
+            {{ channelReasons.SMS || '手机验证当前不可用，暂不能使用手机号' }}
+          </p>
         </el-form-item>
 
         <el-form-item v-if="phoneDirty" label="手机验证码">
@@ -357,7 +362,9 @@ onUnmounted(() => {
             placeholder="请输入常用邮箱"
             clearable
           />
-          <p v-if="!emailEnabled" class="ts-text-hint">管理员已关闭邮箱验证，暂不能使用邮箱</p>
+          <p v-if="!emailEnabled" class="ts-text-hint">
+            {{ channelReasons.EMAIL || '邮箱验证当前不可用，暂不能使用邮箱' }}
+          </p>
         </el-form-item>
 
         <el-form-item v-if="emailDirty" label="邮箱验证码">

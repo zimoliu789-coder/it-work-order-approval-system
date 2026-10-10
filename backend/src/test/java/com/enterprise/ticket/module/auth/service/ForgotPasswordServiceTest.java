@@ -5,6 +5,7 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.auth.dto.vo.ForgotPasswordMetaVO;
 import com.enterprise.ticket.module.log.service.OperationLogService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
+import com.enterprise.ticket.module.system.support.VerificationChannelStatus;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.service.UserService;
 import com.enterprise.ticket.security.RateLimitGuard;
@@ -90,9 +91,23 @@ class ForgotPasswordServiceTest {
                 .thenReturn(new RateLimitGuard.Decision(true, 0L));
     }
 
+    /** 两条链路都就绪（短信网关已接入 + SMTP 配齐）—— 大多数用例的默认前提。 */
     private void channelsEnabled() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(true);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, true, true));
+    }
+
+    /**
+     * 构造渠道有效性快照。
+     *
+     * <p>{@code smsGatewayIntegrated} 由参数给出而不是读生产常量：短信网关当前尚未接入
+     * （{@code SmsSettings.GATEWAY_INTEGRATED = false}），传 {@code true} 即可覆盖
+     * 「将来接入网关后」的分支，不必为了测试去改生产常量。
+     */
+    private static VerificationChannelStatus channelStatus(boolean smsOn, boolean emailOn,
+                                                          boolean smsGateway, boolean smtpComplete) {
+        return new VerificationChannelStatus(smsOn, emailOn, smsGateway, smtpComplete,
+                smtpComplete ? null : "未填写 SMTP 服务器地址");
     }
 
     private User localUser(String phone, String email) {
@@ -116,8 +131,8 @@ class ForgotPasswordServiceTest {
     @Test
     @DisplayName("两个渠道都关：meta 报告功能不可用且渠道为空")
     void metaDisabledWhenAllChannelsOff() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(false);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(false, false, false, false));
 
         ForgotPasswordMetaVO vo = service.meta();
 
@@ -128,8 +143,8 @@ class ForgotPasswordServiceTest {
     @Test
     @DisplayName("两个渠道都关：channels 直接拒绝（渠道全关时找回密码整体不可用）")
     void channelsRejectedWhenDisabled() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(false);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(false, false, false, false));
         allowRateLimit();
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -140,13 +155,16 @@ class ForgotPasswordServiceTest {
     @Test
     @DisplayName("一个渠道关着不影响另一个：开关是并集而非交集")
     void metaEnabledWhenOneChannelOn() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(false, true, false, true));
 
         ForgotPasswordMetaVO vo = service.meta();
 
         assertTrue(vo.isEnabled());
         assertEquals(1, vo.getChannels().size());
+        // 不可用的短信渠道必须带出「为什么不可用」，供界面直接展示
+        assertTrue(vo.getChannelDisabledReasons().containsKey("SMS"));
+        assertFalse(vo.getChannelDisabledReasons().containsKey("EMAIL"));
     }
 
     // ------------------------------------------------------------------
@@ -188,8 +206,8 @@ class ForgotPasswordServiceTest {
     @Test
     @DisplayName("所选渠道被管理员关闭：拒绝发码")
     void sendCodeRejectsDisabledChannel() {
-        when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(false, true, false, true));
         allowRateLimit();
         when(userService.findByAccount("10001")).thenReturn(localUser("13900000001", null));
 
@@ -208,6 +226,57 @@ class ForgotPasswordServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.sendCode("10001", "SMS"));
         assertEquals(ErrorCode.CONTACT_CHANNEL_UNBOUND, codeOf(ex));
+    }
+
+    // ------------------------------------------------------------------
+    // 方案②：链路没配好 = 渠道不可用（本轮修复的核心）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("开关开着但 SMTP 未配齐：meta 报告不可用 —— 不能只信开关")
+    void metaDisabledWhenSmtpNotConfigured() {
+        // 改造前的缺陷：两个开关默认都是「开」，一个 SMTP 都没配的全新部署里
+        // meta 会报 enabled=true，登录页显示「无法登录？」入口，用户点进去只会一步步走进死路。
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, false, false));
+
+        ForgotPasswordMetaVO vo = service.meta();
+
+        assertFalse(vo.isEnabled());
+        assertTrue(vo.getChannels().isEmpty());
+        // 两个渠道都要给出原因：一个「网关未接入」，一个「SMTP 未配齐」
+        assertTrue(vo.getChannelDisabledReasons().containsKey("SMS"));
+        assertTrue(vo.getChannelDisabledReasons().containsKey("EMAIL"));
+    }
+
+    @Test
+    @DisplayName("开关开着但 SMTP 未配齐：channels 直接拒绝（不可用即视为关闭）")
+    void channelsRejectedWhenSmtpNotConfigured() {
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, false, false));
+        allowRateLimit();
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.channels("10001"));
+        assertEquals(ErrorCode.FORGOT_PASSWORD_DISABLED, codeOf(ex));
+    }
+
+    @Test
+    @DisplayName("邮箱开关开着但 SMTP 未配齐：拒绝发码，原因是「未配置完成」而非「管理员关闭」")
+    void sendCodeRejectsWhenSmtpIncomplete() {
+        // 短信这一路保持就绪（网关已接入），使 ensureEnabled() 的整体闸门放行 ——
+        // 否则两条链路都不可用时会先以「找回密码整体不可用」短路，
+        // 就测不到「邮箱渠道不可用」这条更具体的分支了（该分支才是本用例的意图）。
+        when(systemConfigService.verificationChannels())
+                .thenReturn(channelStatus(true, true, true, false));
+        allowRateLimit();
+        when(userService.findByAccount("10001")).thenReturn(localUser(null, "user10001@example.com"));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.sendCode("10001", "EMAIL"));
+        assertEquals(ErrorCode.CONTACT_CHANNEL_DISABLED, codeOf(ex));
+        // 文案必须说清是「SMTP 没配齐」：说成「管理员已关闭」会把运维引到错误的方向
+        assertTrue(ex.getMessage().contains("邮件服务器尚未配置完成"), ex.getMessage());
     }
 
     // ------------------------------------------------------------------
