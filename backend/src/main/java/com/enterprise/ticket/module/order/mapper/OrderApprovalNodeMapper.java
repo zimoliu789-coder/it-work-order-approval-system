@@ -29,7 +29,7 @@ public interface OrderApprovalNodeMapper extends BaseMapper<OrderApprovalNode> {
      *   <li><b>有 {@code deadline_at}</b>（FLOW 流程里配了审批时限的节点）：以「已过截止时间」为准，
      *       文案是「已超过约定审批时限 X 小时」；</li>
      *   <li><b>无 {@code deadline_at}</b>（借用单 / GROUP 单 / 未配时限的 FLOW 节点）：
-     *       回落既有口径 「{@code orders.created_at} + 全局阈值 {@code hours}」——
+     *       回落既有口径 「{@code borrow_order.created_at} + 全局阈值 {@code hours}」——
      *       这一支<b>行为与改造前完全一致</b>，保证既有提醒零回归。</li>
      * </ul>
      *
@@ -60,15 +60,15 @@ public interface OrderApprovalNodeMapper extends BaseMapper<OrderApprovalNode> {
                    o.created_at   AS submittedAt,
                    u.display_name AS applicantName,
                    d.device_name  AS deviceName
-              FROM order_approval_nodes n
-              JOIN orders o ON o.id = n.order_id
-              JOIN users  u ON u.id = o.applicant_id
+              FROM order_approval_node n
+              JOIN borrow_order o ON o.id = n.order_id
+              JOIN employee  u ON u.id = o.applicant_id
               LEFT JOIN device d ON d.id = o.device_id
              WHERE n.status = 'PENDING'
                AND n.approver_id IS NOT NULL
                AND o.status = 'PENDING_APPROVAL'
                AND n.step_order = (SELECT MIN(n2.step_order)
-                                     FROM order_approval_nodes n2
+                                     FROM order_approval_node n2
                                     WHERE n2.order_id = n.order_id AND n2.status = 'PENDING')
                AND (
                      (n.deadline_at IS NOT NULL

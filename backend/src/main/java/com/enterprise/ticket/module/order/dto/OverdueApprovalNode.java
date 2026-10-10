@@ -41,7 +41,7 @@ public class OverdueApprovalNode {
      * 节点审批时限截止时间（；NULL = 不限时，回落「提交后 N 小时」全局阈值）。
      *
      * <p>有值时以它为准判定超时（「已超过约定审批时限」），
-     * 无值时沿用既有的 {@code orders.created_at + hours} 口径。
+     * 无值时沿用既有的 {@code borrow_order.created_at + hours} 口径。
      */
     private LocalDateTime deadlineAt;
 }

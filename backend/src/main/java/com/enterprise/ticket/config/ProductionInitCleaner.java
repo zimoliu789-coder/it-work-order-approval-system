@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
  *   <tr>
  *     <td>演示员工、演示部门（只留根节点「公司」）、演示工单及其从属数据、
  *         设备与设备分类、演示申请数据（非预置的申请类型与其表单/流程）</td>
- *     <td>表结构、系统参数、权限目录（{@code sys_role} / {@code sys_role_permission}）、
+ *     <td>表结构、系统参数、权限目录（{@code role} / {@code role_permission}）、
  *         <b>预置申请类型的表单与流程定义</b>、审计与运维记录</td>
  *   </tr>
  * </table>
@@ -84,7 +84,7 @@ public class ProductionInitCleaner implements ApplicationRunner {
         int invTasks = delete("inventory_task", "1=1");
 
         // 4) 消息（演示通知）
-        int messages = delete("messages", "1=1");
+        int messages = delete("message", "1=1");
 
         // 5) 用户级授权（来自演示的权限申请工单）
         int userPerms = delete("user_permission", "1=1");
@@ -97,9 +97,9 @@ public class ProductionInitCleaner implements ApplicationRunner {
         // 没有任何超管，此时清空整张员工表，随后由初始化向导建出唯一的超管。
         String builtinAdmin = systemConfigService.superAdminUsername();
         int users = StringUtils.hasText(builtinAdmin)
-                ? delete("users", "username <> ?", builtinAdmin)
-                : delete("users", "1=1");
-        int depts = delete("departments", "parent_id IS NOT NULL");
+                ? delete("employee", "username <> ?", builtinAdmin)
+                : delete("employee", "1=1");
+        int depts = delete("department", "parent_id IS NOT NULL");
 
         // 7) 演示申请数据：先删非预置的申请类型，再清理不再被引用的表单与流程
         int applyTypes = clearDemoApplyData();
@@ -113,8 +113,8 @@ public class ProductionInitCleaner implements ApplicationRunner {
                         + "剩余：超管 {} 个，部门 {} 个，申请类型 {} 个。",
                 orders, deviceRows, categories, invItems, invTasks, messages,
                 userPerms, deptManagers, userDepts, users, depts, applyTypes,
-                countOf("users WHERE role = 'super_admin'"),
-                countOf("departments"),
+                countOf("employee WHERE role = 'super_admin'"),
+                countOf("department"),
                 countOf("apply_type"));
         log.warn("========================================================================");
     }
@@ -122,15 +122,15 @@ public class ProductionInitCleaner implements ApplicationRunner {
     /** 清空工单及其全部从属表（9 张从属表 + orders 本体） */
     private int clearOrders() {
         delete("order_flow_activation_log", "1=1");
-        delete("order_extend_approval_nodes", "1=1");
+        delete("order_extend_approval_node", "1=1");
         delete("order_extend", "1=1");
         delete("order_force_operation", "1=1");
         delete("order_handler_transfer", "1=1");
         delete("order_urge", "1=1");
-        delete("order_approval_nodes", "1=1");
+        delete("order_approval_node", "1=1");
         delete("order_form_data", "1=1");
-        delete("attachments", "1=1");
-        return delete("orders", "1=1");
+        delete("attachment", "1=1");
+        return delete("borrow_order", "1=1");
     }
 
     /**

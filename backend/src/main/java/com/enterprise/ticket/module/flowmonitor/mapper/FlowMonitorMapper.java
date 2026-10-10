@@ -55,11 +55,11 @@ public interface FlowMonitorMapper {
                    COUNT(*)                                                              AS orderCount,
                    SUM(CASE WHEN ap.finished_at IS NOT NULL THEN 1 ELSE 0 END)            AS approvedOrderCount,
                    ROUND(AVG(TIMESTAMPDIFF(SECOND, o.created_at, ap.finished_at)) / 3600, 2) AS avgApprovalHours
-              FROM orders o
+              FROM borrow_order o
               LEFT JOIN approval_flow_version v ON v.id = o.approval_flow_version_id
               LEFT JOIN approval_flow f         ON f.id = v.flow_id
               LEFT JOIN (SELECT n.order_id, MAX(n.action_time) AS finished_at
-                           FROM order_approval_nodes n
+                           FROM order_approval_node n
                           WHERE n.status IN ('APPROVED', 'REJECTED')
                             AND (n.node_type IS NULL OR n.node_type = 'APPROVAL')
                           GROUP BY n.order_id) ap ON ap.order_id = o.id
@@ -105,8 +105,8 @@ public interface FlowMonitorMapper {
                    SUM(CASE WHEN n.activated_at IS NOT NULL
                              AND n.activated_at > DATE_ADD(o.created_at, INTERVAL #{activationGraceSeconds} SECOND)
                             THEN 1 ELSE 0 END)                                  AS runtimeActivatedCount
-              FROM order_approval_nodes n
-              JOIN orders o ON o.id = n.order_id
+              FROM order_approval_node n
+              JOIN borrow_order o ON o.id = n.order_id
               LEFT JOIN approval_flow_version v ON v.id = o.approval_flow_version_id
              WHERE o.approval_flow_json IS NOT NULL
                AND n.node_key IS NOT NULL

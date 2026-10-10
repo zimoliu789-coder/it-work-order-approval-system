@@ -127,7 +127,7 @@ class BackupAlertServiceTest {
     @DisplayName("审计写失败被吞掉，但告警仍照常发出（取证失败不牵连救人）")
     void alertSurvivesAuditFailure() {
         when(userMapper.selectSuperAdminIds()).thenReturn(List.of(7L));
-        doThrow(new RuntimeException("operation_logs insert failed"))
+        doThrow(new RuntimeException("operation_log insert failed"))
                 .when(operationLogService).record(any(), any(), anyString(), anyString(), anyString(), anyBoolean(), any());
 
         int notified = service.report(failureRequest());

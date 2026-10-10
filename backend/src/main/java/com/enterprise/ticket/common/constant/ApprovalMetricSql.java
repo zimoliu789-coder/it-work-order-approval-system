@@ -17,7 +17,7 @@ package com.enterprise.ticket.common.constant;
  * <h2>片段的使用前提（务必遵守）</h2>
  * <ul>
  *   <li>{@link #OVERDUE_RATE} 与 {@link #FINISHED_APPROVAL_SUBQUERY} 都假定
- *       {@code order_approval_nodes} 的别名是 {@code n}；调用方的 FROM/JOIN 必须给出这个别名。</li>
+ *       {@code order_approval_node} 的别名是 {@code n}；调用方的 FROM/JOIN 必须给出这个别名。</li>
  *   <li>{@code OVERDUE_RATE} 是<b>聚合表达式</b>，只能出现在 {@code SELECT} 列表里，
  *       且作用域内已把节点限定为「已决策」（{@code status IN ('APPROVED','REJECTED')}
  *       且 {@code action_time IS NOT NULL}）。</li>
@@ -65,7 +65,7 @@ public final class ApprovalMetricSql {
      */
     public static final String FINISHED_APPROVAL_SUBQUERY =
             "(SELECT n.order_id, MAX(n.action_time) AS finished_at"
-                    + " FROM order_approval_nodes n"
+                    + " FROM order_approval_node n"
                     + " WHERE n.status IN ('APPROVED', 'REJECTED')"
                     + " AND (n.node_type IS NULL OR n.node_type = 'APPROVAL')"
                     + " GROUP BY n.order_id)";

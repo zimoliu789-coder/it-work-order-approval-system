@@ -65,7 +65,7 @@ class ExceptionClassifierTest {
     @DisplayName("数据库异常（SQLException）→ DATABASE")
     void sqlIsDatabase() {
         assertEquals(ExceptionCategory.DATABASE,
-                ExceptionClassifier.classify(new SQLException("Table 'orders' doesn't exist")));
+                ExceptionClassifier.classify(new SQLException("Table 'borrow_order' doesn't exist")));
     }
 
     @Test

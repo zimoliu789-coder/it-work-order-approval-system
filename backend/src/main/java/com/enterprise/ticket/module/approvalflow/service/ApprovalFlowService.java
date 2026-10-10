@@ -91,7 +91,7 @@ public interface ApprovalFlowService {
      *
      * <p>与 {@link #describeVersion} 的区别是刻意保留的：后者带版本号，适合在配置界面
      * 让人分清「绑的是哪一版」；而这里的调用方是**工单提交**（ · M7），
-     * 它要把模板名冻结进 {@code orders.approval_flow_name} 作为归属快照。
+     * 它要把模板名冻结进 {@code borrow_order.approval_flow_name} 作为归属快照。
      * 归属是**模板级**的，若把「v1 / v2」一起冻进去，一旦模板行被删除、
      * 监控页回落到名字快照，同一个模板的两个版本就会显示成两组，凭空多出一个模板。
      */

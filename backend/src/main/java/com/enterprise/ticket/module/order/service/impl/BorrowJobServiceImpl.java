@@ -453,7 +453,7 @@ public class BorrowJobServiceImpl implements BorrowJobService {
     /**
      * 记录任务执行日志（「所有定时任务必须幂等，记录执行日志，便于运维排查」）
      *
-     * <p>复用 {@code operation_logs}（module = JOB）而不是另建任务日志表：
+     * <p>复用 {@code operation_log}（module = JOB）而不是另建任务日志表：
      * 日志表已具备时间、结果、详情与保留期清理策略，再建一张表只会扩大运维面。
      */
     private void auditJob(String jobName, String detail, int affected) {

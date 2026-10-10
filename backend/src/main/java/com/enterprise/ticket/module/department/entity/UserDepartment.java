@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * 主部门+兼职部门，主部门决定审批上级」）。
  *
  * <h2>为什么兼职部门**不参与**审批人推导</h2>
- * <p>审批人规则 {@code DEPARTMENT_MANAGER} 只读 {@code users.department_id}（主部门）。
+ * <p>审批人规则 {@code DEPARTMENT_MANAGER} 只读 {@code employee.department_id}（主部门）。
  * 若兼职也算，同一个人会因为多挂了一个部门而同时出现在两条审批路径上 ——
  * 「谁是直属主管」变成不确定的，而审批链最忌讳的就是不确定。
  *

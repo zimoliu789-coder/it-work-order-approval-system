@@ -51,7 +51,7 @@ import java.util.stream.Collectors;
  * <h2>成员归属怎么算（本类最容易踩的一点）</h2>
  * <p>有两张表回答「谁属于这个部门」：
  * <ul>
- *   <li>{@code users.department_id} —— <b>主部门</b>，唯一，决定审批上级；</li>
+ *   <li>{@code employee.department_id} —— <b>主部门</b>，唯一，决定审批上级；</li>
  *   <li>{@code user_department} —— <b>额外兼职归属</b>（如研发部的人同时挂在 IT运维组做执行人）。</li>
  * </ul>
  * 「部门人数」与「部门成员列表」取**两者的并集**。若只取主部门，
@@ -260,7 +260,7 @@ public class DepartmentServiceImpl implements DepartmentService {
      * 校验「绑定的审批流程版本」入参 —— {@code null} 表示解绑，是合法操作。
      *
      * <h2>为什么这道校验必须存在（ 全量回归补回的既有行为）</h2>
-     * <p>{@code departments.approval_flow_version_id} 是**活配置**：员工提交借用单时，
+     * <p>{@code department.approval_flow_version_id} 是**活配置**：员工提交借用单时，
      * {@code OrderServiceImpl#create} 会拿它去取已发布流程定义。若库里存着一个不存在的版本 id，
      * 报错点会漂移到「员工点提交」的那一刻 —— 管理员在部门页看到的是一次「保存成功」，
      * 缺陷却要等到某个员工提交工单才暴露，且报的是流程错误，排查方向完全被带偏。

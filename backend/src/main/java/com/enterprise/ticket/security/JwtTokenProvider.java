@@ -32,7 +32,7 @@ import java.util.UUID;
  *       用户退出时把这一枚 jti 放进 Redis 黑名单（TTL = 剩余有效期），
  *       只作废「这一次会话」，其他设备上的登录不受影响。</li>
  *   <li>{@code ver}（token_version）—— 用户级版本号。改密 / 管理员重置 / 强制下线时
- *       库中的 {@code users.token_version} +1，于是该用户<b>所有</b>已签发 Token
+ *       库中的 {@code employee.token_version} +1，于是该用户<b>所有</b>已签发 Token
  *       在下一次请求就被判定失效。</li>
  * </ul>
  *

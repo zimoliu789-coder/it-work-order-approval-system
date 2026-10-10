@@ -38,17 +38,17 @@ import java.util.List;
 public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
 
     /** 查询当前活跃（进行中）的升级任务，取最新一条 */
-    @Select("SELECT * FROM upgrade_tasks "
+    @Select("SELECT * FROM upgrade_task "
             + "WHERE status IN ('PENDING', 'VALIDATING', 'BACKING_UP', 'STAGING', 'READY_TO_APPLY', 'APPLYING') "
             + "ORDER BY created_at DESC LIMIT 1")
     UpgradeTask selectActive();
 
     /** 查询全部处于 APPLYING 的任务（启动对账用） */
-    @Select("SELECT * FROM upgrade_tasks WHERE status = 'APPLYING' ORDER BY created_at DESC")
+    @Select("SELECT * FROM upgrade_task WHERE status = 'APPLYING' ORDER BY created_at DESC")
     List<UpgradeTask> selectApplying();
 
     /** 升级历史（倒序，条数由调用方按配置限制） */
-    @Select("SELECT * FROM upgrade_tasks ORDER BY created_at DESC LIMIT #{limit}")
+    @Select("SELECT * FROM upgrade_task ORDER BY created_at DESC LIMIT #{limit}")
     List<UpgradeTask> selectHistory(@Param("limit") int limit);
 
     /**
@@ -61,13 +61,13 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
      * {@code ON UPDATE CURRENT_TIMESTAMP}，任何一次状态推进都会刷新它，
      * 用它反而看不出「这个任务已经很久没人碰了」。
      */
-    @Select("SELECT * FROM upgrade_tasks "
+    @Select("SELECT * FROM upgrade_task "
             + "WHERE status IN ('PENDING', 'VALIDATING', 'BACKING_UP', 'STAGING') AND created_at < #{cutoff} "
             + "ORDER BY created_at DESC")
     List<UpgradeTask> selectStaleProcessing(@Param("cutoff") LocalDateTime cutoff);
 
     /** 过程态推进（VALIDATING / BACKING_UP / STAGING）：不带状态前置条件，由调用方保证顺序 */
-    @Update("UPDATE upgrade_tasks SET status = #{status}, step = #{step}, progress = #{progress}, "
+    @Update("UPDATE upgrade_task SET status = #{status}, step = #{step}, progress = #{progress}, "
             + "message = #{message} WHERE id = #{id}")
     int updateStage(@Param("id") Long id,
                     @Param("status") String status,
@@ -86,7 +86,7 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
      * <p>回填时机刻意放在<b>备份之前</b>：这样即便进程在备份阶段被杀，
      * 库里也已经记下了目标版本与包哈希 —— 那正是排查时最需要的两条信息。
      */
-    @Update("UPDATE upgrade_tasks SET source_version = #{sourceVersion}, target_version = #{targetVersion}, "
+    @Update("UPDATE upgrade_task SET source_version = #{sourceVersion}, target_version = #{targetVersion}, "
             + "package_sha256 = #{packageSha256}, package_size = #{packageSize} WHERE id = #{id}")
     int updatePackageInfo(@Param("id") Long id,
                           @Param("sourceVersion") String sourceVersion,
@@ -95,7 +95,7 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
                           @Param("packageSize") Long packageSize);
 
     /** 回填产物路径（备份与落盘完成后调用） */
-    @Update("UPDATE upgrade_tasks SET backup_path = #{backupPath}, staging_path = #{stagingPath} "
+    @Update("UPDATE upgrade_task SET backup_path = #{backupPath}, staging_path = #{stagingPath} "
             + "WHERE id = #{id}")
     int updateArtifacts(@Param("id") Long id,
                         @Param("backupPath") String backupPath,
@@ -108,7 +108,7 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
      * 两个浏览器标签里各点一次「应用」，第二次必须失败而不是把已发起的外部命令
      * 再发一遍（那会导致两个脚本同时替换同一份产物）。
      */
-    @Update("UPDATE upgrade_tasks SET status = 'APPLYING', step = 'APPLY', progress = 90, "
+    @Update("UPDATE upgrade_task SET status = 'APPLYING', step = 'APPLY', progress = 90, "
             + "message = #{message} WHERE id = #{id} AND status = 'READY_TO_APPLY'")
     int markApplying(@Param("id") Long id, @Param("message") String message);
 
@@ -119,7 +119,7 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
      * 此时产物完好、包也校验过，把任务退回 READY_TO_APPLY 让管理员修好配置后重试，
      * 比直接判 FAILED 让他重新上传一遍要合理得多。
      */
-    @Update("UPDATE upgrade_tasks SET status = 'READY_TO_APPLY', step = 'READY', progress = 80, "
+    @Update("UPDATE upgrade_task SET status = 'READY_TO_APPLY', step = 'READY', progress = 80, "
             + "message = #{message} WHERE id = #{id} AND status = 'APPLYING'")
     int revertToReady(@Param("id") Long id, @Param("message") String message);
 
@@ -129,7 +129,7 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
      * @return 受影响行数；0 表示该行已被别的路径迁移过（调用方据此放弃本次迁移，
      *         而不是把旧结果覆盖掉）
      */
-    @Update("UPDATE upgrade_tasks SET status = #{status}, step = NULL, progress = 100, "
+    @Update("UPDATE upgrade_task SET status = #{status}, step = NULL, progress = 100, "
             + "message = #{message}, finished_at = NOW() "
             + "WHERE id = #{id} AND status = #{expected}")
     int finish(@Param("id") Long id,

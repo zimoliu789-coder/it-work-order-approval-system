@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 用户级授权。
  *
- * <p>为什么必须有这张表：系统原为**纯角色制**（{@code sys_role_permission}），
+ * <p>为什么必须有这张表：系统原为**纯角色制**（{@code role_permission}），
  * 「只给某个人开一项权限」不能靠改角色 —— 角色是共享的，改它会波及该角色下的所有人。
  *
  * <p>撤销用 {@code revoked_at} 标记而不是删行：授权历史是审计证据

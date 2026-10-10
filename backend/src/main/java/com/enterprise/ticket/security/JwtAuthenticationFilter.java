@@ -31,7 +31,7 @@ import java.util.List;
  * <ol>
  *   <li>从 HttpOnly Cookie 中读取 token 并解析；</li>
  *   <li>每次请求从数据库重新加载用户，保证「账号禁用 / 离职后立即失效」；</li>
- *   <li><b>令牌版本号比对</b>：Token 中的 {@code ver} 与库中 {@code users.token_version}
+ *   <li><b>令牌版本号比对</b>：Token 中的 {@code ver} 与库中 {@code employee.token_version}
  *       不一致即视为已作废（改密 / 管理员重置 / 强制下线的结果）；</li>
  *   <li><b>黑名单比对</b>：Token 的 {@code jti} 在 Redis 中即视为已登出；</li>
  *   <li>强制改密拦截：{@code force_change_password=true} 时除白名单接口外一律返回

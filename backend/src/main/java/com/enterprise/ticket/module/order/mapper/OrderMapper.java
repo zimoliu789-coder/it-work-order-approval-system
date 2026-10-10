@@ -10,7 +10,7 @@ import org.apache.ibatis.annotations.Select;
  * 借用工单 Mapper（ / ）
  *
  * <p>除下面这一条行锁外无自定义 SQL：设备占用、待处理计数等查询均可由 Lambda Wrapper 表达，
- * 且 {@code orders} 表不使用逻辑删除（历史工单必须永久保留， / ）。
+ * 且 {@code borrow_order} 表不使用逻辑删除（历史工单必须永久保留， / ）。
  */
 @Mapper
 public interface OrderMapper extends BaseMapper<Order> {
@@ -27,12 +27,12 @@ public interface OrderMapper extends BaseMapper<Order> {
      * 先取本单行锁，后续所有读都发生在「对方已提交」之后。
      *
      * <h2>加锁顺序约定（改动前必读）</h2>
-     * <p>凡是在同一事务内同时修改 {@code orders} 行与 {@code order_approval_nodes} 行的地方，
+     * <p>凡是在同一事务内同时修改 {@code borrow_order} 行与 {@code order_approval_node} 行的地方，
      * 都必须<b>先 orders 行、后 nodes 行</b>。当前满足该约定的只有
      * {@code OrderServiceImpl} 与 {@code OrderForceOperationServiceImpl}；
      * {@code FlowActivationService} / {@code ApprovalTimeoutJobService} 只写 nodes、
      * 不写 orders，因此只会等待、不会成环。{@code OrderExtendServiceImpl} 写的是
-     * {@code order_extend_approval_nodes}（另一张表），也与本表的行锁无交集。
+     * {@code order_extend_approval_node}（另一张表），也与本表的行锁无交集。
      * <b>若日后新增「先把节点改掉、再把工单改状态」的路径，必须一并加锁，否则会死锁。</b>
      *
      * <h2>为什么用独立的 {@code SELECT ... FOR UPDATE} 而不是把 {@code selectById} 换掉</h2>
@@ -42,6 +42,6 @@ public interface OrderMapper extends BaseMapper<Order> {
      * <p>返回值刻意<b>不消费</b>：行不存在时紧随其后的 {@code requireOrder} 会给出更准确的错误，
      * 本方法只负责拿锁。
      */
-    @Select("SELECT id FROM orders WHERE id = #{orderId} FOR UPDATE")
+    @Select("SELECT id FROM borrow_order WHERE id = #{orderId} FOR UPDATE")
     Long lockById(@Param("orderId") Long orderId);
 }

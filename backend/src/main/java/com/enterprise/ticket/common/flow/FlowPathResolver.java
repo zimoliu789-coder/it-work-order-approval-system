@@ -67,7 +67,7 @@ import java.util.Set;
  *
  * <h2>口径变更的适用范围</h2>
  * 只影响<b>新提交</b>的工单 —— stepOrder 在提交时随节点行落库，历史工单的
- * {@code order_approval_nodes.step_order} <b>不做迁移</b>：它们的审批已结束，
+ * {@code order_approval_node.step_order} <b>不做迁移</b>：它们的审批已结束，
  * step_order 不再参与推进，改号只是无谓的数据变更。
  *
  * <h2>汇聚（多条分支合流）</h2>

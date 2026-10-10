@@ -27,7 +27,7 @@ import java.util.Map;
  * <h2>为什么附件要单独一张表，而不是塞进某个 FILE 列</h2>
  * <p>附件<b>不在 {@code form_data_json} 里</b>（上传需要工单 id，提交成功后才存在），
  * 而是按 {@code (biz_type='CUSTOM_ORDER', biz_id=orderId)} 独立关联到工单；
- * {@code attachments} 表也<b>没有字段级归属列</b>。也就是说「某个 FILE 字段对应哪几个文件」
+ * {@code attachment} 表也<b>没有字段级归属列</b>。也就是说「某个 FILE 字段对应哪几个文件」
  * 在数据模型上根本不存在 —— 硬填会让一个有 2 个附件字段的工单在<b>两个列里显示同一批文件名</b>，
  * 那是编造。因此 FILE 列输出 {@code -}（表示「结构上无值」，而非「漏导」），
  * 附件明细由本表承接：既一个不丢，又能追溯到具体文件。

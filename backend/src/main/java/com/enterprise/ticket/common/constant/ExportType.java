@@ -3,7 +3,7 @@ package com.enterprise.ticket.common.constant;
 /**
  * 导出类型（ Excel 导入导出与统计报表）
  *
- * <p>与 {@code export_tasks.export_type} 列的取值一一对应。分两大类：
+ * <p>与 {@code export_task.export_type} 列的取值一一对应。分两大类：
  * <ul>
  *   <li><b>记录导出</b>（{@link #DEVICE} / {@link #ORDER} / {@link #USAGE} / {@link #CUSTOM_FORM}）——导出的是一行行业务记录，
  *       行数可能很大，因此受 {@code app.export.async-threshold}（：10000 条）

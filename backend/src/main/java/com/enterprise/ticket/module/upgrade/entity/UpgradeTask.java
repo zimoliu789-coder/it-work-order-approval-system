@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
  * 换挂载点只改配置，不刷数据。
  */
 @Data
-@TableName("upgrade_tasks")
+@TableName("upgrade_task")
 public class UpgradeTask {
 
     @TableId(type = IdType.AUTO)

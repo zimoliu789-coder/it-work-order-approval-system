@@ -230,12 +230,14 @@ curl -s http://127.0.0.1:8080/api/health
 
 -- 1) 先看清楚哪些账号会被拦（手机与邮箱都为空）
 SELECT id, username, email, phone
-  FROM `users`
+  FROM `employee`
  WHERE (phone IS NULL OR phone = '') AND (email IS NULL OR email = '');
 
--- 2) 为指定账号预置邮箱。email 与 phone 在 users 上都是唯一索引
---    （uk_users_email / uk_users_phone），批量写入时不要用同一个邮箱 —— 会直接撞索引。
-UPDATE `users` SET email = 'zhangsan@example.com' WHERE username = '10001';
+-- 2) 为指定账号预置邮箱。email 与 phone 在 employee 上都是唯一索引，
+--    批量写入时不要用同一个邮箱 —— 会直接撞索引。
+--    注意索引名仍是改名前的历史名（uk_users_email / uk_users_phone）：
+--    RENAME TABLE 不重命名索引，看到 uk_users_* 指的是现在这张 employee 表。
+UPDATE `employee` SET email = 'zhangsan@example.com' WHERE username = '10001';
 
 -- 3) 若想「全站临时关掉闸门」，把两个验证开关都关掉即可。
 --    改完等 60 秒兜底刷新，或 `docker compose restart backend` 立即生效；恢复时把值改回 '1'。
@@ -243,9 +245,9 @@ UPDATE `system_config` SET config_value = '0'
  WHERE config_key IN ('sms_verify_enabled', 'email_verify_enabled');
 ```
 
-**回滚**：`UPDATE users SET email = NULL WHERE email = 'zhangsan@example.com';`（只清你写进去的那批）。
+**回滚**：`UPDATE employee SET email = NULL WHERE email = 'zhangsan@example.com';`（只清你写进去的那批）。
 
-**不要**用 `UPDATE users SET email = CONCAT(username, '@example.invalid')` 之类的批量造数 ——
+**不要**用 `UPDATE employee SET email = CONCAT(username, '@example.invalid')` 之类的批量造数 ——
 唯一索引会拦住重复值，而且假邮箱一旦被员工沿用，找回密码的验证码将永远发不到人手上。
 
 ---
@@ -453,6 +455,15 @@ sudo docker compose up -d --remove-orphans    # 拉起全部
 ### 升级 / 回滚
 
 镜像标签由 `IMAGE_TAG` 控制（默认 `latest`；也可填不可变标签 `commit-<短sha>` 用于锁定或回滚）。
+
+> ⚠️ **严禁新旧版本实例混跑。** 库结构由镜像内置的 Flyway 迁移驱动。含 **表名变更** 的版本
+> （如 `V47` 把 `users`→`employee`、`orders`→`borrow_order`）一旦被某个实例执行过，
+> 仍跑旧镜像的实例再去访问 `users` / `orders` 会直接报 `1146 Table doesn't exist`。
+> 因此这类版本**只能做停机升级**：先停掉全部旧实例 → 拉起新版本 → 确认迁移执行完再放流量。
+> 主备双机请先 `docker compose down` 全部停机，不要指望滚动升级能平滑跨过表名变更。
+>
+> 若该版本包含表名 / 结构回滚需求，回滚脚本在 `scripts/rollback/` 下 —— 它们**刻意不放在**
+> `db/migration/` 里，需要回滚时才手工拷进去（原因见脚本头部注释）。
 
 #### 方式一：拉取预构建镜像（推荐）
 

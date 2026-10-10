@@ -130,7 +130,7 @@ public interface OrderService {
     /**
      * 「抄送我的」工单列表。
      *
-     * <p>返回「当前用户被抄送」的工单（{@code order_approval_nodes} 中存在
+     * <p>返回「当前用户被抄送」的工单（{@code order_approval_node} 中存在
      * {@code node_type='CC'} 且 {@code approver_id=当前用户} 的行）。
      *
      * <p>与其它列表的差别：抄送人<b>只读</b>——能查看完整详情与附件，

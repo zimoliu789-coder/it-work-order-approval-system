@@ -54,9 +54,9 @@ import java.util.stream.Collectors;
  * 借用延期子工单服务实现
  *
  * <p><b>审批链路复用方式</b>：申请人提交延期时，复制主工单已固化的审批快照
- * （{@code order_approval_nodes} 的 approver / signType / step），重新解析审批人可用性
+ * （{@code order_approval_node} 的 approver / signType / step），重新解析审批人可用性
  * （离职/禁用 → super_admin 兜底，）并应用「审批人 = 申请人则跳过」，
- * 落到独立的 {@code order_extend_approval_nodes} 表。主单审批链路完全不改动，零回归风险。
+ * 落到独立的 {@code order_extend_approval_node} 表。主单审批链路完全不改动，零回归风险。
  *
  * <p><b>审批通过后的副作用</b>：只回写主单三个字段 ——
  * {@code planned_end_time}（延长到新时间）、{@code borrow_timeout}（按新时间重算）、
@@ -83,9 +83,9 @@ public class OrderExtendServiceImpl implements OrderExtendService {
      * 否则后续步骤审批人会提前看到待办。
      */
     private static final String PENDING_EXTEND_IN_SQL =
-            "SELECT ean.extend_id FROM order_extend_approval_nodes ean "
+            "SELECT ean.extend_id FROM order_extend_approval_node ean "
                     + "WHERE ean.approver_id = %d AND ean.status = 'PENDING' "
-                    + "AND ean.step_order = (SELECT MIN(n2.step_order) FROM order_extend_approval_nodes n2 "
+                    + "AND ean.step_order = (SELECT MIN(n2.step_order) FROM order_extend_approval_node n2 "
                     + "WHERE n2.extend_id = ean.extend_id AND n2.status = 'PENDING')";
 
     private final OrderExtendMapper extendMapper;
@@ -169,7 +169,7 @@ public class OrderExtendServiceImpl implements OrderExtendService {
      * <p>返回空列表表示主单当年无需审批，延期同样免审批。
      *
      * <h2>为什么要排除抄送（CC）行（M1 顺带修复）</h2>
-     * <p>抄送行与审批行同在 {@code order_approval_nodes} 表里，{@code approver_id} 指向的是
+     * <p>抄送行与审批行同在 {@code order_approval_node} 表里，{@code approver_id} 指向的是
      * <b>抄送对象</b>而非审批人。若把抄送行也复制进延期节点，下面会把状态强置为
      * {@code PENDING}，于是<b>抄送人凭空变成审批人</b> —— 他们既没被告知要审，也不知道该怎么审，
      * 而这笔延期会因此卡在一个"不该有人审"的节点上。

@@ -14,7 +14,7 @@ import java.util.Map;
  * 密码编码器配置（ / ）
  *
  * <p>优先 Argon2id，同时保留 BCrypt 以兼容历史哈希。哈希串带 {@code {argon2}} / {@code {bcrypt}}
- * 前缀存入 {@code users.password_hash}，便于后续平滑升级算法。
+ * 前缀存入 {@code employee.password_hash}，便于后续平滑升级算法。
  *
  * <p>单独成类是为了切断 SecurityConfig → Filter → UserService → PasswordEncoder 的循环依赖。
  */

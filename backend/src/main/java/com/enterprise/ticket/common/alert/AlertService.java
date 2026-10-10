@@ -87,7 +87,7 @@ public class AlertService {
      * @param type        站内消息类型（决定消息中心里的分类图标 / 文案）
      * @param title       标题
      * @param body        正文（本方法会自动追加统一的通道说明页脚）
-     * @param auditAction 审计动作码（写进 {@code operation_logs}）
+     * @param auditAction 审计动作码（写进 {@code operation_log}）
      * @param auditDetail 审计详情
      */
     public AlertOutcome alert(AlertLevel level, MessageType type, String title, String body,

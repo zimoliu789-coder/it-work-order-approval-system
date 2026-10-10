@@ -40,7 +40,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ExportTaskRunner {
 
-    /** 失败原因落库长度上限，与 {@code export_tasks.error_message} 的 500 对齐 */
+    /** 失败原因落库长度上限，与 {@code export_task.error_message} 的 500 对齐 */
     private static final int MAX_ERROR_LENGTH = 500;
 
     /** 与查询条件里的 scope 取值一致；大写比较，避免前端传小写导致「全部工单」被误判成「我的」 */
@@ -54,7 +54,7 @@ public class ExportTaskRunner {
     /**
      * 导出文件保留天数的<b>事实源</b>（·）
      *
-     * <p>过期时刻在生成完成时算一次、落进 {@code export_tasks.expire_at}，之后由
+     * <p>过期时刻在生成完成时算一次、落进 {@code export_task.expire_at}，之后由
      * {@code ExportMaintenanceService} 按 {@code expire_at} 清理 —— 清理侧不需要知道保留天数，
      * 只需知道「这一条什么时候过期」。这样即便管理员事后改了保留天数，
      * 也不会让「已经生成好的文件」突然提前或延后过期（参数只影响<b>此后生成</b>的文件），

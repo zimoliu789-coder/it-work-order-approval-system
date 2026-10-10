@@ -4,7 +4,7 @@ package com.enterprise.ticket.common.constant;
  * 工单类型（ 新增， 工单主表 +  /  /  的多种单据形态）
  *
  * <p>背景： 起，「归还」「维修」「换货」都可能以工单形式落地，需要在同一张
- * {@code orders} 表里区分单据性质，避免用 {@code status} 兼职表达类型
+ * {@code borrow_order} 表里区分单据性质，避免用 {@code status} 兼职表达类型
  * （状态描述「走到哪一步」，类型描述「这是什么单」，两者正交）。
  *
  * <p><b>当前阶段的实际使用范围</b>：
@@ -16,7 +16,7 @@ package com.enterprise.ticket.common.constant;
  *   <li>{@link #REPAIR} / {@link #EXCHANGE} —— 预留给后续阶段的维修单与换货单。</li>
  * </ul>
  *
- * <p>数据库列 {@code orders.order_type} 带 {@code DEFAULT 'BORROW'}，
+ * <p>数据库列 {@code borrow_order.order_type} 带 {@code DEFAULT 'BORROW'}，
  *  的存量工单不需要回填即可正确解析。
  */
 public enum OrderType {
@@ -39,9 +39,9 @@ public enum OrderType {
      * <p>由管理员配置的「申请类型 + 动态表单」产生，承载在职员工的自定义事项申请
      * （采购申请、外出登记、备件领用……）。与 BORROW 的关键差异：
      * <ul>
-     *   <li><b>无设备</b>：{@code orders.device_id} 为空。设备的锁定 / 交付 / 归还 /
+     *   <li><b>无设备</b>：{@code borrow_order.device_id} 为空。设备的锁定 / 交付 / 归还 /
      *       超时顺延这一整套流程对它无意义，相关分支按此类型跳过；</li>
-     *   <li><b>形态由数据决定</b>：填什么字段取决于 {@code orders.apply_type_id}
+     *   <li><b>形态由数据决定</b>：填什么字段取决于 {@code borrow_order.apply_type_id}
      *       指向的申请类型所绑定的模板版本，因此类型枚举无法穷举它的「样子」，
      *       它本身就是「可扩展」这一能力的载体。</li>
      * </ul>

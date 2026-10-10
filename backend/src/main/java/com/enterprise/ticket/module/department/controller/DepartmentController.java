@@ -35,7 +35,7 @@ import java.util.List;
  * 就得动权限模型。
  *
  * <h2>成员列表为什么单独一个端点</h2>
- * <p>{@code GET /api/users/page?departmentId=} 只按 {@code users.department_id}（主部门）过滤，
+ * <p>{@code GET /api/users/page?departmentId=} 只按 {@code employee.department_id}（主部门）过滤，
  * 而本页要显示的是**主部门 ∪ 兼职部门**的并集（否则「IT运维组」永远是空列表）。
  * 两者口径不同就不该硬塞进同一个端点 —— 那样会让「员工管理页的部门筛选」跟着变形。
  *

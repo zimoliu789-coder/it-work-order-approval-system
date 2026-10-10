@@ -62,7 +62,7 @@ public class FlowMonitorFlowVO {
     /**
      * 平均审批时长（小时，保留 2 位小数）；无样本时为 {@code null}。
      *
-     * <p>口径：起点 = 工单提交时刻（{@code orders.created_at}），
+     * <p>口径：起点 = 工单提交时刻（{@code borrow_order.created_at}），
      * 终点 = 该工单**最后一个终态审批节点**（APPROVED / REJECTED）的操作时间。
      * 取"最后一个"而不是"第一个通过"，是因为用户感知的等待覆盖到审批真正结束为止；
      * 把 REJECTED 也算作终点，是因为被驳回的单同样走完了审批，排除掉会低估实际耗时。

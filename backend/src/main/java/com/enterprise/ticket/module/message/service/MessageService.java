@@ -64,7 +64,7 @@ public interface MessageService extends IService<Message> {
      *
      * <p>消息是「通知产物」，删掉自己的通知不影响任何业务事实，因此用<b>物理删除</b>：
      * 若改软删，消息表会被用户操作不断膨胀，而软删标记对「通知」这一语义没有价值
-     * （审计需求由 {@code operation_logs} 承担）。
+     * （审计需求由 {@code operation_log} 承担）。
      *
      * <p>只允许删自己的：条件删除带 {@code user_id} 前置条件，命中 0 行统一返回
      * {@code MESSAGE_NOT_FOUND} —— 不区分「不存在」与「不是你的」，

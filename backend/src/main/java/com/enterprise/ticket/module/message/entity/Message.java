@@ -22,7 +22,7 @@ import java.time.LocalDateTime;
  * 与数据库列名一致，无需额外 {@code @TableField}。
  */
 @Data
-@TableName("messages")
+@TableName("message")
 public class Message {
 
     @TableId(type = IdType.AUTO)

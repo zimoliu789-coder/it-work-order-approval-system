@@ -11,7 +11,7 @@ import java.util.List;
  * <h2>它回答的问题</h2>
  * <p>工作台要给业务管理员一个「这段时间系统里在发生什么」的快照，共七类信息：
  * 区间内工单总量、按类型 / 状态 / 时间 / 部门的四个分布、平均审批时长、超时率。
- * 前五者落在 {@code orders}，后两者落在 {@code order_approval_nodes}。
+ * 前五者落在 {@code borrow_order}，后两者落在 {@code order_approval_node}。
  *
  * <h2>{@code null} ≠ {@code 0}（本 VO 最重要的一条约定）</h2>
  * <p>{@link #avgApprovalHours} 与 {@link #overdueRate} 在<b>没有样本</b>时是 {@code null}：
@@ -42,7 +42,7 @@ public class DashboardSummaryVO {
     /** 实际生效的粒度（{@code DAY} / {@code MONTH}） */
     private String granularity;
 
-    /** 区间内工单总量（按 {@code orders.created_at}） */
+    /** 区间内工单总量（按 {@code borrow_order.created_at}） */
     private long totalOrders;
 
     /** 按工单类型的分布（{@code code} = {@code order_type}，{@code label} = 中文名） */

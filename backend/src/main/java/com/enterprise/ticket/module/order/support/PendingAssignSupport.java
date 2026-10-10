@@ -107,7 +107,7 @@ public final class PendingAssignSupport {
      * </ul>
      * 而"不限制"正是这些定义在 之前的行为，因此降级不会改变任何既有单的走向。
      *
-     * @param flowJson    该工单**提交时冻结**的流程定义 JSON（{@code orders.approval_flow_json}）
+     * @param flowJson    该工单**提交时冻结**的流程定义 JSON（{@code borrow_order.approval_flow_json}）
      * @param placeholder 待指派占位行
      */
     public static ApproverRule prevAssignRuleOf(String flowJson, OrderApprovalNode placeholder) {

@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 超管强制干预记录（；规范 V1.1 未覆盖）
  *
- * <p><b>为什么独立建表而非只写 {@code operation_logs}</b>：工单详情页需要按
+ * <p><b>为什么独立建表而非只写 {@code operation_log}</b>：工单详情页需要按
  * {@code order_id} 组装「强制操作时间线」，而审计日志是全局流水（含大量非工单事件），
  * 按 order_id 反查既低效也不可靠（日志里的 order_id 是文本化的业务参数，不是索引列）。
  *

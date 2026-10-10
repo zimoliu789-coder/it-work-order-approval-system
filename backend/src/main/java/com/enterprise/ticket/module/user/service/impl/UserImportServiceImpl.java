@@ -452,7 +452,7 @@ public class UserImportServiceImpl implements UserImportService {
     /**
      * 加载唯一性与分组上下文（一次查询，避免逐行查库造成 N+1）。
      *
-     * <p>唯一性比对用<b>大小写不敏感</b>的集合：{@code users.username} 使用
+     * <p>唯一性比对用<b>大小写不敏感</b>的集合：{@code employee.username} 使用
      * utf8mb4_general_ci 排序规则（不区分大小写），Java 侧若用区分大小写的容器，
      * 会出现「库能查到的登录名，本地集合却判为不冲突」→ 预检通过、写入时撞唯一索引。
      *

@@ -36,7 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>两个权限码在 重构权限目录时<b>已经预埋</b>（见 {@code PermissionCatalog}），
  * 且不在 {@code DEFAULT_PERMISSIONS} 内，因此本次<b>不需要授权迁移</b> ——
- * 超管由 {@code PermissionGuard} 全量短路放行，{@code sys_role_permission} 里
+ * 超管由 {@code PermissionGuard} 全量短路放行，{@code role_permission} 里
  * 不存在也不需要 {@code ha:%} 行。
  *
  * <h2>为什么所有写操作都是 {@code RiskLevel.HIGH}</h2>

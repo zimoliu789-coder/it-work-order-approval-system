@@ -150,9 +150,9 @@ public class OrderServiceImpl implements OrderService {
      * 会在前序步骤尚未通过时就提前看到待办（违反「按 step_order 从小到大依次执行」）。
      */
     private static final String PENDING_APPROVAL_IN_SQL =
-            "SELECT n.order_id FROM order_approval_nodes n "
+            "SELECT n.order_id FROM order_approval_node n "
                     + "WHERE n.approver_id = %d AND n.status = 'PENDING' "
-                    + "AND n.step_order = (SELECT MIN(n2.step_order) FROM order_approval_nodes n2 "
+                    + "AND n.step_order = (SELECT MIN(n2.step_order) FROM order_approval_node n2 "
                     + "WHERE n2.order_id = n.order_id AND n2.status = 'PENDING')";
 
     /**
@@ -162,7 +162,7 @@ public class OrderServiceImpl implements OrderService {
      * （审批行的 {@code node_type} 为 {@code APPROVAL} 或 NULL）。
      */
     private static final String CC_IN_SQL =
-            "SELECT n.order_id FROM order_approval_nodes n "
+            "SELECT n.order_id FROM order_approval_node n "
                     + "WHERE n.node_type = 'CC' AND n.approver_id = %d";
 
     private final OrderMapper orderMapper;
@@ -2427,7 +2427,7 @@ public class OrderServiceImpl implements OrderService {
      *
      * <h2>调用前提：本单行锁必须已被持有（W4-F）</h2>
      * <p>本方法是「读节点 → 判定无待办 → 转移终态」的 write skew 现场，
-     * 它<b>只在</b>调用方先取得 {@code orders} 行锁时才是正确的：会签并发下，
+     * 它<b>只在</b>调用方先取得 {@code borrow_order} 行锁时才是正确的：会签并发下，
      * 两个事务各自读到「对方那行仍待办」，就会双双判 true 而谁都不转移，
      * 工单卡在「审批中且无待办节点」。所以 {@code approve} 与 {@code cancel} 都以
      * {@code requireOrderForUpdate} 开头，而不是直接 {@code requireOrder}。
@@ -2592,7 +2592,7 @@ public class OrderServiceImpl implements OrderService {
     /**
      * 工单可见性：申请人 / 审批人 / <b>抄送人</b> / 实际执行人 / super_admin / admin
      *
-     * <p> 起「抄送人」自动纳入：抄送行与审批行落在同一张 {@code order_approval_nodes}，
+     * <p> 起「抄送人」自动纳入：抄送行与审批行落在同一张 {@code order_approval_node}，
      * 且 {@code approver_id} 就是抄送对象，因此下面这条「我是本单任一节点的相关人」判定
      * 天然覆盖了抄送人 —— 不需要为此再加一条分支。
      *

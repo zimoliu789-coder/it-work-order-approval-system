@@ -81,7 +81,7 @@ public class UpgradeController {
      *
      * <p>{@code recordArgs = false}：入参里有一个 {@code HttpServletRequest}
      * 与一个尚未读取的输入流，把它们交给审计切面去 toString 没有意义
-     * （得到的是类名），而真正需要留痕的文件名与任务号已经落进 {@code upgrade_tasks} 表。
+     * （得到的是类名），而真正需要留痕的文件名与任务号已经落进 {@code upgrade_task} 表。
      */
     @PostMapping(value = "/package", consumes = MediaType.APPLICATION_OCTET_STREAM_VALUE)
     @PreAuthorize("@perm.has('system:upgrade:execute')")

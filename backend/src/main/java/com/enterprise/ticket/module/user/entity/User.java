@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  * {@code getIsXxx()} 造成 MyBatis-Plus 属性名解析歧义。
  */
 @Data
-@TableName("users")
+@TableName("employee")
 public class User {
 
     /** 主键 user_id，不可变 */

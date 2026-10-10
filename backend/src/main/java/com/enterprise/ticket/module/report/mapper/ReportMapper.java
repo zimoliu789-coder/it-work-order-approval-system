@@ -38,7 +38,7 @@ public interface ReportMapper {
     /** 区间内借用申请总数 */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
             """)
@@ -47,7 +47,7 @@ public interface ReportMapper {
     /** 区间内被借用过的设备数（去重） */
     @Select("""
             SELECT COUNT(DISTINCT o.device_id)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
             """)
@@ -60,7 +60,7 @@ public interface ReportMapper {
                    d.asset_no      AS assetNo,
                    pc.category_name AS primaryCategoryName,
                    COUNT(o.id)     AS borrowCount
-              FROM orders o
+              FROM borrow_order o
               JOIN device d ON d.id = o.device_id
               LEFT JOIN device_category pc ON pc.id = d.primary_category_id
              WHERE o.order_type = 'BORROW'
@@ -76,7 +76,7 @@ public interface ReportMapper {
             SELECT COALESCE(pc.category_name, '未分类') AS categoryName,
                    COUNT(o.id)                          AS borrowCount,
                    COUNT(DISTINCT o.device_id)          AS deviceCount
-              FROM orders o
+              FROM borrow_order o
               JOIN device d ON d.id = o.device_id
               LEFT JOIN device_category pc ON pc.id = d.primary_category_id
              WHERE o.order_type = 'BORROW'
@@ -94,7 +94,7 @@ public interface ReportMapper {
     /** 区间内提交的借用工单数（分母） */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
             """)
@@ -109,7 +109,7 @@ public interface ReportMapper {
      */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.status IN ('PENDING_DELIVERY', 'BORROWED', 'PENDING_RETURN', 'RETURNED')
                AND o.created_at >= #{from} AND o.created_at < #{to}
@@ -127,9 +127,9 @@ public interface ReportMapper {
      */
     @Select("""
             SELECT AVG(TIMESTAMPDIFF(MINUTE, o.created_at, ap.approved_at))
-              FROM orders o
+              FROM borrow_order o
               JOIN (SELECT order_id, MAX(action_time) AS approved_at
-                      FROM order_approval_nodes
+                      FROM order_approval_node
                      WHERE status = 'APPROVED'
                      GROUP BY order_id) ap ON ap.order_id = o.id
              WHERE o.order_type = 'BORROW'
@@ -141,9 +141,9 @@ public interface ReportMapper {
     /** 审批耗时超过阈值的工单数（历史慢审批） */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
               JOIN (SELECT order_id, MAX(action_time) AS approved_at
-                      FROM order_approval_nodes
+                      FROM order_approval_node
                      WHERE status = 'APPROVED'
                      GROUP BY order_id) ap ON ap.order_id = o.id
              WHERE o.order_type = 'BORROW'
@@ -161,10 +161,10 @@ public interface ReportMapper {
                    u.display_name   AS applicantName,
                    CONCAT(d.device_name, '（', d.asset_no, '）') AS deviceName,
                    o.created_at     AS submittedAt,
-                   (SELECT MAX(n.action_time) FROM order_approval_nodes n
+                   (SELECT MAX(n.action_time) FROM order_approval_node n
                      WHERE n.order_id = o.id AND n.status = 'APPROVED') AS approvedAt
-              FROM orders o
-              JOIN users u  ON u.id = o.applicant_id
+              FROM borrow_order o
+              JOIN employee u  ON u.id = o.applicant_id
               JOIN device d ON d.id = o.device_id
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
@@ -178,8 +178,8 @@ public interface ReportMapper {
     /** 当前仍待处理的审批节点数（不限区间，反映此刻积压） */
     @Select("""
             SELECT COUNT(*)
-              FROM order_approval_nodes n
-              JOIN orders o ON o.id = n.order_id
+              FROM order_approval_node n
+              JOIN borrow_order o ON o.id = n.order_id
              WHERE n.status = 'PENDING'
                AND o.status = 'PENDING_APPROVAL'
             """)
@@ -192,7 +192,7 @@ public interface ReportMapper {
      * <ol>
      *   <li>{@code step_order} 必须是该工单<b>当前最小</b>的待审步骤 —— 多步审批里
      *       后续步骤本来就在等前一步，把它们算作「超时」会凭空制造积压；</li>
-     *   <li>起点用工单提交时间（{@code orders.created_at}）而非节点创建时间：
+     *   <li>起点用工单提交时间（{@code borrow_order.created_at}）而非节点创建时间：
      *       节点创建时间等于快照生成时间，用它会把「轮到我这步时才开始等」这件事
      *       误算成「节点一创建就在等」，两者在会说工单上差别很大。
      *       对第一步审批这是精确值，对后续步骤是保守（偏大）估计，故本指标用于发现
@@ -201,12 +201,12 @@ public interface ReportMapper {
      */
     @Select("""
             SELECT COUNT(*)
-              FROM order_approval_nodes n
-              JOIN orders o ON o.id = n.order_id
+              FROM order_approval_node n
+              JOIN borrow_order o ON o.id = n.order_id
              WHERE n.status = 'PENDING'
                AND o.status = 'PENDING_APPROVAL'
                AND n.step_order = (SELECT MIN(n2.step_order)
-                                     FROM order_approval_nodes n2
+                                     FROM order_approval_node n2
                                     WHERE n2.order_id = n.order_id AND n2.status = 'PENDING')
                AND o.created_at < DATE_SUB(NOW(), INTERVAL #{hours} HOUR)
             """)
@@ -282,7 +282,7 @@ public interface ReportMapper {
     @Select("""
             SELECT DATE_FORMAT(o.created_at, #{format}) AS bucket,
                    COUNT(*)                             AS count
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY bucket
@@ -304,7 +304,7 @@ public interface ReportMapper {
      */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.borrow_timeout = 1
                AND o.status IN ('BORROWED', 'PENDING_RETURN')
@@ -319,7 +319,7 @@ public interface ReportMapper {
      */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.order_type = 'BORROW'
                AND o.status IN ('BORROWED', 'PENDING_RETURN')
                AND o.planned_end_time IS NOT NULL
@@ -364,9 +364,9 @@ public interface ReportMapper {
             SELECT u.department_id                   AS departmentId,
                    COALESCE(dep.dept_name, '未分配') AS departmentName,
                    COUNT(o.id)                       AS borrowCount
-              FROM orders o
-              JOIN users u ON u.id = o.applicant_id
-              LEFT JOIN departments dep ON dep.id = u.department_id
+              FROM borrow_order o
+              JOIN employee u ON u.id = o.applicant_id
+              LEFT JOIN department dep ON dep.id = u.department_id
              WHERE o.order_type = 'BORROW'
                AND o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY u.department_id, COALESCE(dep.dept_name, '未分配')

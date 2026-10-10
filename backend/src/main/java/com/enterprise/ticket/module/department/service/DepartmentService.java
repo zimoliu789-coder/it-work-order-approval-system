@@ -44,7 +44,7 @@ public interface DepartmentService {
     /**
      * 该部门的主主管（多个主管时取 {@code user_id} 最小者）；无主管返回 {@code null}。
      *
-     * <p><b>这是「直属主管默认值」的唯一出处</b>（见 {@code users.leader_override}）：
+     * <p><b>这是「直属主管默认值」的唯一出处</b>（见 {@code employee.leader_override}）：
      * 未被手工覆盖的成员，其直属主管就是它。
      */
     Long primaryManagerOf(Long departmentId);
@@ -59,7 +59,7 @@ public interface DepartmentService {
      * 某部门的**上层部门** id；已是根部门（{@code parent_id} 为空）时返回 {@code null}。
      *
      * <p>供 的「上级部门主管」审批人规则使用。放在本接口而不是让调用方自己查
-     * {@code departments.parent_id}，是为了让「部门树怎么走」只有一处实现 ——
+     * {@code department.parent_id}，是为了让「部门树怎么走」只有一处实现 ——
      * 将来若 tree 结构改成闭包表 / 物化路径为主，只需要改这一个方法。
      */
     Long parentIdOf(Long departmentId);
@@ -71,7 +71,7 @@ public interface DepartmentService {
      * 把某部门**未手工覆盖**的成员的直属主管同步为当前部门主管。
      *
      * <p>需求文档：「部门主管变更时，该部门所有没有手动覆盖过的成员，直属主管自动更新成新主管」。
-     * 手工覆盖过的成员（{@code users.leader_override = 1}）**绝不改写** ——
+     * 手工覆盖过的成员（{@code employee.leader_override = 1}）**绝不改写** ——
      * 那正是「副组长管具体人」这类真实场景的落点，覆盖掉等于把管理员的手工配置吃掉。
      */
     void syncMembersLeader(Long departmentId);

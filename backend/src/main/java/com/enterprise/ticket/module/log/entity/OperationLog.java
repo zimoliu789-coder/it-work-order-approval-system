@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 操作日志
  */
 @Data
-@TableName("operation_logs")
+@TableName("operation_log")
 public class OperationLog {
 
     @TableId(type = IdType.AUTO)

@@ -22,7 +22,7 @@ import java.util.Set;
  * 列表本身只返回「与我有关」的单据，看到空列表与无权进入是两种体验，
  * 前者才是正确的「你暂时没有待办」。
  *
- * <h2>与 {@code sys_role} 表的关系</h2>
+ * <h2>与 {@code role} 表的关系</h2>
  * <p>这里只是**编码常量**；角色行与默认授权由 {@code RolePermissionInitializer}
  * 按 {@code PermissionCatalog} 写入数据库（代码即事实源）。新增一个内置角色时，
  * 三处必须同时改：本类、{@code PermissionCatalog.DEFAULT_PERMISSIONS}、

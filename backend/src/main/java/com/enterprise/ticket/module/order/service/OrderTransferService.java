@@ -22,7 +22,7 @@ import java.util.Map;
  *   <li>申请人本人不可作为转交目标（需求方  ，避免「把活转回给需求方」）。</li>
  * </ul>
  *
- * <p>转交后执行人变更通过更新 {@code orders.actual_final_handler_id} 完成 —— 超时告警、
+ * <p>转交后执行人变更通过更新 {@code borrow_order.actual_final_handler_id} 完成 —— 超时告警、
  * 归还确认权限、我的待处理列表全部按该字段查询，因此自动跟随新执行人，无需额外同步。
  */
 public interface OrderTransferService {
@@ -30,7 +30,7 @@ public interface OrderTransferService {
     /**
      * 人工转交工单。
      *
-     * <p>写操作：更新 {@code orders.actual_final_handler_id} → 追加 {@code order_handler_transfer}
+     * <p>写操作：更新 {@code borrow_order.actual_final_handler_id} → 追加 {@code order_handler_transfer}
      * → 通知新执行人 → 原执行人的该工单待办消息标记「工单已转交」。
      */
     void transfer(Long orderId, OrderTransferRequest request);

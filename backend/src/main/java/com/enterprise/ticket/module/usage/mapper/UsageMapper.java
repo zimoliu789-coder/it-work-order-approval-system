@@ -57,12 +57,12 @@ public interface UsageMapper {
                    o.borrow_timeout    AS borrowTimeout,
                    o.return_trigger    AS returnTrigger,
                    o.return_condition  AS returnCondition
-              FROM orders o
+              FROM borrow_order o
               JOIN device d          ON d.id = o.device_id
-              JOIN users  u          ON u.id = o.applicant_id
+              JOIN employee  u          ON u.id = o.applicant_id
               LEFT JOIN device_category pc ON pc.id = d.primary_category_id
-              LEFT JOIN departments   g  ON g.id  = o.department_id
-              LEFT JOIN users          hu ON hu.id = o.actual_final_handler_id
+              LEFT JOIN department   g  ON g.id  = o.department_id
+              LEFT JOIN employee          hu ON hu.id = o.actual_final_handler_id
              WHERE 1 = 1
              <if test="deviceId != null">   AND o.device_id = #{deviceId}   </if>
              <if test="applicantId != null">AND o.applicant_id = #{applicantId}</if>

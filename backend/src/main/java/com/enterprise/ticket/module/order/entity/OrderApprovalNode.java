@@ -25,7 +25,7 @@ import java.time.LocalDateTime;
  * （与 {@code User.dimission} 的处理保持一致）。
  */
 @Data
-@TableName("order_approval_nodes")
+@TableName("order_approval_node")
 public class OrderApprovalNode {
 
     @TableId(type = IdType.AUTO)

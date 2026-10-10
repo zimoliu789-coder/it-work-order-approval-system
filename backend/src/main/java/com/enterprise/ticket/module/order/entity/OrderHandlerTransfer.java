@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
  * 工单转交记录（ 新增，）
  *
  * <p><b>为什么单独建表而不是在 orders 上加审计字段</b>：一笔工单可以被转交多次
- * （A → B → C），「当前执行人」是状态（{@code orders.actual_final_handler_id}，
+ * （A → B → C），「当前执行人」是状态（{@code borrow_order.actual_final_handler_id}，
  * 每次转交被覆盖），「谁在什么时候因为什么转给谁」是历史（本表，只追加不修改）。
  * 二者混在一张表里必然丢失中间过程。
  *

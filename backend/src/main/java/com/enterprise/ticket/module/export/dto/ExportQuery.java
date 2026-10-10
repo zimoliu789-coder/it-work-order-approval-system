@@ -148,10 +148,10 @@ public class ExportQuery {
         /** 工单状态码，空表示不限 */
         private String status;
 
-        /** 提交时间起（含），按 {@code orders.created_at} 的日期过滤 */
+        /** 提交时间起（含），按 {@code borrow_order.created_at} 的日期过滤 */
         private LocalDate submitTimeFrom;
 
-        /** 提交时间止（含当天），按 {@code orders.created_at} 的日期过滤 */
+        /** 提交时间止（含当天），按 {@code borrow_order.created_at} 的日期过滤 */
         private LocalDate submitTimeTo;
     }
 

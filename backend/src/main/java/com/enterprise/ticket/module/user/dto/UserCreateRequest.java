@@ -9,7 +9,7 @@ import lombok.Data;
  *
  * <p>字段与对应：姓名 / 登录名 / 初始密码 / 部门 / 角色 / 显示名称。
  *
- * <p><b>「姓名」与「显示名称」的区别</b>（落库映射见 {@code users.real_name} / {@code users.display_name}）：
+ * <p><b>「姓名」与「显示名称」的区别</b>（落库映射见 {@code employee.real_name} / {@code employee.display_name}）：
  * <ul>
  *   <li><b>姓名</b>（{@code realName}）—— 员工真实姓名，是「姓名唯一」这条业务规则的校验锚点，必填；</li>
  *   <li><b>显示名称</b>（{@code displayName}）—— 界面上展示的名字，选填；留空时回退为姓名。

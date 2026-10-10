@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * 又保住了「用户看到自己命名的文件」这一体验。
  */
 @Data
-@TableName("attachments")
+@TableName("attachment")
 public class Attachment {
 
     @TableId(type = IdType.AUTO)

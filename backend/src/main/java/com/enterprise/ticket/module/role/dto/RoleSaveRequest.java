@@ -17,7 +17,7 @@ public class RoleSaveRequest {
      * 角色编码：仅新增时使用。
      *
      * <p>限制为「小写字母开头，允许小写字母/数字/下划线」，且长度 ≤ 32：
-     * 编码会进入 {@code users.role} 与权限码前缀，放开字符集只会给后续 SQL 与
+     * 编码会进入 {@code employee.role} 与权限码前缀，放开字符集只会给后续 SQL 与
      * 前端路由埋雷（含点号、斜杠的编码很容易被误当成路径）。
      */
     @NotBlank(message = "角色编码不能为空")

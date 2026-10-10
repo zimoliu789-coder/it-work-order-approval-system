@@ -31,7 +31,7 @@ import java.util.List;
  *   <li>节点有 {@code deadline_at}（FLOW 流程里配了审批时限）：以「已过截止时间」为准，
  *       文案「已超过约定审批时限 X 小时」；</li>
  *   <li>节点无 {@code deadline_at}（借用单 / GROUP 单）：回落既有口径
- *       {@code orders.created_at + approval_timeout_remind_hours}（默认 24），文案不变。</li>
+ *       {@code borrow_order.created_at + approval_timeout_remind_hours}（默认 24），文案不变。</li>
  * </ul>
  *
  * <h2>频率</h2>

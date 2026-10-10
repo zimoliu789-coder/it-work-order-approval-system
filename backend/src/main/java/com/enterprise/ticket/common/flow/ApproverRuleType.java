@@ -11,7 +11,7 @@ import java.util.List;
  * {@code biz_group_approver.approver_id}（一人一步），这里改成**规则**，
  * 由 {@link ApproverRuleResolver} 在提交时解析成具体的 user_id 列表后再快照落库。
  *
- * <p> 新增 {@code LEADER}（申请人直属领导，依赖 {@code users.leader_id}）与
+ * <p> 新增 {@code LEADER}（申请人直属领导，依赖 {@code employee.leader_id}）与
  * {@code PREV_ASSIGN}（上一节点审批人指定，人员在审批动作时才回填）。
  *
  * <h2>{@link #params()} 是干什么的（ · W4-D / C8）</h2>
@@ -35,7 +35,7 @@ public enum ApproverRuleType {
     ROLE("指定角色", List.of("roleCode")),
 
     /**
-     * 申请人直属领导：取 {@code users.leader_id}。
+     * 申请人直属领导：取 {@code employee.leader_id}。
      *
      * <p>四种情形都算"解析不出"并走超管兜底：未配置 / 已离职 / 账号停用 /
      * **领导就是申请人本人**（自审回避）。
@@ -61,13 +61,13 @@ public enum ApproverRuleType {
      * 混成一个带 offset 参数的类型，会让设计器上出现"部门主管（层级 -1）"这种
      * 需要理解树结构才能填对的控件。拆开之后，设计器只要列一个人话标签即可。
      *
-     * <p>解析口径：取 {@code departments.parent_id} 指向的那一级部门的部门主管；
+     * <p>解析口径：取 {@code department.parent_id} 指向的那一级部门的部门主管；
      * 已经是根部门（没有上级）时解析为空 → 由调用方走超管兜底（与其它规则同一契约）。
      */
     PARENT_DEPT_APPROVERS("上级部门主管", List.of()),
 
     /**
-     * 最终处理部门成员：解析为该部门（{@code departments.handler_group = 1}）的在职成员。
+     * 最终处理部门成员：解析为该部门（{@code department.handler_group = 1}）的在职成员。
      *
      * <p>参数槽位名 {@code handlerGroupId} 同样是存量标识，实际存的是**部门 id**。
      */

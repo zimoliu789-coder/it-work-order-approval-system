@@ -33,7 +33,7 @@ import java.util.Objects;
  *       不是靠某处 if 判断，而是因为根本不存在可用的本地口令；</li>
  *   <li><b>只写 AD 权威字段</b>：姓名 / 邮箱 / 手机号 / 部门 / 外部禁用状态 / DN / GUID。
  *       角色、部门、离职标记、本地手工禁用一律不动；
- *       <p>手机号是<b>半权威</b>的：{@code users.phone} 另有全局唯一索引与「本地绑定」两条约束，
+ *       <p>手机号是<b>半权威</b>的：{@code employee.phone} 另有全局唯一索引与「本地绑定」两条约束，
  *       因此仅在「AD 非空且未与他人冲突」时才以 AD 为准，否则保持本地现值。
  *       详见 {@code resolveNewPhone} / {@code resolveRefreshedPhone} 的注释。</li>
  *   <li><b>姓名唯一性沿用本地规则</b>：冲突时回退用登录名（见
@@ -229,7 +229,7 @@ public class AdUserProvisioningServiceImpl implements AdUserProvisioningService 
     /**
      * 新建账号时决定写入的手机号。
      *
-     * <p>{@code users.phone} 上有<b>全局唯一索引</b>（{@code uk_users_phone}，用于短信找回密码）。
+     * <p>{@code employee.phone} 上有<b>全局唯一索引</b>（{@code uk_users_phone}，用于短信找回密码）。
      * AD 的 {@code telephoneNumber} 并不保证唯一（共用工位电话、录入串号都可能重复），
      * 因此这里先做占用检查：冲突时<b>只跳过手机号</b>，其余字段照常写入，
      * 并留下告警。若直接照写，唯一索引会抛 {@code DuplicateKeyException} ——

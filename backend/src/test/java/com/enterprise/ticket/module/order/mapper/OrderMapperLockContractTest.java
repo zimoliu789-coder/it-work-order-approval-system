@@ -49,7 +49,7 @@ class OrderMapperLockContractTest {
     void lockByIdTargetsSingleOrderRow() {
         String sql = lockSql().toLowerCase(Locale.ROOT);
         assertTrue(sql.startsWith("select"), "应为查询语句：" + lockSql());
-        assertTrue(sql.contains("from orders"), "应锁 orders 表：" + lockSql());
+        assertTrue(sql.contains("from borrow_order"), "应锁 orders 表：" + lockSql());
         assertTrue(sql.contains("id = #{orderid}"),
                 "必须按工单主键定位单行，否则锁的粒度就不是「这一张工单」：" + lockSql());
     }
@@ -57,7 +57,7 @@ class OrderMapperLockContractTest {
     @Test
     @DisplayName("对照：同类但不带 FOR UPDATE 的 SQL 不应被判为加锁（说明断言有辨别力）")
     void assertionIsDiscriminating() {
-        String plainSelect = "SELECT id FROM orders WHERE id = #{orderId}";
+        String plainSelect = "SELECT id FROM borrow_order WHERE id = #{orderId}";
         assertFalse(plainSelect.toUpperCase(Locale.ROOT).contains("FOR UPDATE"),
                 "普通查询必须被判为「未加锁」，否则本测试的断言等于恒真");
     }

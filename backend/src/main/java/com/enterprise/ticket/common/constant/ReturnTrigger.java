@@ -7,7 +7,7 @@ package com.enterprise.ticket.common.constant;
  * 事后追溯与统计的口径完全不同（例如「有多少设备是因员工离职而被动回收的」），
  * 因此单独落列而不是从操作日志反推。
  *
- * <p>{@code orders.return_trigger} 在归还流程发起时写入，未被归还的工单该列为 NULL。
+ * <p>{@code borrow_order.return_trigger} 在归还流程发起时写入，未被归还的工单该列为 NULL。
  */
 public enum ReturnTrigger {
 

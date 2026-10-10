@@ -40,7 +40,7 @@ public interface UserMapper extends BaseMapper<User> {
      *
      * <p>登录名<b>全局唯一</b>（库侧唯一索引），因此这里必然是 0 或 1 行。
      */
-    @Select("SELECT " + COLUMNS + " FROM users WHERE username = #{username} LIMIT 1")
+    @Select("SELECT " + COLUMNS + " FROM employee WHERE username = #{username} LIMIT 1")
     User selectByUsername(@Param("username") String username);
 
     /**
@@ -49,13 +49,13 @@ public interface UserMapper extends BaseMapper<User> {
      * <p>只回答「这个号码归谁」；「排除自己」由服务层另行处理 ——
      * 手机号唯一性由 {@code uk_users_phone} 兜底，查询侧不必再叠加条件。
      */
-    @Select("SELECT " + COLUMNS + " FROM users WHERE phone = #{phone} LIMIT 1")
+    @Select("SELECT " + COLUMNS + " FROM employee WHERE phone = #{phone} LIMIT 1")
     User selectByPhone(@Param("phone") String phone);
 
     /**
      * 按邮箱查询（V26；同上）。邮箱列早在  就存在，V26 才补上唯一索引。
      */
-    @Select("SELECT " + COLUMNS + " FROM users WHERE email = #{email} LIMIT 1")
+    @Select("SELECT " + COLUMNS + " FROM employee WHERE email = #{email} LIMIT 1")
     User selectByEmail(@Param("email") String email);
 
     /**
@@ -67,7 +67,7 @@ public interface UserMapper extends BaseMapper<User> {
      * 而重名场景下正确的行为是**明确报错让用户改用数字登录名**。
      * 因此这里把「有多条」这个事实完整交回服务层判定。
      */
-    @Select("SELECT " + COLUMNS + " FROM users WHERE real_name = #{realName} ORDER BY id")
+    @Select("SELECT " + COLUMNS + " FROM employee WHERE real_name = #{realName} ORDER BY id")
     List<User> selectByRealName(@Param("realName") String realName);
 
     /**
@@ -82,7 +82,7 @@ public interface UserMapper extends BaseMapper<User> {
      *
      * <p>{@code COALESCE} 兜住空库：此时 MAX 为 NULL，返回 10000 作为「下一个是 10001」的基准。
      */
-    @Select("SELECT COALESCE(MAX(CAST(username AS UNSIGNED)), 10000) FROM users "
+    @Select("SELECT COALESCE(MAX(CAST(username AS UNSIGNED)), 10000) FROM employee "
             + "WHERE username REGEXP '^[0-9]+$'")
     long selectMaxNumericUsername();
 
@@ -95,11 +95,11 @@ public interface UserMapper extends BaseMapper<User> {
      *
      * @return 受影响行数；0 表示账号不存在或已处于禁用状态
      */
-    @Update("UPDATE users SET enabled = 0, token_version = token_version + 1, updated_at = NOW() "
+    @Update("UPDATE employee SET enabled = 0, token_version = token_version + 1, updated_at = NOW() "
             + "WHERE id = #{userId} AND enabled = 1")
     int disableForAdRemoval(@Param("userId") Long userId);
 
-    @Select("SELECT COUNT(1) FROM users WHERE username LIKE CONCAT(#{prefix}, '%')")
+    @Select("SELECT COUNT(1) FROM employee WHERE username LIKE CONCAT(#{prefix}, '%')")
     int countByUsernamePrefix(@Param("prefix") String prefix);
 
     /**
@@ -112,7 +112,7 @@ public interface UserMapper extends BaseMapper<User> {
      * （谁是内置管理员），不是权限问题。若将来把某个自定义角色也纳入告警接收人，
      * 应该显式改这里并注明，而不是让它随权限配置漂移。
      */
-    @Select("SELECT id FROM users WHERE role IN ('super_admin', 'admin') "
+    @Select("SELECT id FROM employee WHERE role IN ('super_admin', 'admin') "
             + "AND enabled = 1 AND is_dimission = 0 ORDER BY id")
     List<Long> selectAdminIds();
 
@@ -123,6 +123,6 @@ public interface UserMapper extends BaseMapper<User> {
      * （如备份失败）只发给超管：这类问题需要的基础设施权限（改 .env、进 NAS、看容器日志）
      * 普通业务管理员并不具备，群发只会产生「收到但处理不了」的消息噪音。
      */
-    @Select("SELECT id FROM users WHERE role = 'super_admin' AND enabled = 1 AND is_dimission = 0 ORDER BY id")
+    @Select("SELECT id FROM employee WHERE role = 'super_admin' AND enabled = 1 AND is_dimission = 0 ORDER BY id")
     List<Long> selectSuperAdminIds();
 }

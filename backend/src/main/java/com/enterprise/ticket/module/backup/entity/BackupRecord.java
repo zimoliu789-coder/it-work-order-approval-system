@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  *
  * <p><b>为什么不用逻辑删除</b>：备份记录是「每天一行」的量级，
  * 保留期清理会物理删除超期行（连同归档文件），加 {@code deleted} 列只会
- * 让每次查询都多带一个条件（与 {@code upgrade_tasks} / {@code export_tasks} 同一取舍）。
+ * 让每次查询都多带一个条件（与 {@code upgrade_task} / {@code export_task} 同一取舍）。
  */
 @Data
 @TableName("backup_record")

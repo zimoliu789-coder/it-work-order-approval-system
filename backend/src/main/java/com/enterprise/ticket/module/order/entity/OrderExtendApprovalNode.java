@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
  * 按 应用「审批人 = 申请人则跳过」。
  */
 @Data
-@TableName("order_extend_approval_nodes")
+@TableName("order_extend_approval_node")
 public class OrderExtendApprovalNode {
 
     @TableId(type = IdType.AUTO)

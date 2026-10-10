@@ -44,7 +44,7 @@ import java.util.List;
  *
  * <p>审计：申请提交、审批、撤回、交付均按 NORMAL 异步留痕 ——
  * 这些是普通业务操作，且审批决定本身已作为业务事实固化在
- * {@code order_approval_nodes.action_comment / action_time}，不依赖日志表追溯。
+ * {@code order_approval_node.action_comment / action_time}，不依赖日志表追溯。
  *
  * <p>本阶段不含：工单转交、审批转交/加签/催办、归还与顺延（–7）。
  */

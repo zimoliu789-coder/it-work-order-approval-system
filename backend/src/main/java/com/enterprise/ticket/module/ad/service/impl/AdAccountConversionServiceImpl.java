@@ -40,7 +40,7 @@ import java.time.LocalDateTime;
  * <h2>临时口令绝不留痕</h2>
  * <p>「AD → 本地」生成的临时口令只出现在接口响应里，<b>不写审计、不写日志</b>：
  * 审计切面只序列化入参（本接口入参只有 userId），返回值不参与审计，
- * 因此口令不会经由框架漏进 {@code operation_logs}。
+ * 因此口令不会经由框架漏进 {@code operation_log}。
  */
 @Slf4j
 @Service

@@ -11,7 +11,7 @@ import java.util.List;
  * 控制器 / 前端各处：
  * <ol>
  *   <li><b>归属主体（target）</b>：决定 {@code biz_id} 指向哪张表
- *       （{@link BizTarget#ORDER} → {@code orders.id}；{@link BizTarget#FAULT} → {@code device_fault.id}），
+ *       （{@link BizTarget#ORDER} → {@code borrow_order.id}；{@link BizTarget#FAULT} → {@code device_fault.id}），
  *       也决定下载鉴权时用哪套可见性口径；</li>
  *   <li><b>是否仅允许图片（imageOnly）</b>：照片类附件只收图片；
  *       申请/驳回附件允许文档（pdf/doc/xls 等），由 {@code app.attachment.allowed-extensions} 约束；</li>

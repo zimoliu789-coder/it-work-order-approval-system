@@ -36,7 +36,7 @@ import java.util.List;
  *       → 下载走 {@code GET /api/attachments/{id}/download}，由服务层按业务可见性校验；</li>
  *   <li>「下载接口后端做权限校验……未授权返回 403」→ 见 {@code AttachmentServiceImpl#assertBizAccessible}；</li>
  *   <li>「附件下载记入操作日志」→ 下载端点标注 {@code @AuditLog}，
- *       由既有审计切面统一落 {@code operation_logs}，无需在业务代码里手写日志。</li>
+ *       由既有审计切面统一落 {@code operation_log}，无需在业务代码里手写日志。</li>
  * </ul>
  *
  * <p>所有端点仅要求登录：<b>细粒度权限在服务层按「业务记录可见性」判定</b>，

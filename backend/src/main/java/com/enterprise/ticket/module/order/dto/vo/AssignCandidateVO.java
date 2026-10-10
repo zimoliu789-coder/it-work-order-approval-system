@@ -42,7 +42,7 @@ public class AssignCandidateVO {
      */
     private Integer requiredCount;
 
-    /** 待指派节点的流程 key（{@code order_approval_nodes.node_key}）；无待指派时为 null */
+    /** 待指派节点的流程 key（{@code order_approval_node.node_key}）；无待指派时为 null */
     private String nodeKey;
 
     /** 待指派节点的名称（如「IT执行人处理」）；无待指派时为 null */

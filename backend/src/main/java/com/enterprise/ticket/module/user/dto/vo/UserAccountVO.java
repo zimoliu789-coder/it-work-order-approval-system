@@ -25,7 +25,7 @@ public class UserAccountVO {
     private Long id;
 
     /**
-     * 员工姓名（{@code users.real_name}）。
+     * 员工姓名（{@code employee.real_name}）。
      *
      * <p>「姓名唯一」这条业务规则的锚点：新增 / 编辑 / 批量导入都以它判重。
      * 列表首列展示姓名的兜底顺序为 姓名 → 显示名称 → 登录名。

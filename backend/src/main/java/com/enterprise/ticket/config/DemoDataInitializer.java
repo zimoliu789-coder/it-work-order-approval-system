@@ -94,7 +94,7 @@ import java.util.Objects;
  *
  * <p>幂等策略：四类数据各自独立判断，互不牵连 ——
  * 设备演示数据按 {@code device_category} 是否为空、
- * 工单演示数据按 {@code orders} 是否为空，
+ * 工单演示数据按 {@code borrow_order} 是否为空，
  * 避免前序阶段已产生数据时后续阶段的演示数据永远不被创建。
  *
  * <p>触发条件：{@code app.demo.enabled=true}。生产 profile 下本类不被加载（{@link Profile}），

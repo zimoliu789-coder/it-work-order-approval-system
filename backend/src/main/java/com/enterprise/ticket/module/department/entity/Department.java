@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
  * <h2>它同时承担了三件事</h2>
  * <ol>
  *   <li><b>组织树</b>：左侧部门树，支持无限层级（公司 → 部门 → 小组）；</li>
- *   <li><b>审批上级的事实源</b>：{@link #id} 被 {@code users.department_id} 引用，
+ *   <li><b>审批上级的事实源</b>：{@link #id} 被 {@code employee.department_id} 引用，
  *       而「直属主管默认 = 所在部门的部门主管」这条规则让**组织结构直接决定审批路径**；</li>
  *   <li><b>最终处理部门的载体</b>：{@link #handlerGroup} 为真的那一个部门
  *       （IT运维组）取代了原来的「最终处理小组」概念。</li>
@@ -30,7 +30,7 @@ import java.time.LocalDateTime;
  * 移动部门必须走 {@code DepartmentService#move}。
  */
 @Data
-@TableName("departments")
+@TableName("department")
 public class Department {
 
     @TableId(type = IdType.AUTO)

@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
  * 与附件同策略（NAS / 磁盘换挂载点只改配置，不刷数据）。
  */
 @Data
-@TableName("export_tasks")
+@TableName("export_task")
 public class ExportTask {
 
     @TableId(type = IdType.AUTO)

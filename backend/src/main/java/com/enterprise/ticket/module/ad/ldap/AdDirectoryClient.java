@@ -309,7 +309,7 @@ public class AdDirectoryClient {
         }
     }
 
-    /** 把搜索结果追加到 {@code users}（上限 {@code limit}） */
+    /** 把搜索结果追加到 {@code employee}（上限 {@code limit}） */
     private void collect(NamingEnumeration<SearchResult> results, AdAttributeMapping mapping,
                          List<AdUser> users, int limit) throws NamingException {
         try {

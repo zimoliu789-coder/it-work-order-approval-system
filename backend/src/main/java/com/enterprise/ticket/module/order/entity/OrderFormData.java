@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 工单自定义表单数据
  *
- * <p>与 {@code orders} <b>一对一</b>（{@code order_id} 唯一索引兜底）。
+ * <p>与 {@code borrow_order} <b>一对一</b>（{@code order_id} 唯一索引兜底）。
  *
  * <h2>为什么独立成表而不是给 orders 加 JSON 列</h2>
  * <ol>

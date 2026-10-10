@@ -33,7 +33,7 @@ import java.util.Set;
  * 都是产品的组成部分，不是用户数据。
  *
  * <p>更关键的是：「已提交工单走提交时的流程快照」这条既有的审计语义被完整保留 ——
- * 每次提交都把本类产出的定义整份写进 {@code orders.approval_flow_json}，
+ * 每次提交都把本类产出的定义整份写进 {@code borrow_order.approval_flow_json}，
  * 之后管理员再怎么改阈值，历史工单的审批口径一字不变。
  *
  * <h2>为什么没有 {@code locked} 标记</h2>
@@ -53,7 +53,7 @@ import java.util.Set;
 public final class BorrowFlowCatalog {
 
     /**
-     * 预置流程的展示名（写进 {@code orders.approval_flow_name} 作为归属快照）。
+     * 预置流程的展示名（写进 {@code borrow_order.approval_flow_name} 作为归属快照）。
      *
      * <p>带「（系统预置）」后缀是刻意的：流程监控页会把没有模板归属的工单归入
      * 「未归属」分组，这一列是那一组里唯一的辨识依据。叫「设备借用审批流程」会让人

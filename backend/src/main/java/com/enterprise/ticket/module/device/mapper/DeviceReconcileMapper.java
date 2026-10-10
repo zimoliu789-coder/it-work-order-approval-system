@@ -47,7 +47,7 @@ public interface DeviceReconcileMapper {
               FROM device d
              WHERE d.deleted = 0
                AND d.status = 'IN_USE'
-               AND NOT EXISTS (SELECT 1 FROM orders o
+               AND NOT EXISTS (SELECT 1 FROM borrow_order o
                                 WHERE o.device_id = d.id
                                   AND o.status IN ('BORROWED', 'PENDING_RETURN'))
              ORDER BY d.id
@@ -64,7 +64,7 @@ public interface DeviceReconcileMapper {
                    o.id          AS orderId,
                    o.order_no    AS orderNo,
                    o.status      AS orderStatus
-              FROM orders o
+              FROM borrow_order o
               JOIN device d ON d.id = o.device_id
              WHERE d.deleted = 0
                AND o.status IN ('BORROWED', 'PENDING_RETURN')
@@ -86,7 +86,7 @@ public interface DeviceReconcileMapper {
               FROM device d
              WHERE d.deleted = 0
                AND d.status = 'IN_APPROVAL'
-               AND NOT EXISTS (SELECT 1 FROM orders o
+               AND NOT EXISTS (SELECT 1 FROM borrow_order o
                                 WHERE o.device_id = d.id
                                   AND o.status IN ('PENDING_APPROVAL', 'PENDING_DELIVERY'))
              ORDER BY d.id
@@ -103,7 +103,7 @@ public interface DeviceReconcileMapper {
                    o.id          AS orderId,
                    o.order_no    AS orderNo,
                    o.status      AS orderStatus
-              FROM orders o
+              FROM borrow_order o
               JOIN device d ON d.id = o.device_id
              WHERE d.deleted = 0
                AND o.status IN ('PENDING_APPROVAL', 'PENDING_DELIVERY')

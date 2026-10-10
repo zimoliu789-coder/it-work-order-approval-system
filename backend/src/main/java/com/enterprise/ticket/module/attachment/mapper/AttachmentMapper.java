@@ -36,7 +36,7 @@ public interface AttachmentMapper extends BaseMapper<Attachment> {
      * @param deadline 截止时刻：{@code deleted_at < deadline} 的视为超期
      * @param limit    单次上限，避免一次大删拖垮磁盘
      */
-    @Select("SELECT * FROM attachments "
+    @Select("SELECT * FROM attachment "
             + "WHERE deleted = 1 AND deleted_at IS NOT NULL AND deleted_at < #{deadline} "
             + "ORDER BY id ASC LIMIT #{limit}")
     List<Attachment> selectSoftDeletedBefore(@Param("deadline") LocalDateTime deadline,
@@ -49,6 +49,6 @@ public interface AttachmentMapper extends BaseMapper<Attachment> {
      * 磁盘文件由调用方先行删除（清理任务保证「先盘后库」，避免出现
      * 「记录没了、文件还在」这种谁都找不到的孤儿）。
      */
-    @Delete("DELETE FROM attachments WHERE id = #{id}")
+    @Delete("DELETE FROM attachment WHERE id = #{id}")
     int hardDeleteById(@Param("id") Long id);
 }

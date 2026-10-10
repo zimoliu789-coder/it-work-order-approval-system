@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 角色定义（需求方三波·第一波·）
  *
- * <p>{@code roleCode} 与 {@code users.role} 对应，但<b>刻意不建外键</b>：
+ * <p>{@code roleCode} 与 {@code employee.role} 对应，但<b>刻意不建外键</b>：
  * 删角色时若级联会顺手抹掉员工的角色值（安全风险），
  * 「角色是否被员工使用」属于业务规则，由服务层校验。
  *
@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  * 只允许改名称与备注，不允许改编码、不允许删除、不允许停用。
  */
 @Data
-@TableName("sys_role")
+@TableName("role")
 public class SysRole {
 
     @TableId(type = IdType.AUTO)

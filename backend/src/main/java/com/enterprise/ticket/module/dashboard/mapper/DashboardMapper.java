@@ -41,7 +41,7 @@ public interface DashboardMapper {
     /** 区间内工单总量 */
     @Select("""
             SELECT COUNT(*)
-              FROM orders o
+              FROM borrow_order o
              WHERE o.created_at >= #{from} AND o.created_at < #{to}
             """)
     Long countOrders(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
@@ -56,7 +56,7 @@ public interface DashboardMapper {
     @Select("""
             SELECT o.order_type AS code,
                    COUNT(*)     AS `count`
-              FROM orders o
+              FROM borrow_order o
              WHERE o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY o.order_type
              ORDER BY `count` DESC, code ASC
@@ -68,7 +68,7 @@ public interface DashboardMapper {
     @Select("""
             SELECT o.status  AS code,
                    COUNT(*)  AS `count`
-              FROM orders o
+              FROM borrow_order o
              WHERE o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY o.status
              ORDER BY `count` DESC, code ASC
@@ -87,7 +87,7 @@ public interface DashboardMapper {
     @Select("""
             SELECT DATE_FORMAT(o.created_at, #{pattern}) AS bucket,
                    COUNT(*)                              AS `count`
-              FROM orders o
+              FROM borrow_order o
              WHERE o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY DATE_FORMAT(o.created_at, #{pattern})
              ORDER BY bucket ASC
@@ -111,8 +111,8 @@ public interface DashboardMapper {
             SELECT COALESCE(o.department_id, 0) AS groupId,
                    g.dept_name                 AS groupName,
                    COUNT(*)                    AS `count`
-              FROM orders o
-              LEFT JOIN departments g ON g.id = o.department_id
+              FROM borrow_order o
+              LEFT JOIN department g ON g.id = o.department_id
              WHERE o.created_at >= #{from} AND o.created_at < #{to}
              GROUP BY COALESCE(o.department_id, 0), g.dept_name
              ORDER BY `count` DESC, groupId ASC
@@ -136,7 +136,7 @@ public interface DashboardMapper {
      */
     @Select("SELECT COUNT(*) AS approvedOrderCount,"
             + " ROUND(AVG(TIMESTAMPDIFF(SECOND, o.created_at, ap.finished_at)) / 3600, 2) AS avgApprovalHours"
-            + " FROM orders o"
+            + " FROM borrow_order o"
             + " JOIN " + ApprovalMetricSql.FINISHED_APPROVAL_SUBQUERY
             + " ap ON ap.order_id = o.id"
             + " WHERE o.created_at >= #{from} AND o.created_at < #{to}")
@@ -156,8 +156,8 @@ public interface DashboardMapper {
     @Select("SELECT COUNT(CASE WHEN n.deadline_at IS NOT NULL THEN 1 END) AS withDeadlineNodeCount,"
             + " COUNT(CASE WHEN n.deadline_at IS NOT NULL AND n.action_time > n.deadline_at THEN 1 END) AS overdueNodeCount,"
             + " " + ApprovalMetricSql.OVERDUE_RATE + " AS overdueRate"
-            + " FROM order_approval_nodes n"
-            + " JOIN orders o ON o.id = n.order_id"
+            + " FROM order_approval_node n"
+            + " JOIN borrow_order o ON o.id = n.order_id"
             + " WHERE o.created_at >= #{from} AND o.created_at < #{to}"
             + "   AND n.action_time IS NOT NULL"
             + "   AND n.status IN ('APPROVED', 'REJECTED')"

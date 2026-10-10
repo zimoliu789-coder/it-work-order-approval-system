@@ -32,7 +32,7 @@ public interface ExportTaskMapper extends BaseMapper<ExportTask> {
      *
      * @return 被置为失败的任务数
      */
-    @Update("UPDATE export_tasks SET status = 'FAILED', error_message = #{reason}, finished_at = NOW() "
+    @Update("UPDATE export_task SET status = 'FAILED', error_message = #{reason}, finished_at = NOW() "
             + "WHERE status IN ('PENDING', 'RUNNING') AND created_at < #{cutoff}")
     int failZombies(@Param("cutoff") LocalDateTime cutoff, @Param("reason") String reason);
 }

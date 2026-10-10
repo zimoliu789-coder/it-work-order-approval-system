@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  * {@code PermissionCatalog.exists()} 校验，库里不做约束 —— 见目录类注释。
  */
 @Data
-@TableName("sys_role_permission")
+@TableName("role_permission")
 public class SysRolePermission {
 
     @TableId(type = IdType.AUTO)

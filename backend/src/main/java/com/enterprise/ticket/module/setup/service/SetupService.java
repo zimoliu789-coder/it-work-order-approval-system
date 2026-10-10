@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
  *
  * <h2>并发</h2>
  * <p>理论上存在「两个浏览器同时提交」的窗口。这里靠两层兜底：
- * 事务内先复查一次「是否已有超管」；再由 {@code users.username} 唯一索引兜住同名的重复插入
+ * 事务内先复查一次「是否已有超管」；再由 {@code employee.username} 唯一索引兜住同名的重复插入
  * （命中则回落为 {@code USER_USERNAME_EXISTS}）。不同账号名同时提交的极端情况
  * 会得到两个超管，这需要部署方在同一瞬间并发操作，风险可接受且可人工纠正。
  */

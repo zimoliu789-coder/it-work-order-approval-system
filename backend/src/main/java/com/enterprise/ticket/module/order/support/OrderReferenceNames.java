@@ -179,7 +179,7 @@ public class OrderReferenceNames {
      *
      * <p> 起，「业务分组」与「最终处理小组」合并为同一棵部门树，
      * 工单上的 {@code department_id}（申请部门）与 {@code handler_department_id}（最终处理部门）
-     * 都指向 {@code departments} 表，因此**只要一张映射**。
+     * 都指向 {@code department} 表，因此**只要一张映射**。
      *
      * <p>改造前这里有两个方法（{@code bizGroupNames} / {@code handlerGroupNames}），
      * 各查一张表 —— 它们合并并非"顺手优化"，而是因为两张表已经不存在了。

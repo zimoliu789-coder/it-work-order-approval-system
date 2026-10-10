@@ -31,7 +31,7 @@ import java.time.LocalDateTime;
  * （「所有定时任务必须幂等」）。
  */
 @Data
-@TableName("orders")
+@TableName("borrow_order")
 public class Order {
 
     @TableId(type = IdType.AUTO)
@@ -63,7 +63,7 @@ public class Order {
     /**
      * 提交时冻结的审批流程定义 JSON（，仅 {@code approvalMode = FLOW} 有值）。
      *
-     * <h2>为什么已经有 {@code order_approval_nodes} 了还要存定义</h2>
+     * <h2>为什么已经有 {@code order_approval_node} 了还要存定义</h2>
      * <p>节点表固化的是<b>执行结果</b>（谁审了、什么时候审的），而定义固化的是
      * <b>规则本身</b>（当时这套流程长什么样、条件是什么）。两者缺一不可：
      * 只有结果时，事后无法回答「为什么这笔单没走财务节点」——

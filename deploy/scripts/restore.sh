@@ -171,7 +171,7 @@ echo
 echo "================ 恢复结果验证 ================"
 printf '健康接口        : HTTP %s\n' "$CODE"
 
-for TABLE in users devices orders order_approval_nodes attachments operation_logs; do
+for TABLE in employee device borrow_order order_approval_node attachment operation_log; do
   COUNT="$(docker compose exec -T -e MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql \
     mysql -uroot -N -B -e "SELECT COUNT(*) FROM \`$MYSQL_DATABASE\`.\`$TABLE\`;" 2>/dev/null | tr -d '\r')" || COUNT="读取失败"
   printf '%-16s: %s 行\n' "$TABLE" "$COUNT"

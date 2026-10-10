@@ -64,7 +64,7 @@ class ApprovalMetricSqlTest {
     @DisplayName("金样例：「每单最后一个终态审批节点」子查询（终态含 REJECTED、排除 CC）")
     void finishedApprovalSubqueryGolden() {
         String expected = "(SELECT n.order_id, MAX(n.action_time) AS finished_at"
-                + " FROM order_approval_nodes n"
+                + " FROM order_approval_node n"
                 + " WHERE n.status IN ('APPROVED', 'REJECTED')"
                 + " AND (n.node_type IS NULL OR n.node_type = 'APPROVAL')"
                 + " GROUP BY n.order_id)";
