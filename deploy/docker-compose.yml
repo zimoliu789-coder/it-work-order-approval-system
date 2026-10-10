@@ -2,7 +2,8 @@
 # Docker Compose 编排（：同一套 compose 支持群晖 NAS 与通用 Linux 服务器）
 #
 # 使用步骤：
-#   1) cp .env.production.example .env  并按注释填写（务必改掉全部占位值）
+#   1) bash scripts/init-env.sh         一键生成 .env（4 个密钥自动随机填好）
+#      或手动：cp .env.production.example .env 并按注释填写（务必改掉全部占位值）
 #   2) bash scripts/preflight.sh        体检 .env、创建数据目录（含正确的属主）
 #   3) docker compose pull && docker compose up -d
 #      （可选）需要独立的备份容器时：docker compose --profile backup up -d

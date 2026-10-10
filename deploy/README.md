@@ -86,6 +86,24 @@ cd <项目根>/deploy
 
 ### 2. 生成本地 `.env`
 
+**推荐：一条命令自动生成** —— 4 个密钥用随机值自动填好，只问你 2 个问题：
+
+```bash
+bash scripts/init-env.sh
+```
+
+它会问：
+
+1. **数据根目录** —— 群晖 `/volume1/docker/ticket-system/data`，服务器 `/opt/ticket-system/data`
+   （直接回车即用脚本给的默认值）；
+2. **你打算怎么访问系统** —— 选 1（前面有 HTTPS 反代）→ `COOKIE_SECURE=true`；
+   选 2（直接用 `http://<IP>:<端口>`）→ 自动填 `false`。
+
+已存在 `.env` 时会拒绝覆盖；确要重新生成用 `--force`（会先备份成 `.env.bak-<时间>`）。
+生成完会自动跑一次 `preflight.sh` 体检。零交互场景（自动化）用 `bash scripts/init-env.sh --yes`。
+
+**手动方式**（不想用脚本时）：
+
 ```bash
 cp .env.production.example .env
 ```
@@ -98,15 +116,17 @@ openssl rand -base64 24    # → MYSQL_ROOT_PASSWORD / REDIS_PASSWORD
 openssl rand -hex 32       # → INTERNAL_ALERT_TOKEN  （备份失败上报共用密钥）
 ```
 
-必须填写的 5 个变量：
+**真正需要你决策的只有下面 3 项**，其余全部保持默认即可：
 
-| 变量 | 群晖示例 | Linux 示例 |
-|---|---|---|
-| `DATA_ROOT` | `/volume1/docker/ticket-system/data` | `/opt/ticket-system/data` |
-| `MYSQL_ROOT_PASSWORD` | 随机 | 随机 |
-| `REDIS_PASSWORD` | 随机 | 随机 |
-| `JWT_SECRET` | `openssl rand -base64 48` | 同 |
-| `INTERNAL_ALERT_TOKEN` | `openssl rand -hex 32` | 同 |
+| 变量 | 什么时候要改 | 群晖示例 | Linux 示例 |
+|---|---|---|---|
+| `DATA_ROOT` | **必填**，绝对路径 | `/volume1/docker/ticket-system/data` | `/opt/ticket-system/data` |
+| `COOKIE_SECURE` | 用 `http://<IP>:<端口>` 访问时必须改 `false` | 见下方提示 | 见下方提示 |
+| `TRUSTED_PROXIES` | 仅当外层反代不在默认内网网段 | 见第 3 节 | 见第 3 节 |
+
+> ⚠️ **`COOKIE_SECURE` 是最容易踩的一项**：填 `true` 却用明文 HTTP 访问时，浏览器会直接丢弃
+> 登录 Cookie，表现为「登录返回 200 却立刻被弹回登录页」，**无痕窗口同样复现**。
+> 用 `init-env.sh` 会被自动问出来，不会配错。
 
 > **`BACKUP_DIR` 也可以留空**：备份容器挂在 profile `backup` 下、**默认不启动**。
 > 需要时执行 `docker compose --profile backup up -d`；留空则归档写入 `$DATA_ROOT/backup`。
@@ -114,7 +134,8 @@ openssl rand -hex 32       # → INTERNAL_ALERT_TOKEN  （备份失败上报共�
 
 > **超管账号不在这里填**：`SUPER_ADMIN_*` 留空即可 —— 首次用浏览器访问会自动跳到
 > 「初始化向导」，由你现场设定超管账号名与密码（设定后向导不再出现，且该账号不可改、不可被重置）。
-> 仅当需要无人值守自动建号时，才填 `SUPER_ADMIN_USERNAME` + `SUPER_ADMIN_INIT_PASSWORD`。
+> 仅当需要无人值守自动建号时，才填 `SUPER_ADMIN_USERNAME` + `SUPER_ADMIN_INIT_PASSWORD`
+> （用 `init-env.sh` 时回答「需要」，它会自动生成一个随机初始口令）。
 
 > ⚠️ `.env` 内含全部密钥，**绝不能提交到代码仓库**（`.gitignore` 已忽略）。
 > ⚠️ 拥有 Docker 权限 = 拥有全部密钥（`docker inspect` 能读到环境变量），宿主机账号权限本身就是安全边界。
