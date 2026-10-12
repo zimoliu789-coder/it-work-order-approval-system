@@ -37,6 +37,14 @@ public class ApplyTypeVO {
 
     private String statusLabel;
 
+    /**
+     * 是否系统内置类型（V48）：卡片上标「系统内置」、不显示「删除」。
+     *
+     * <p>刻意用包装类型 {@code Boolean} 而非 {@code boolean}：与全模块的
+     * {@code default-property-inclusion: non_null} 口径一致，老数据 / 老前端缺该字段时不至于被判成 false。
+     */
+    private Boolean builtIn;
+
     private Long formTemplateVersionId;
 
     /** 关联模板名（便于管理列表直接展示「关联表单」列） */

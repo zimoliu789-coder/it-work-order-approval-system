@@ -7,10 +7,12 @@ import com.enterprise.ticket.common.log.AuditLog;
 import com.enterprise.ticket.common.log.RiskLevel;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeStatusRequest;
+import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.FlowPreviewRequest;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
 import jakarta.validation.Valid;
@@ -114,6 +116,36 @@ public class ApplyTypeController {
             @RequestParam(defaultValue = "1") long page,
             @RequestParam(defaultValue = "20") long size) {
         return ApiResponse.success(applyTypeService.chooseCandidates(id, nodeKey, keyword, page, size));
+    }
+
+    /**
+     * 系统内置申请类型的配置面板数据（V48）：说明 + 当前生效的审批流程（含默认流程）+ 条件字段。
+     *
+     * <p>路径段 {@code /built-in-config} 是字面量、且多一段，与 {@code /{id}} 不冲突。
+     * 非内置类型一律 404（服务层处理）—— 本接口只服务内置类型。
+     */
+    @GetMapping("/{id}/built-in-config")
+    @PreAuthorize("@perm.has('apply_type:view')")
+    public ApiResponse<BuiltInConfigVO> builtInConfig(@PathVariable Long id) {
+        return ApiResponse.success(applyTypeService.builtInConfig(id));
+    }
+
+    /**
+     * 保存系统内置申请类型的配置（V48）：表单说明 + 审批流程绑定。
+     *
+     * <p>这是「管理员改内置类型的审批流程要真正生效」的落点 ——
+     * 借用单提交时会优先读这里绑定的流程版本，未绑定才退回「部门流程 → 系统预置流程」。
+     *
+     * <p>审计等级 HIGH：它改变的是往后每一笔借用单怎么批，与「改一个字段」不是一个量级。
+     */
+    @PutMapping("/{id}/built-in-config")
+    @PreAuthorize("@perm.has('apply_type:manage')")
+    @AuditLog(module = "SYSTEM", action = "APPLY_TYPE_BUILTIN_CONFIG",
+            description = "配置系统内置申请类型（说明 / 审批流程）", risk = RiskLevel.HIGH)
+    public ApiResponse<Void> updateBuiltInConfig(@PathVariable Long id,
+                                                 @Valid @RequestBody BuiltInConfigRequest request) {
+        applyTypeService.updateBuiltInConfig(id, request);
+        return ApiResponse.success();
     }
 
     /**

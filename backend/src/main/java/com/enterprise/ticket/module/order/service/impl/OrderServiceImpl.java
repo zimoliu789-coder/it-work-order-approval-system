@@ -721,17 +721,32 @@ public class OrderServiceImpl implements OrderService {
         }
 
         // 5) 生成审批快照（ /  /  / ）
-        //    两种来源，二选一：
-        //      ① 该**部门**绑定了自己的审批流程 → 走那份流程（存量部门可能还绑着老流程，
+        //    三种来源，按优先级：
+        //      ① 内置「借用设备」类型（V48）绑定了自定义流程 → 走它；
+        //      ② 该**部门**绑定了自己的审批流程 → 走那份流程（存量部门可能还绑着老流程，
         //         尊重既有配置：改造不应悄悄改掉某部门已经谈好的审批链）；
-        //      ② 没绑定 → 走**系统预置三级流程**（ · ）。
-        //         改造前的 ② 是「部门主管单级」硬编码路径（buildSnapshot），
+        //      ③ 都没绑 → 走**系统预置三级流程**（ · ）。
+        //         改造前的 ③ 是「部门主管单级」硬编码路径（buildSnapshot），
         //         现在它只服务于自定义申请的 GROUP 模式。
         List<LeaderNotice> leaderNotices = new ArrayList<>();
         FlowDefinition frozenFlow = null;
         List<OrderApprovalNode> nodes;
         boolean skipApproval;
-        if (department.getApprovalFlowVersionId() != null) {
+        // V48：① 必须排在部门绑定流程**之前** —— 它是管理员在「申请类型与审批流程」页
+        // 点开「借用设备」直接改的那一条，需求明确要求「改完真实生效」。
+        // 未绑定时完全保持既有两级行为，零回归。
+        Long builtInFlowVersionId = applyTypeService.borrowBuiltInFlowVersionId();
+        if (builtInFlowVersionId != null) {
+            frozenFlow = approvalFlowService.requirePublishedDefinition(builtInFlowVersionId);
+            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, device, request);
+            FlowPathResolver.Result path = flowActivationService.resolveForSubmit(
+                    frozenFlow, BorrowFieldCatalog.schema(), borrowData);
+            nodes = buildFlowNodes(path, applicant, borrowData, Map.of(), leaderNotices);
+            // 判据与下面两条分支一致：流程会把未命中的节点以 SKIPPED 落库，
+            // 因此「需不需要审批」只能看有没有 PENDING，不能看节点行是否非空。
+            skipApproval = nodes.stream()
+                    .noneMatch(node -> ApprovalNodeStatus.PENDING.name().equals(node.getStatus()));
+        } else if (department.getApprovalFlowVersionId() != null) {
             frozenFlow = approvalFlowService.requirePublishedDefinition(department.getApprovalFlowVersionId());
             Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, device, request);
             // M2：改用 resolveForSubmit —— 开关开启时把「提交时判不了的分支下游」落 INACTIVE；
@@ -783,7 +798,9 @@ public class OrderServiceImpl implements OrderService {
         // 归属快照（M7）：快照 JSON 里没有模板/版本 id，流程监控按模板聚合必须靠这两个列。
         // 预置流程**不在 approval_flow 表里**（见 BorrowFlowCatalog 类注释），因此没有版本指针，
         // 只有名字快照 —— 监控页会把这类单归入「未归属」分组，名字是那一组里唯一的辨识依据。
-        if (department.getApprovalFlowVersionId() != null) {
+        if (builtInFlowVersionId != null) {
+            applyFlowAttribution(order, builtInFlowVersionId);
+        } else if (department.getApprovalFlowVersionId() != null) {
             applyFlowAttribution(order, department.getApprovalFlowVersionId());
         } else {
             order.setApprovalFlowName(BorrowFlowCatalog.PRESET_FLOW_NAME);
@@ -838,7 +855,8 @@ public class OrderServiceImpl implements OrderService {
         log.info("工单已提交 id={} no={} device={} applicant={} useType={} 初始状态={} 快照节点={} 流程={}",
                 orderId, saved.getOrderNo(), device.getId(), applicantId, useType.name(),
                 initialStatus.name(), nodes.size(),
-                department.getApprovalFlowVersionId() != null ? "部门自定义流程" : "系统预置流程");
+                builtInFlowVersionId != null ? "内置类型自定义流程"
+                        : (department.getApprovalFlowVersionId() != null ? "部门自定义流程" : "系统预置流程"));
         return orderId;
     }
 

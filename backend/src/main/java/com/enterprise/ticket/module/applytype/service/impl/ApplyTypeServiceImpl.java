@@ -26,6 +26,8 @@ import com.enterprise.ticket.common.flow.ApproverRuleResolver;
 import com.enterprise.ticket.common.flow.ApproverRuleType;
 import com.enterprise.ticket.common.flow.FlowDefinition;
 import com.enterprise.ticket.common.flow.FlowNode;
+import com.enterprise.ticket.common.flow.BorrowFieldCatalog;
+import com.enterprise.ticket.common.flow.BorrowFlowCatalog;
 import com.enterprise.ticket.common.flow.FlowPathResolver;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlow;
@@ -34,12 +36,15 @@ import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowMapper;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.mapper.ApplyTypeMapper;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
+import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
 import com.enterprise.ticket.module.permission.service.PermissionApplyPolicyService;
 import com.enterprise.ticket.module.permission.support.PermissionApplySchemaSupport;
 import com.enterprise.ticket.module.department.entity.Department;
@@ -50,6 +55,7 @@ import com.enterprise.ticket.module.form.mapper.FormTemplateMapper;
 import com.enterprise.ticket.module.form.mapper.FormTemplateVersionMapper;
 import com.enterprise.ticket.module.form.service.FormTemplateService;
 import com.enterprise.ticket.module.order.entity.Order;
+import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.order.mapper.OrderMapper;
 import com.enterprise.ticket.module.role.entity.SysRole;
 import com.enterprise.ticket.module.role.mapper.SysRoleMapper;
@@ -125,6 +131,14 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
      * 按当前策略**动态下发**，与角色页的「可申请权限配置」保持同源。
      */
     private final PermissionApplyPolicyService permissionApplyPolicyService;
+    /**
+     * 内置类型（V48）的默认借用流程要现读「设备金额阈值」。
+     *
+     * <p>刻意与 {@code OrderServiceImpl} 用同一个系统参数读法：这个阈值同时决定
+     * 预置流程的分档与这里给管理员看的默认流程，两处各读各的迟早会漂移 ——
+     * 表现为「页面上看到的分档」与「实际执行的分档」不一致，且不会报错。
+     */
+    private final SystemConfigService systemConfigService;
 
     // ------------------------------------------------------------------
     // 查询
@@ -133,6 +147,9 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     @Override
     public List<ApplyTypeVO> listAll() {
         List<ApplyType> types = applyTypeMapper.selectList(Wrappers.<ApplyType>lambdaQuery()
+                // 系统内置类型置顶（V48）：借用 / 报修是高频入口，且它们的表单与后置动作
+                // 都由代码提供、管理员改不了结构 —— 排在自建类型之前才符合阅读顺序。
+                .orderByDesc(ApplyType::getBuiltIn)
                 .orderByAsc(ApplyType::getSortOrder)
                 .orderByAsc(ApplyType::getId));
         if (types.isEmpty()) {
@@ -169,6 +186,10 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         User currentUser = requireCurrentUser();
         List<ApplyType> types = applyTypeMapper.selectList(Wrappers.<ApplyType>lambdaQuery()
                 .eq(ApplyType::getStatus, ApplyTypeStatus.ENABLED.name())
+                // 系统内置类型不进这里（V48）：借用设备 / 故障报修在提交页由前端固定渲染成
+                // **内置卡片**（它们有专属表单与后置动作）。若不排除，提交页会把它们渲染两次，
+                // 而且「自定义」那一张点进去是通用动态表单 —— 直接坏掉。
+                .eq(ApplyType::getBuiltIn, false)
                 .orderByAsc(ApplyType::getSortOrder)
                 .orderByAsc(ApplyType::getId));
         // 权限过滤放在服务端：前端过滤等于没过滤（直调接口即可绕过）
@@ -481,6 +502,9 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, ApplyTypeSaveRequest request) {
         ApplyType existing = requireType(id);
+        // 内置类型（V48）没有表单模板、编码即 OrderType 取值，整体覆盖只会写坏它。
+        // 它的可改面只有「说明 + 审批流程」，走 updateBuiltInConfig。
+        assertNotBuiltIn(existing, "系统内置类型不支持整体覆盖，请在「配置」里修改说明与审批流程");
         String typeCode = request.getTypeCode().trim();
         FormSchemaValidator.validateTypeCode(typeCode);
         assertTypeCodeAvailable(typeCode, id);
@@ -526,6 +550,12 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         ApplyType type = requireType(id);
+        // 系统内置类型不可删除（V48）：删掉它只是从管理页抹掉一张卡片，
+        // 后端链路（OrderType.BORROW / device_fault）照旧在跑 ——
+        // 结果是「功能还在、入口没了」，比直接报错更难发现。只允许停用。
+        if (Boolean.TRUE.equals(type.getBuiltIn())) {
+            throw new BusinessException(ErrorCode.APPLY_TYPE_BUILT_IN);
+        }
         long used = orderCount(id);
         if (used > 0) {
             throw new BusinessException(ErrorCode.APPLY_TYPE_HAS_ORDER,
@@ -853,6 +883,117 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     }
 
     // ------------------------------------------------------------------
+    // 系统内置类型（V48）
+    // ------------------------------------------------------------------
+
+    @Override
+    public BuiltInConfigVO builtInConfig(Long id) {
+        ApplyType type = requireBuiltIn(id);
+        BuiltInApplyCatalog.BuiltIn builtIn = BuiltInApplyCatalog.of(type.getTypeCode());
+
+        BuiltInConfigVO vo = new BuiltInConfigVO();
+        vo.setId(type.getId());
+        vo.setTypeCode(type.getTypeCode());
+        vo.setTypeName(type.getTypeName());
+        vo.setDescription(type.getDescription());
+        vo.setBuiltIn(true);
+        vo.setFlowEditable(builtIn.flowEditable());
+        vo.setFormNote(builtIn.formEditableNote());
+
+        // 已绑自定义流程 ⇒ 给它的定义；未绑定 ⇒ 给该内置类型的**默认流程**。
+        // 后者是刻意的：给一张空白画布会让管理员以为「当前没有流程」，
+        // 而实际上借用单会走系统预置三级流程。先让他看清现状，再谈修改。
+        Long boundVersionId = type.getApprovalFlowVersionId();
+        vo.setFlowBound(boundVersionId != null);
+        vo.setApprovalFlowVersionId(boundVersionId);
+        if (boundVersionId != null) {
+            vo.setFlowDefinition(approvalFlowService.requirePublishedDefinition(boundVersionId));
+            Long flowTemplateId = flowIdOfVersion(boundVersionId);
+            vo.setFlowTemplateId(flowTemplateId);
+            ApprovalFlow flow = flowTemplateId == null ? null : flowMapper.selectById(flowTemplateId);
+            if (flow != null) {
+                vo.setFlowCode(flow.getFlowCode());
+                vo.setFlowName(flow.getFlowName());
+            }
+        } else if (builtIn.flowEditable()) {
+            vo.setFlowDefinition(defaultBorrowFlow());
+        }
+
+        if (builtIn.flowEditable()) {
+            // 条件分支只能引用「借用域字段」（BorrowFieldCatalog 是借用表单的事实源），
+            // 与 OrderServiceImpl 提交时喂给 FlowPathResolver 的 schema 是同一份 ——
+            // 两处若不同源，管理员配出来的条件会在提交那一刻报「字段不存在」。
+            vo.setFieldSchema(BorrowFieldCatalog.schema());
+        }
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateBuiltInConfig(Long id, BuiltInConfigRequest request) {
+        ApplyType type = requireBuiltIn(id);
+        BuiltInApplyCatalog.BuiltIn builtIn = BuiltInApplyCatalog.of(type.getTypeCode());
+
+        Long flowVersionId = request.getApprovalFlowVersionId();
+        if (flowVersionId != null && !builtIn.flowEditable()) {
+            throw new BusinessException(ErrorCode.APPLY_TYPE_BUILT_IN_FLOW_FIXED);
+        }
+        if (flowVersionId != null) {
+            // 复用流程模块的公开契约：既确认版本存在，也确认它**已发布**
+            // （引用草稿等于引用一份随时会被覆盖的配置 —— 与自定义类型同一条口径）。
+            approvalFlowService.requirePublishedDefinition(flowVersionId);
+        }
+
+        applyTypeMapper.update(null, Wrappers.<ApplyType>lambdaUpdate()
+                .eq(ApplyType::getId, id)
+                .set(ApplyType::getDescription, trimToNull(request.getDescription()))
+                // 绑了自定义流程 ⇒ FLOW；解绑 ⇒ 回到该内置类型的默认审批方式
+                // （借用 = GROUP 逐级审批，报修 = NONE 无审批）。
+                // 这样 approval_mode 这一列始终反映**当下实际会走什么**，
+                // 而不是留下一个指向已解绑流程的陈旧 FLOW。
+                .set(ApplyType::getApprovalMode,
+                        flowVersionId == null ? builtIn.approvalMode().name() : ApprovalMode.FLOW.name())
+                .set(ApplyType::getApprovalFlowVersionId, flowVersionId));
+        log.info("系统内置申请类型 {}（{}）配置已更新：说明={} 流程版本={}",
+                id, type.getTypeCode(),
+                trimToNull(request.getDescription()) == null ? "未填" : "已填", flowVersionId);
+    }
+
+    @Override
+    public Long borrowBuiltInFlowVersionId() {
+        ApplyType borrow = applyTypeMapper.selectOne(Wrappers.<ApplyType>lambdaQuery()
+                .eq(ApplyType::getTypeCode, BuiltInApplyCatalog.CODE_BORROW)
+                .last("LIMIT 1"));
+        return borrow == null ? null : borrow.getApprovalFlowVersionId();
+    }
+
+    /** 内置类型的默认借用流程：与 OrderServiceImpl 的预置流程同源，阈值现读系统参数 */
+    private FlowDefinition defaultBorrowFlow() {
+        return BorrowFlowCatalog.preset(systemConfigService.approvalDeviceAmountThreshold());
+    }
+
+    /**
+     * 取内置类型；不是内置类型一律按「不存在」处理。
+     *
+     * <p>本接口只服务内置类型，「这不是一个内置类型」对外不构成任何有用信息，
+     * 却会多出一个可枚举口径（拿 id 试探即可区分内置 / 自建）。与项目「越权统一 404」一致。
+     */
+    private ApplyType requireBuiltIn(Long id) {
+        ApplyType type = requireType(id);
+        if (!Boolean.TRUE.equals(type.getBuiltIn())) {
+            throw new BusinessException(ErrorCode.APPLY_TYPE_NOT_FOUND);
+        }
+        return type;
+    }
+
+    /** 内置类型不得走「自定义类型」的写入路径 */
+    private void assertNotBuiltIn(ApplyType type, String message) {
+        if (Boolean.TRUE.equals(type.getBuiltIn())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, message);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 装配
     // ------------------------------------------------------------------
 
@@ -932,6 +1073,7 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         vo.setSortOrder(type.getSortOrder());
         vo.setStatus(type.getStatus());
         vo.setStatusLabel(ApplyTypeStatus.labelOf(type.getStatus()));
+        vo.setBuiltIn(Boolean.TRUE.equals(type.getBuiltIn()));
         vo.setFormTemplateVersionId(type.getFormTemplateVersionId());
         vo.setOrderPrefix(type.getOrderPrefix());
         vo.setApprovalMode(type.getApprovalMode());

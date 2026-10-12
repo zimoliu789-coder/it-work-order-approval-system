@@ -689,8 +689,9 @@ onBeforeUnmount(() => {
              实际使用中两者都是「提交一张单」的入口，分段只增加了扫视成本。
              现合并为同一网格，顺序约定：**内置类型在前、自定义表单类在后** ——
              内置两项是高频操作；自定义类型数量随管理员配置增长，排在后面才不会把常用入口挤下去。
-             自定义卡片的审批模式标签（分组审批 / 自定义流程 / 无需审批）保留，
-             它回答的是「这张单交上去之后谁来批」，与排列位置无关。
+             自定义卡片**不再**显示审批模式标签（V48）：需求方明确要求去掉卡片上的
+             「自定义流程」字样 —— 那个词对提交人没有信息量（既没说几级、也没说谁批），
+             却多占一行视觉重量。审批路径在选定类型后的「路径预览」里会逐级列出。
              ：内置借用卡片由「短期借用 + 长期领用」两张合并为「借用设备」一张 ——
              借用类型不再由员工选择，两张卡指向同一个表单形态。 -->
         <div class="ts-apply__types">
@@ -717,16 +718,7 @@ onBeforeUnmount(() => {
             @click="selectCustomType(item)"
             @keyup.enter="selectCustomType(item)"
           >
-            <h4 class="ts-apply__type-title">
-              {{ item.typeName }}
-              <el-tag
-                size="small"
-                effect="plain"
-                :type="item.approvalMode === 'GROUP' ? 'warning' : 'info'"
-              >
-                {{ item.approvalModeLabel ?? (item.approvalMode === 'GROUP' ? '分组审批' : '无需审批') }}
-              </el-tag>
-            </h4>
+            <h4 class="ts-apply__type-title">{{ item.typeName }}</h4>
             <p class="ts-apply__type-desc">{{ item.description || '自定义申请表单' }}</p>
           </div>
         </div>

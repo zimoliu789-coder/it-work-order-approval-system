@@ -1,7 +1,15 @@
 import { http } from '@/api/request'
 import type { PageResult } from '@/types/api'
 import type { FlowPreview, FlowPreviewCandidate } from '@/types/approvalFlow'
-import type { ApplyTypeItem, ApplyConfigCreatePayload, ApplyTypeOption, ApplyTypePayload, ApplyTypeStatusCode } from '@/types/applyType'
+import type {
+  ApplyTypeItem,
+  ApplyConfigCreatePayload,
+  ApplyTypeOption,
+  ApplyTypePayload,
+  ApplyTypeStatusCode,
+  BuiltInApplyConfig,
+  BuiltInApplyConfigPayload
+} from '@/types/applyType'
 
 /**
  * 申请类型接口
@@ -52,9 +60,33 @@ export const applyTypeApi = {
     return http.put<void>(`/apply-types/${id}/status`, { status })
   },
 
-  /** 删除（已被工单使用时后端拒绝，只能停用） */
+  /** 删除（已被工单使用时后端拒绝，只能停用；系统内置类型恒拒绝，V48） */
   remove(id: number) {
     return http.delete<void>(`/apply-types/${id}`)
+  },
+
+  // ------------------------------------------------------------------
+  // 系统内置类型（V48）
+  // ------------------------------------------------------------------
+
+  /**
+   * 内置类型的配置面板数据：说明 + 当前生效的审批流程（含默认流程）+ 条件字段清单。
+   *
+   * 非内置类型返回 404 —— 内置类型的配置面与自定义类型完全不同，
+   * 混在一个接口里只会让前端靠 typeCode 猜。
+   */
+  builtInConfig(id: number) {
+    return http.get<BuiltInApplyConfig>(`/apply-types/${id}/built-in-config`)
+  },
+
+  /**
+   * 保存内置类型配置：表单说明 + 审批流程绑定。
+   *
+   * 流程模板的创建 / 编辑 / 发布仍走流程模块的接口 —— 这里只负责
+   * 「把这个已发布的版本绑上去」，与自定义类型的做法一致。
+   */
+  updateBuiltInConfig(id: number, data: BuiltInApplyConfigPayload) {
+    return http.put<void>(`/apply-types/${id}/built-in-config`, data)
   },
 
   /**

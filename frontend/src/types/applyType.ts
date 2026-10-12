@@ -55,6 +55,13 @@ export interface ApplyTypeItem {
   sortOrder?: number | null
   status: ApplyTypeStatusCode
   statusLabel?: string | null
+  /**
+   * 是否系统内置类型（V48）：借用设备 / 故障报修。
+   *
+   * 内置 = 表单与后置动作都在代码里（借用要锁设备、报修要建故障记录），
+   * 管理员能改的只有「表单说明」与「审批流程」，且**不可删除**。
+   */
+  builtIn?: boolean | null
   formTemplateVersionId?: number | null
   formTemplateName?: string | null
   formTemplateVersionNo?: number | null
@@ -77,6 +84,42 @@ export interface ApplyTypeItem {
   updatedAt?: string | null
   /** 表单定义；仅详情接口返回 */
   schema?: FormSchema | null
+}
+
+/**
+ * 系统内置类型的配置面板数据（V48）—— 与后端 `BuiltInConfigVO` 逐字对应。
+ *
+ * 一个请求拿到弹窗要的全部：说明、当前生效的流程、已绑流程的模板 id（改完要 update + publish）、
+ * 以及条件分支可引用的字段清单。
+ */
+export interface BuiltInApplyConfig {
+  id: number
+  /** BORROW / FAULT_REPORT —— 前端据此决定「内置表单说明」文案 */
+  typeCode: string
+  typeName: string
+  description?: string | null
+  builtIn: boolean
+  /** 审批流程是否可编辑；故障报修为 false（它不产生工单，域模型里没有审批环节） */
+  flowEditable: boolean
+  /** 「为什么表单不可改 / 流程不可改」的一句话说明，直接展示给管理员 */
+  formNote?: string | null
+  /** 是否已绑定自定义流程；false 时 flowDefinition 是该内置类型的**默认流程** */
+  flowBound: boolean
+  approvalFlowVersionId?: number | null
+  /** 已绑流程对应的模板 id（保存时在模板上「改草稿 → 发布新版本」需要它） */
+  flowTemplateId?: number | null
+  flowCode?: string | null
+  flowName?: string | null
+  /** 流程设计器的初始定义：已绑定时为当前版本定义，未绑定时为默认流程 */
+  flowDefinition?: FlowDefinition | null
+  /** 条件分支可引用的字段清单（借用域字段目录） */
+  fieldSchema?: FormSchema | null
+}
+
+/** 保存内置类型配置：说明 + 待绑定的已发布流程版本（null = 解绑，回到默认审批方式） */
+export interface BuiltInApplyConfigPayload {
+  description?: string | null
+  approvalFlowVersionId?: number | null
 }
 
 /** 提交页卡片（极轻，仅展示所需字段） */

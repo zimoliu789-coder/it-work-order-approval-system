@@ -56,7 +56,20 @@ public class ApplyType {
     /** 状态：ENABLED / DISABLED */
     private String status;
 
-    /** 关联的表单模板版本（必须为已发布版本） */
+    /**
+     * 是否系统内置类型（V48）：{@code true} = 借用设备 / 故障报修。
+     *
+     * <p>内置与外建的区别只有三条，都由此列驱动：
+     * <ol>
+     *   <li><b>不可删除</b>：删掉它等于从界面上抹掉一个产品功能，只允许停用；</li>
+     *   <li><b>没有表单模板</b>：表单是内置页面（借用表单 / 报修表单），
+     *       {@code formTemplateVersionId} 恒为 {@code null}，服务层跳过「必须绑定已发布版本」的校验；</li>
+     *   <li><b>列表置顶</b>：它们是高频入口，排在管理员自建类型之前。</li>
+     * </ol>
+     */
+    private Boolean builtIn;
+
+    /** 关联的表单模板版本（必须为已发布版本）；系统内置类型为 null（表单由代码提供） */
     private Long formTemplateVersionId;
 
     /** 工单编号前缀（可空；空则用系统默认规则） */

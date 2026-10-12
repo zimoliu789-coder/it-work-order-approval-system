@@ -11,7 +11,7 @@ import CustomFormExportDialog from '@/components/CustomFormExportDialog.vue'
 import LinearFlowEditor from '@/components/LinearFlowEditor.vue'
 import { useResponsive } from '@/composables/useResponsive'
 import { useUserStore } from '@/store/user'
-import { applyTypeStatusTagType, approvalModeTagType, type ApplyTypeItem } from '@/types/applyType'
+import { applyTypeStatusTagType, type ApplyTypeItem, type BuiltInApplyConfig } from '@/types/applyType'
 import {
   fieldTypeMeta,
   type FormField,
@@ -89,15 +89,30 @@ async function loadTypes(): Promise<void> {
   }
 }
 
-/** 卡片上的「N 级审批」摘要：直接数流程版本的节点数（APPROVAL 才算一级） */
+/**
+ * 卡片上的审批摘要（一行小字）。
+ *
+ * <h2>为什么不再回退成「自定义流程」</h2>
+ * 需求方明确要求去掉卡片上的「自定义流程」字样 —— 那个词对管理员没有信息量：
+ * 既没说有哪几级、也没说谁批。现在的取值要么是**流程真名**，
+ * 要么是一句**人话描述**（按部门逐级审批 / 无需审批），扫一眼就知道这张单怎么走。
+ */
 function levelText(item: ApplyTypeItem): string {
+  if (item.builtIn) {
+    // 内置类型（V48）：报修不产生工单、没有审批环节，如实说明；
+    // 借用单未绑自定义流程时走的是「部门流程 → 系统预置三级流程」，不是「没有流程」。
+    if (item.typeCode === 'FAULT_REPORT') {
+      return '提交后直接进入维修处理'
+    }
+    return item.approvalFlowName ?? '按部门逐级审批'
+  }
   if (item.approvalMode === 'NONE') {
     return '无需审批'
   }
   if (item.approvalMode === 'GROUP') {
     return '按部门逐级审批'
   }
-  return item.approvalFlowName ?? '自定义流程'
+  return item.approvalFlowName ?? '自定义审批流程'
 }
 
 // ---------------------------------------------------------------------
@@ -253,6 +268,12 @@ const configSavable = computed(
 )
 
 async function openConfig(item: ApplyTypeItem): Promise<void> {
+  // 内置类型（V48）没有表单模板，左表单 / 右流程那套编辑器对它不适用 ——
+  // 它有自己的配置面：只能改「表单说明」与「审批流程」。
+  if (item.builtIn) {
+    await openBuiltInConfig(item)
+    return
+  }
   configTarget.value = item
   configFields.value = []
   configFlow.value = null
@@ -384,6 +405,132 @@ function openFormDesigner(): void {
 }
 
 // ---------------------------------------------------------------------
+// 系统内置类型的配置（V48）
+// ---------------------------------------------------------------------
+
+/**
+ * 内置类型的配置面与自定义类型**完全不同**，因此独立成一个弹窗。
+ *
+ * <p>差别在哪：自定义类型是「表单模板 + 流程模板 + 类型」三件套，改的是字段与流程；
+ * 内置类型的表单在代码里（借用表单 / 报修表单），管理员能动的只有「说明」与「审批流程」。
+ * 把它塞进左表单右流程那个编辑器，只会让人误以为表单也能改。
+ */
+const builtInVisible = ref(false)
+const builtInLoading = ref(false)
+const builtInSaving = ref(false)
+const builtInTarget = ref<ApplyTypeItem | null>(null)
+const builtInCfg = ref<BuiltInApplyConfig | null>(null)
+const builtInDescription = ref('')
+const builtInFlow = ref<FlowDefinition | null>(null)
+const builtInFlowRef = ref<InstanceType<typeof LinearFlowEditor> | null>(null)
+
+/** 内置流程的条件字段候选：来自后端的借用域字段目录（与提交时的 schema 同源） */
+const builtInFieldOptions = computed<FlowFieldOption[]>(() =>
+  (builtInCfg.value?.fieldSchema?.fields ?? [])
+    .filter((field) => (field.key ?? '') !== '')
+    .map((field) => ({
+      value: field.key as string,
+      label: (field.label ?? '').trim() || (field.key as string),
+      kind: fieldTypeMeta(field.type)?.valueKind ?? 'TEXT'
+    }))
+)
+
+const builtInFieldLabelOf = (key: string): string =>
+  builtInCfg.value?.fieldSchema?.fields?.find((field) => field.key === key)?.label ?? key
+
+async function openBuiltInConfig(item: ApplyTypeItem): Promise<void> {
+  builtInTarget.value = item
+  builtInCfg.value = null
+  builtInDescription.value = ''
+  builtInFlow.value = null
+  builtInVisible.value = true
+  builtInLoading.value = true
+  try {
+    const cfg = await applyTypeApi.builtInConfig(item.id)
+    builtInCfg.value = cfg
+    builtInDescription.value = cfg.description ?? ''
+    // 深拷贝：编辑器会就地改这份定义，直接引用会把「点了取消」也变成「改过了」
+    builtInFlow.value = cfg.flowDefinition ? (JSON.parse(JSON.stringify(cfg.flowDefinition)) as FlowDefinition) : null
+  } catch {
+    builtInCfg.value = null
+  } finally {
+    builtInLoading.value = false
+  }
+}
+
+async function saveBuiltInConfig(): Promise<void> {
+  const cfg = builtInCfg.value
+  const item = builtInTarget.value
+  if (!cfg || !item) {
+    return
+  }
+  const description = builtInDescription.value.trim() || null
+
+  // 流程不可编辑（故障报修）：只提交说明，流程版本原样带回
+  if (!cfg.flowEditable) {
+    builtInSaving.value = true
+    try {
+      await applyTypeApi.updateBuiltInConfig(item.id, {
+        description,
+        approvalFlowVersionId: cfg.approvalFlowVersionId ?? null
+      })
+      ElMessage.success('已保存')
+      builtInVisible.value = false
+      await loadTypes()
+    } catch {
+      // 由请求层统一提示
+    } finally {
+      builtInSaving.value = false
+    }
+    return
+  }
+
+  if (!builtInFlow.value) {
+    ElMessage.warning('请至少配置一个审批节点')
+    return
+  }
+  const problems = builtInFlowRef.value?.incompleteProblems() ?? []
+  if (problems.length > 0) {
+    ElMessage.warning(problems[0])
+    return
+  }
+
+  builtInSaving.value = true
+  try {
+    // 与自定义类型同一条口径：存草稿 → 发布新版本 → 把类型重绑到新版本。
+    // 老版本仍被历史工单引用，因此**改流程改不到已提交的单**。
+    let flowVersionId: number
+    if (cfg.flowTemplateId != null) {
+      await approvalFlowApi.update(cfg.flowTemplateId, {
+        flowCode: cfg.flowCode ?? '',
+        flowName: cfg.flowName ?? `${item.typeName}审批流程`,
+        description: null,
+        definition: builtInFlow.value
+      })
+      flowVersionId = await approvalFlowApi.publish(cfg.flowTemplateId)
+    } else {
+      // 首次配置：该内置类型此前走的不是流程模板（系统预置 / 部门流程），
+      // 因此这里**新建**一份流程模板来承载管理员画的定义。
+      const flowId = await approvalFlowApi.create({
+        flowCode: `BUILTIN_${item.typeCode}`,
+        flowName: `${item.typeName}审批流程`,
+        description: '由「申请类型与审批流程」页为系统内置类型创建',
+        definition: builtInFlow.value
+      })
+      flowVersionId = await approvalFlowApi.publish(flowId)
+    }
+    await applyTypeApi.updateBuiltInConfig(item.id, { description, approvalFlowVersionId: flowVersionId })
+    ElMessage.success('已保存，之后新提交的借用单将按新流程审批（历史工单不受影响）')
+    builtInVisible.value = false
+    await loadTypes()
+  } catch {
+    // 校验未通过（如流程含运行期特性但总开关未开）由请求层提示
+  } finally {
+    builtInSaving.value = false
+  }
+}
+
+// ---------------------------------------------------------------------
 // 启停 / 删除 / 导出
 // ---------------------------------------------------------------------
 
@@ -461,9 +608,8 @@ onMounted(loadTypes)
           </div>
 
           <div class="ts-applycfg__card-tags">
-            <el-tag size="small" effect="plain" :type="approvalModeTagType(item.approvalMode)">
-              {{ item.approvalModeLabel ?? item.approvalMode }}
-            </el-tag>
+            <!-- 系统内置标记（V48）：一眼看出这张卡片改不了结构、也删不掉 -->
+            <el-tag v-if="item.builtIn" size="small" effect="plain" type="info">系统内置</el-tag>
             <el-tag size="small" effect="plain" :type="applyTypeStatusTagType(item.status)">
               {{ item.statusLabel ?? item.status }}
             </el-tag>
@@ -484,7 +630,15 @@ onMounted(loadTypes)
             <el-button v-if="canExportData" link type="primary" size="small" :icon="Download" @click="openExport(item)">
               导出数据
             </el-button>
-            <el-button v-if="canManage" link type="danger" size="small" :icon="Delete" @click="removeType(item)">
+            <!-- 系统内置类型不可删除（V48）：后端也会拒绝，这里干脆不显示按钮 -->
+            <el-button
+              v-if="canManage && !item.builtIn"
+              link
+              type="danger"
+              size="small"
+              :icon="Delete"
+              @click="removeType(item)"
+            >
               删除
             </el-button>
           </div>
@@ -612,6 +766,67 @@ onMounted(loadTypes)
       </template>
     </el-dialog>
 
+
+    <!-- 系统内置类型的配置（V48）：只有「表单说明」与「审批流程」两项可动 -->
+    <el-dialog
+      v-model="builtInVisible"
+      :title="`配置：${builtInTarget?.typeName ?? ''}`"
+      :width="isMobile ? '96%' : '900px'"
+      :close-on-click-modal="false"
+      top="5vh"
+    >
+      <div v-loading="builtInLoading" class="ts-applycfg__builtin">
+        <el-alert type="info" :closable="false" show-icon>
+          <template #title>系统内置类型</template>
+          {{ builtInCfg?.formNote }}
+        </el-alert>
+
+        <el-form label-width="88px" :label-position="isMobile ? 'top' : 'right'">
+          <el-form-item label="表单说明">
+            <el-input
+              v-model="builtInDescription"
+              maxlength="255"
+              show-word-limit
+              placeholder="展示在提交页卡片上的一行说明"
+              :disabled="!canManage"
+            />
+          </el-form-item>
+        </el-form>
+
+        <template v-if="builtInCfg?.flowEditable">
+          <el-alert
+            :type="builtInCfg?.flowBound ? 'success' : 'warning'"
+            :closable="false"
+            show-icon
+          >
+            <template #title>
+              {{ builtInCfg?.flowBound ? '已启用自定义审批流程' : '当前走默认审批（按部门逐级 / 系统预置三级流程）' }}
+            </template>
+            保存后，**之后新提交**的借用单按这里的流程审批；已提交的工单按提交时的快照走，不受影响。
+          </el-alert>
+
+          <h4 class="ts-applycfg__pane-title">审批流程（谁来批）</h4>
+          <LinearFlowEditor
+            ref="builtInFlowRef"
+            v-model="builtInFlow"
+            :fields="builtInFieldOptions"
+            :field-label-of="builtInFieldLabelOf"
+            :readonly="!canManage"
+          />
+        </template>
+        <div v-else class="ts-text-hint ts-applycfg__builtin-fixed">
+          该系统内置类型不经过审批，因此没有可配置的审批流程。
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="builtInVisible = false">关闭</el-button>
+        <el-button v-if="canManage" type="primary" :loading="builtInSaving" @click="saveBuiltInConfig">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
     <CustomFormExportDialog v-model="exportVisible" :apply-type="exportTarget" />
   </div>
 </template>
@@ -695,6 +910,18 @@ onMounted(loadTypes)
   flex-wrap: wrap;
   border-top: 1px solid var(--el-border-color-lighter);
   padding-top: 8px;
+}
+
+.ts-applycfg__builtin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ts-applycfg__builtin-fixed {
+  padding: 12px 14px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
 }
 
 .ts-applycfg__steps {

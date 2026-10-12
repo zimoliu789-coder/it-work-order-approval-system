@@ -3,8 +3,10 @@ package com.enterprise.ticket.module.applytype.service;
 import com.enterprise.ticket.module.applytype.dto.ApplyConfigCreateRequest;
 
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
@@ -55,8 +57,44 @@ public interface ApplyTypeService {
     /** 启用 / 停用 */
     void updateStatus(Long id, String status);
 
-    /** 删除（已被工单使用时拒绝，只能停用） */
+    /** 删除（已被工单使用时拒绝，只能停用；系统内置类型恒拒绝，V48） */
     void delete(Long id);
+
+    // ------------------------------------------------------------------
+    // 系统内置类型（V48）
+    // ------------------------------------------------------------------
+
+    /**
+     * 内置类型的配置面板数据：表单说明 + 当前生效的审批流程（含默认流程）+ 条件字段清单。
+     *
+     * <p>非内置类型调用它一律 404 —— 内置类型的配置面与自定义类型完全不同
+     * （没有表单模板、不能改编码、不能删），混在一个接口里会让前端只能靠 typeCode 猜。
+     */
+    BuiltInConfigVO builtInConfig(Long id);
+
+    /**
+     * 保存内置类型的配置：表单说明 + 审批流程绑定。
+     *
+     * <p>这是「管理员改了审批流程要**真正生效**」的落点：
+     * 借用单在提交时会优先读这里绑定的流程版本（见 {@code OrderServiceImpl#create}），
+     * 没绑定才退回「部门绑定流程 → 系统预置流程」。
+     *
+     * <p>{@code approvalFlowVersionId} 传 null 表示解绑，回到默认审批方式。
+     *
+     * @throws com.enterprise.ticket.common.exception.BusinessException
+     *         非内置类型（404）/ 该内置类型不支持配置流程（400）/ 流程版本未发布（400）
+     */
+    void updateBuiltInConfig(Long id, BuiltInConfigRequest request);
+
+    /**
+     * 内置「借用设备」当前绑定的审批流程版本 id；未绑定返回 {@code null}。
+     *
+     * <p>供 {@code OrderServiceImpl} 在生成借用单快照时决定流程来源。
+     * 之所以做成服务方法而不是让 order 模块直接查 {@code apply_type} 表：
+     * 「内置类型的流程绑定存在哪一列」是 applytype 模块的内部细节，
+     * 让调用方直接依赖列名，下次挪列就会在编译期之外的地方静默失效。
+     */
+    Long borrowBuiltInFlowVersionId();
 
     /**
      * 审批流程预览：用「当前表单数据」算一遍命中路径，告诉提交页

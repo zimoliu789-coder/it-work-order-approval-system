@@ -1,6 +1,7 @@
 package com.enterprise.ticket.config;
 
 import com.enterprise.ticket.common.constant.SetupKeys;
+import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
 import com.enterprise.ticket.module.applytype.support.PresetApplyCatalog;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import lombok.RequiredArgsConstructor;
@@ -142,9 +143,13 @@ public class ProductionInitCleaner implements ApplicationRunner {
      * @return 被删除的申请类型条数
      */
     private int clearDemoApplyData() {
-        List<String> presetCodes = PresetApplyCatalog.presets().stream()
+        List<String> presetCodes = new java.util.ArrayList<>(PresetApplyCatalog.presets().stream()
                 .map(PresetApplyCatalog.Preset::typeCode)
-                .toList();
+                .toList());
+        // V48：系统内置类型（借用设备 / 故障报修）不是「演示数据」，必须一并保留 ——
+        // 它们不在 PresetApplyCatalog 里（那个目录只装走通用表单 / 流程机制的预置类型），
+        // 漏加会让生产初始化把这两张卡片直接删掉。
+        presetCodes.addAll(BuiltInApplyCatalog.codes());
         String inList = presetCodes.stream()
                 .map(code -> "'" + code.replace("'", "''") + "'")
                 .collect(Collectors.joining(","));
