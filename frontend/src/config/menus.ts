@@ -45,6 +45,17 @@ export interface MenuItem {
   roles?: RoleCode[]
   /** 所需权限码（见后端 PermissionCatalog）；声明后以它为准 */
   perm?: string
+  /**
+   * 除 `perm` 之外，对「故障报修处理人」也放行（V50）。
+   *
+   * 用在哪：「设备故障记录」页的**执行人**是处理流程里配的维修人，而他们拿不到
+   * `device:fault:view`（那个码属于管理员）。若只认权限码，这些人就永远进不去
+   * 自己的待办页 —— 只能靠站内通知点一次，消息划过去之后无路可走。
+   *
+   * ⚠️ 它**只是可见性通道，不是授权**：服务端对非管理员强制返回
+   * 「未完结 且（没人接单 或 由他接单）」，看不到全量台账。
+   */
+  visibleForFaultRepairer?: boolean
   /** 是否已交付（已交付页面接入真实组件，未交付进入占位页） */
   ready?: boolean
   children?: MenuItem[]
@@ -79,7 +90,16 @@ export const APP_MENUS: MenuItem[] = [
       { path: '/asset/category', title: '设备分类管理', perm: 'device:category:manage', ready: true },
       //  设备故障记录：汇总上报 / 台账登记 / 归还登记三类故障。
       // 需求的「设备维修记录」（维修中列表 + 维修历史）在它基础上扩展，属 P2 排期。
-      { path: '/asset/fault', title: '设备故障记录', perm: 'device:fault:view', ready: true },
+      // 兼作「报修处理人」的待办入口（V50）：他们只有这一条子项可见，
+      // 因此「资产管理」这一级会只为这群人露出（其余子项都被各自的权限码挡住）。
+      // 服务端按处理流程配置判定并做数据隔离，菜单只是让他找得到门。
+      {
+        path: '/asset/fault',
+        title: '设备故障记录',
+        perm: 'device:fault:view',
+        visibleForFaultRepairer: true,
+        ready: true
+      },
       // 设备盘点（P2）：盘点的对象就是台账本体，报告里的「盘亏」也是台账数据
       { path: '/asset/inventory', title: '设备盘点', perm: 'inventory:view', ready: true }
       // 「统计报表」已按需求文档移入「监控与报表」——它报的是数据，不是资产本体。
@@ -182,6 +202,14 @@ export interface MenuVisibilityContext {
   hasPerm: (code: string) => boolean
   /** 权限列表是否已从后端加载（未加载时对「有 perm 的菜单」回退到角色判断） */
   permsLoaded: boolean
+  /**
+   * 是否为故障报修处理人（V50）。
+   *
+   * 与 `role` / `hasPerm` 并列而不是塞进 `hasPerm`：它不是权限码。
+   * 若伪装成一个权限码去骗过 `hasPerm`，「角色与权限」页会开始显示一个
+   * 谁也勾不动的码；而这个标识的真实来源是**故障模块的配置**，不是角色授权。
+   */
+  faultRepairer: boolean
 }
 
 function roleAllowed(menu: MenuItem, role: RoleCode): boolean {
@@ -212,6 +240,11 @@ export function filterMenus(menus: MenuItem[], ctx: MenuVisibilityContext): Menu
 
 function isVisible(menu: MenuItem, ctx: MenuVisibilityContext): boolean {
   if (menu.perm) {
+    // 报修处理人的待办入口（V50）：他们没有该权限码，但这一页就是给他们用的。
+    // 放在权限判断之前 —— 否则「权限列表已加载」分支会先把它挡掉。
+    if (menu.visibleForFaultRepairer && ctx.faultRepairer) {
+      return true
+    }
     // 权限列表已加载：以权限码为唯一判据（支持自定义角色）
     if (ctx.permsLoaded) {
       return ctx.hasPerm(menu.perm)

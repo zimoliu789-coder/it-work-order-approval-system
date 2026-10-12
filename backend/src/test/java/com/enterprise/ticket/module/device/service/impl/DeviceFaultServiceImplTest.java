@@ -411,12 +411,48 @@ class DeviceFaultServiceImplTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("故障分页：非管理员被拒绝")
+    @DisplayName("故障分页：既不在处理范围、也没经手过的非管理员被拒（403）")
     void page_byNonAdmin_rejected() {
+        // V50：准入从「仅管理员」放开为「管理员或处理范围内的人」，
+        // 但**放开的是这类人，不是所有人** —— 一个普通员工仍拿不到这条列表。
         loginAs(APPLICANT_ID, RoleCode.USER);
+        when(faultRepairAssigneeResolver.covers(APPLICANT_ID)).thenReturn(false);
+        when(faultMapper.selectOne(any())).thenReturn(null);
 
         assertEquals(ErrorCode.FORBIDDEN,
                 errorCodeOf(() -> service.page(new DeviceFaultQuery())));
+        verify(faultMapper, never()).selectPage(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 处理人：即使传 onlyMine=false 也只看得到自己的待办（隔离由服务端钉死，不信任查询参数）")
+    void page_repairerForcedToOwnTodo() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(faultRepairAssigneeResolver.covers(APPLICANT_ID)).thenReturn(true);
+        DeviceFaultQuery query = new DeviceFaultQuery();
+        // 刻意传 false —— 查询参数是客户端可控的，服务端不该因为一个参数就交出全量台账
+        query.setOnlyMine(false);
+
+        String sql = capturedSql(query);
+
+        assertTrue(sql.contains("IS NULL"), "必须含「未接单」分支，实际 SQL：" + sql);
+        assertTrue(sql.contains("status"), "必须限定未完结状态，实际 SQL：" + sql);
+    }
+
+    @Test
+    @DisplayName("★ 配置被改走的「曾接过单人」：仍能进列表收尾，但看不到没人接的新单")
+    void page_outOfScopeExHandlerSeesOnlyOwn() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(faultRepairAssigneeResolver.covers(APPLICANT_ID)).thenReturn(false);
+        // 历史上接过单（否则他连页面都进不来）
+        when(faultMapper.selectOne(any())).thenReturn(fault(FaultStatus.IN_PROGRESS.name(), DEVICE_ID));
+
+        String sql = capturedSql(new DeviceFaultQuery());
+
+        // 仍按「归我管」收窄（能收尾），但**不带未接单分支** ——
+        // 他此刻已无接单资格，把没人接的单摆给他只会让他点一下就报无权限。
+        assertTrue(!sql.contains("IS NULL"), "不应含「未接单」分支，实际 SQL：" + sql);
+        assertTrue(sql.contains("status"), "必须限定未完结状态，实际 SQL：" + sql);
     }
 
     // ------------------------------------------------------------------

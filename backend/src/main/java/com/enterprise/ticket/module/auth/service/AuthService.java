@@ -21,6 +21,7 @@ import com.enterprise.ticket.module.security.service.IpBlockService;
 import com.enterprise.ticket.module.security.service.SecurityEventRecorder;
 import com.enterprise.ticket.module.security.support.SecurityEventType;
 import com.enterprise.ticket.module.department.entity.Department;
+import com.enterprise.ticket.module.device.support.FaultRepairAssigneeResolver;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
 import com.enterprise.ticket.module.role.service.RoleService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
@@ -112,6 +113,15 @@ public class AuthService {
     private final RoleService roleService;
     private final PasswordEncoder passwordEncoder;
     private final AppProperties appProperties;
+    /**
+     * 故障报修「处理人」判定（V50）：为登录信息补齐 {@code faultRepairer} 标识。
+     *
+     * <p>为什么放在这里算：菜单与路由是**同步注册**的（前端拿到用户信息立刻算可见菜单），
+     * 若改成前端登录后再补一次请求，会出现「菜单先没有、稍后才冒出来」的抖动，
+     * 而这两处必须同源 —— 「通知谁」的判定只有
+     * {@link FaultRepairAssigneeResolver} 一份口径。
+     */
+    private final FaultRepairAssigneeResolver faultRepairAssigneeResolver;
 
     // ---------------- ：AD 域控 ----------------
     private final AdConfigService adConfigService;
@@ -542,6 +552,25 @@ public class AuthService {
         info.setBuiltInAdmin(BuiltinAdmin.isBuiltinAdmin(appProperties, user.getRole(), user.getUsername()));
         // 上线前 / ：是否需要弹「首次绑定联系方式」引导。
         info.setRequireContactBinding(requiresContactBinding(user));
+        info.setFaultRepairer(isFaultRepairer(user));
+    }
+
+    /**
+     * 是否为故障报修处理人（V50）。
+     *
+     * <p><b>刻意吞掉异常并回落 false</b>：这个标识只影响「一个菜单项显不显示」，
+     * 而它是在**登录路径**上算的 —— 若因为「处理流程」配了个非法值就让所有人登不进来，
+     * 那是把外围配置的故障放大成了全站不可用。解析器本身已对非法值容错，
+     * 这里再兜一层，保证登录路径绝不因为这一项而中断。
+     */
+    private boolean isFaultRepairer(User user) {
+        try {
+            return faultRepairAssigneeResolver.covers(user.getId());
+        } catch (RuntimeException e) {
+            log.warn("[报修] 判定处理人失败（本次按「不是处理人」处理，仅影响菜单显示）：userId={} err={}",
+                    user.getId(), e.getMessage());
+            return false;
+        }
     }
 
     /**

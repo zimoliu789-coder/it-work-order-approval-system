@@ -30,9 +30,20 @@ import java.util.List;
  * <ul>
  *   <li>上报（POST）—— 仅要求已登录：借用人只能报自己使用中的设备（服务层校验），
  *       管理员 / 最终处理人可做台账直接登记（服务层校验）；</li>
- *   <li>查询与处理（GET / 维修完成 / 报废）—— 仅 super_admin / admin。</li>
+ *   <li>待办与处理（GET 列表 / 接单 / 维修完成 / 无法修复）—— **仅要求已登录**，
+ *       准入与数据隔离全部在服务层（V50）：管理员看全量台账，
+ *       非管理员只拿得到「未完结 且（没人接单 或 由他接单）」的那些；</li>
+ *   <li>报废（SCRAP）—— 仍需 {@code device:fault:manage}：那是**资产决策**，
+ *       不该由一线维修人替资产管理员做。</li>
  * </ul>
  * 全部故障操作记入审计日志（ / ）。
+ *
+ * <h2>V50：为什么把「列表 / 维修完成」从权限码改成「已登录」</h2>
+ * 这两件事的**执行人**是「处理流程」里配的维修人，而 {@code device:fault:manage}
+ * 按现有角色配置只发给管理员 —— 结果是「能接单（接单接口本就是已登录即可）却交不了差」，
+ * 维修人接了单看不到「维修完成」按钮，而且一点报错都没有。
+ * 统一口径：**接口只要登录，授权留给服务层的 {@code requireAdminOrRepairer}** ——
+ * 与接单接口已有的做法完全一致，不再出现「同一件事、三个接口两种口径」。
  */
 @RestController
 @RequestMapping("/api/device-faults")
@@ -68,12 +79,15 @@ public class DeviceFaultController {
     }
 
     /**
-     * 故障记录分页（仅 super_admin / admin）
+     * 故障记录分页（管理员看全量；处理人只看自己的待办，服务端强制隔离）
      *
      * <p>测试路径：GET http://localhost:8080/api/device-faults?page=1&size=10&status=PENDING_REPAIR
+     *
+     * <p>{@code onlyMine=true} 是「待我处理」；但对**非管理员**它恒为真 ——
+     * 传不传都一样，服务端不会因为一个查询参数就交出别人的数据。
      */
     @GetMapping
-    @PreAuthorize("@perm.has('device:fault:view')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<PageResult<DeviceFaultVO>> page(DeviceFaultQuery query) {
         return ApiResponse.success(deviceFaultService.page(query));
     }
@@ -93,9 +107,12 @@ public class DeviceFaultController {
      * 维修完成（设备 维修中 → 可用）
      *
      * <p>测试路径：PUT http://localhost:8080/api/device-faults/1/repair
+     *
+     * <p>V50：准入口径与接单 /「无法修复」统一为「已登录」，授权在服务层
+     * （管理员，或该报修的维修人 / 处理范围内的成员）。
      */
     @PutMapping("/{id}/repair")
-    @PreAuthorize("@perm.has('device:fault:manage')")
+    @PreAuthorize("isAuthenticated()")
     @AuditLog(module = "DEVICE", action = "DEVICE_FAULT_REPAIR", description = "登记设备维修完成")
     public ApiResponse<Void> repair(@PathVariable Long id,
                                     @RequestBody(required = false) DeviceFaultHandleRequest request) {

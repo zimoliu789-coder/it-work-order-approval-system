@@ -414,7 +414,18 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
 
     @Override
     public PageResult<DeviceFaultVO> page(DeviceFaultQuery query) {
-        requireAdmin();
+        // V50：准入从「仅管理员」放开为「管理员或处理范围内的人」。
+        // 这不是把台账摊开给所有人 —— 紧接着的**强制数据隔离**才是关键：
+        // 非管理员拿到的结果集与他自己调「待我处理」完全一样，
+        // 且**不受查询参数影响**（传 onlyMine=false 也不会多出一行）。
+        Long me = requireCurrentUserId();
+        boolean admin = RoleCode.isAdminOrAbove(currentRole());
+        boolean inScope = admin || faultRepairAssigneeResolver.covers(me);
+        if (!inScope && !hasHandledFault(me)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN,
+                    "你不在这条报修的处理范围内，无法查看故障记录；"
+                            + "请联系管理员在「申请类型与流程 → 故障报修 → 处理流程」中配置");
+        }
         long safePage = Math.max(query.getPage(), 1L);
         long safeSize = Math.min(Math.max(query.getSize(), 1L), MAX_PAGE_SIZE);
 
@@ -428,24 +439,36 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
             return PageResult.empty(safePage, safeSize);
         }
 
-        // 「待我处理」（V50）：未结束 + 归我管。
+        // 「待我处理」：未结束 + 归我管。
         //
         // 「归我管」= 我接的单，或**还没人接的单**。后者是关键：维修人的待办列表里
         // 最主要的就是「还没人认领的新单」——若只算「我接的」，这个筛选在接单之前永远是空的，
         // 而它存在的意义恰恰是让人看到「有什么等着我接」。
         //
         // 已被别人接走的单不出现在我的待办里（在别人手上），这是与「全部未结束」的唯一差别。
-        boolean onlyMine = Boolean.TRUE.equals(query.getOnlyMine());
-        Long me = onlyMine ? requireCurrentUserId() : null;
+        //
+        // V50 的两点收紧：
+        //  1. **非管理员恒为 true**（`!admin` 直接把它钉死）—— 数据隔离不能靠调用方守法：
+        //     查询参数是客户端可控的，若只在 admin 分支之外「尊重」它，
+        //     非管理员传 `onlyMine=false` 就能拿到全量台账；
+        //  2. 「没人接的单」只对**有资格接**的人可见（管理员 / 在处理范围内）。
+        //     一个「配置被改走、但历史上接过单」的维修人仍能进这个页面（他要能收尾），
+        //     却不该因此看到一堆他接不了的新单。
+        boolean scoped = !admin || Boolean.TRUE.equals(query.getOnlyMine());
+        boolean seeUnclaimed = inScope;
 
         IPage<DeviceFault> resultPage = faultMapper.selectPage(new Page<>(safePage, safeSize),
                 Wrappers.<DeviceFault>lambdaQuery()
                         .eq(status != null, DeviceFault::getStatus, status)
                         .in(deviceKeyword != null, DeviceFault::getDeviceId, deviceIds)
-                        .in(onlyMine, DeviceFault::getStatus,
+                        .in(scoped, DeviceFault::getStatus,
                                 FaultStatus.PENDING_REPAIR.name(), FaultStatus.IN_PROGRESS.name())
-                        .and(onlyMine, w -> w.eq(DeviceFault::getHandledBy, me)
-                                .or().isNull(DeviceFault::getHandledBy))
+                        .and(scoped, w -> {
+                            w.eq(DeviceFault::getHandledBy, me);
+                            if (seeUnclaimed) {
+                                w.or().isNull(DeviceFault::getHandledBy);
+                            }
+                        })
                         .orderByDesc(DeviceFault::getId));
         List<DeviceFault> records = resultPage.getRecords();
         Map<Long, Device> devices = devicesById(records);
@@ -724,6 +747,22 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         if (!RoleCode.isAdminOrAbove(currentRole())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员及以上角色可操作设备故障记录");
         }
+    }
+
+    /**
+     * 该用户是否**经手过**报修（即曾经接过单）。
+     *
+     * <p>用途只有一个：让「接了单、后来『处理流程』配置被改走」的人仍能进列表把单收掉。
+     * 若不放行，那条单会卡在「处理中」——接单的人打不开页面，
+     * 而新配置里的人又不是接单人（看不到它）。同一取向见 {@code requireAdminOrRepairer}。
+     */
+    private boolean hasHandledFault(Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        return faultMapper.selectOne(Wrappers.<DeviceFault>lambdaQuery()
+                .eq(DeviceFault::getHandledBy, userId)
+                .last("LIMIT 1")) != null;
     }
 
     private Long requireCurrentUserId() {

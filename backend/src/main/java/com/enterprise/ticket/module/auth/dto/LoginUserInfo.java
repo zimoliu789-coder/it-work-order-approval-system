@@ -77,6 +77,22 @@ public class LoginUserInfo {
     /** 数据权限范围：ALL / GROUP / SELF（） */
     private String dataScope;
 
+    /**
+     * 是否为故障报修「处理人」（V50）。
+     *
+     * <p>即：落在「申请类型与流程 → 故障报修 → 处理流程」配置的通知范围内。
+     * 这类人**没有** {@code device:fault:view} 权限码（那个码只发给管理员），
+     * 但「设备故障记录」页正是他们的待办 —— 接单、修完登记结果都在那里。
+     * 因此单独下发一个标识，让前端能把那个菜单放进他们的侧边栏。
+     *
+     * <p><b>这不是权限码，也不该当成权限码用</b>：它只影响「菜单可见性」，
+     * 真正的准入与数据隔离在服务端 —— 非管理员调列表接口只会拿到
+     * 「未完结 且（没人接单 或 他接的）」，拿不到全量台账。
+     * 之所以由后端算而不是让前端自己判断：处理范围是可配的（部门 / 角色 / 指定人），
+     * 前端无从得知；若让前端「按角色猜」，就会与配置脱节。
+     */
+    private boolean faultRepairer;
+
     public static LoginUserInfo from(User user) {
         LoginUserInfo info = new LoginUserInfo();
         info.setId(user.getId());

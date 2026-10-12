@@ -90,9 +90,31 @@ export const useUserStore = defineStore('user', () => {
     return {
       role: info.role,
       permsLoaded: perms.length > 0,
-      hasPerm: (code: string) => (isSuper ? true : perms.includes(code))
+      hasPerm: (code: string) => (isSuper ? true : perms.includes(code)),
+      // 故障报修处理人（V50）：由后端按「处理流程」配置算好下发。
+      // 前端绝不用部门 / 角色去猜 —— 处理范围是可配的（部门 / 角色 / 指定人），
+      // 猜出来的结果会和配置脱节，表现为「配了却没入口」。
+      faultRepairer: info.faultRepairer === true
     }
   }
+
+  /**
+   * 当前用户是否为故障报修处理人（V50）。
+   *
+   * 供页面区分「管理员视角（全量台账）」与「处理人视角（自己的待办）」：
+   * 两者的筛选项、可用动作、说明文案都不同。
+   */
+  const isFaultRepairer = computed(() => user.value?.faultRepairer === true)
+
+  /**
+   * 是否管理员及以上（super_admin / admin）。
+   *
+   * 直接取后端下发的字段而**不是** `role === 'admin' || role === 'super_admin'`：
+   * 服务端的数据隔离判据就是 {@code RoleCode.isAdminOrAbove}，
+   * 页面视角（看全量还是只看自己的待办）必须与它同源 ——
+   * 若前端另写一份，某天后端改了判据，页面就会开始「显示全部但其实是空的」。
+   */
+  const adminOrAbove = computed(() => user.value?.adminOrAbove === true)
 
   /** 当前用户可见菜单 */
   const menus = computed<MenuItem[]>(() =>
@@ -176,6 +198,8 @@ export const useUserStore = defineStore('user', () => {
     permissions,
     permsLoaded,
     dataScope,
+    isFaultRepairer,
+    adminOrAbove,
     hasPerm,
     hasAnyPerm,
     menus,

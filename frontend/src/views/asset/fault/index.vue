@@ -7,13 +7,25 @@ import TablePage from '@/components/TablePage.vue'
 import UserSelectDialog from '@/components/UserSelectDialog.vue'
 import { useListQuery } from '@/composables/useListQuery'
 import { useResponsive } from '@/composables/useResponsive'
+import { useUserStore } from '@/store/user'
 import { FAULT_STATUS_OPTIONS, faultStatusTagType, deviceStatusTagType, isOpenFault } from '@/types/device'
 import type { DeviceFaultHandlePayload, DeviceFaultItem, FaultStatusCode } from '@/types/device'
 import type { UserOption } from '@/types/user'
 import type { ColumnDef } from '@/types/table'
 
 /**
- * 设备故障记录（，仅 super_admin / admin）
+ * 设备故障记录（，V50 起放开给「报修处理人」）
+ *
+ * <h2>两种视角，同一页</h2>
+ * - **管理员**：看全量台账，可按任意状态筛选，可报废、可强制处理；
+ * - **报修处理人**（落在「申请类型与流程 → 故障报修 → 处理流程」配置范围内的人）：
+ *   只看到**自己的待办** —— 未完结 且（还没人接 或 由他接）。
+ *   这是**服务端强制的**：接口对非管理员恒按该范围过滤，
+ *   传 `onlyMine=false` 也不会多出一行。页面上的差异（隐藏「待我处理」、
+ *   收窄状态下拉、隐藏「报废」）只是把服务端的事实如实画出来，不是权限本身。
+ *
+ * 判据取 `userStore.adminOrAbove`（后端下发），与服务的准入判据同源；
+ * **不要**用 `role === 'admin'` 自己拼一份 —— 那种口径迟早和服务端漂移。
  *
  * 来源三合一：借用人在使用中上报、管理员在台账直接登记、归还时登记为故障。
  *
@@ -46,6 +58,23 @@ import type { ColumnDef } from '@/types/table'
  */
 
 const { isMobile } = useResponsive()
+const userStore = useUserStore()
+
+/** 是否为「看全量台账」的管理员视角（与服务端的准入判据同源） */
+const adminView = computed(() => userStore.adminOrAbove)
+
+/** 报废是**资产决策**，接口仍要求 device:fault:manage —— 一线维修人看不到这个按钮 */
+const canScrapFaults = computed(() => userStore.hasPerm('device:fault:manage'))
+
+/**
+ * 状态筛选选项。
+ *
+ * 处理人只有未完结的单，若仍给出「已修复 / 已报废」，选了必然是空列表 ——
+ * 那种「点了没反应」的控件比没有更让人困惑。
+ */
+const statusOptions = computed(() =>
+  adminView.value ? FAULT_STATUS_OPTIONS : FAULT_STATUS_OPTIONS.filter((item) => isOpenFault(item.value))
+)
 
 /** 列定义（代码为事实源；无列偏好时逐列等于改造前渲染） */
 const columns: ColumnDef[] = [
@@ -173,9 +202,36 @@ function canUnrepairable(item: DeviceFaultItem): boolean {
   return canRepair(item)
 }
 
-/** 未完结且设备为维修中 / 可用时可标记报废（使用中禁止，） */
+/** 未完结且设备为维修中 / 可用时可标记报废（使用中禁止，）—— 只判状态，不判权限 */
 function canScrap(item: DeviceFaultItem): boolean {
   return isOpenFault(item.status) && (item.deviceStatus === 'MAINTENANCE' || item.deviceStatus === 'AVAILABLE')
+}
+
+/**
+ * 当前用户此刻**能点**报废。
+ *
+ * 把「状态允许」与「权限允许」分成两个函数：`isSettled` 判的是「这条单还有没有事要做」，
+ * 它只能看状态 —— 若把权限折进 `canScrap`，一条仍待资产决策的单会被判成「已处理」。
+ */
+function canScrapHere(item: DeviceFaultItem): boolean {
+  return canScrapFaults.value && canScrap(item)
+}
+
+/**
+ * 处理人视角下「这条单对我无事可做，但它在等资产决策」。
+ *
+ * 场景：故障未完结、设备已是「可用」（说明维修侧没事了），能做的只剩报废 ——
+ * 那是资产管理员的事。此时既不该给出按钮，也不该显示「已处理」（它并没有结束），
+ * 于是如实说明它在等谁。
+ */
+function needsAssetDecision(item: DeviceFaultItem): boolean {
+  return (
+    !canScrapFaults.value &&
+    canScrap(item) &&
+    !canRepair(item) &&
+    !canAccept(item) &&
+    !waitingReturn(item)
+  )
 }
 
 /** 未完结但设备仍在使用中：提示需先归还登记故障 */
@@ -375,9 +431,14 @@ function deviceText(item: DeviceFaultItem): string {
       <div class="ts-flex-between ts-df__head">
         <div>
           <h3 class="ts-df__title">设备故障记录</h3>
-          <p class="ts-text-secondary ts-df__desc">
+          <p v-if="adminView" class="ts-text-secondary ts-df__desc">
             汇总借用人上报、台账登记、归还登记的故障。处理流程：待处理 → 接单（处理中）→ 已修复 / 无法修复。
             设备处于「维修中」时才可接单后的登记结果或报废；使用中上报的故障需先归还并登记为故障。
+          </p>
+          <p v-else class="ts-text-secondary ts-df__desc">
+            你负责的设备报修待办：待处理的可以直接<b>接单</b>，接单后修完登记「已修复」，
+            修不了的登记「无法修复」。已结束的单会移出本列表，不再出现在这里。
+            需要报废的设备由资产管理员处理。
           </p>
         </div>
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -396,10 +457,19 @@ function deviceText(item: DeviceFaultItem): string {
           @clear="handleSearch"
         />
         <el-select v-model="query.status" class="ts-df__filter-item" placeholder="故障状态" clearable>
-          <el-option v-for="item in FAULT_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+          <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
-        <!-- 「待我处理」= 未完结 + 没人接单或我接的单；勾选即查询 -->
-        <el-checkbox v-model="query.onlyMine" class="ts-df__filter-check" @change="handleOnlyMineChange">
+        <!--
+          「待我处理」= 未完结 + 没人接单或我接的单；勾选即查询。
+          只给管理员：对处理人来说服务端本来就只返回这个范围，
+          再摆一个勾不动（勾不勾都一样）的开关，只会让人以为它坏了。
+        -->
+        <el-checkbox
+          v-if="adminView"
+          v-model="query.onlyMine"
+          class="ts-df__filter-check"
+          @change="handleOnlyMineChange"
+        >
           待我处理
         </el-checkbox>
         <div class="ts-df__filter-actions">
@@ -494,7 +564,7 @@ function deviceText(item: DeviceFaultItem): string {
             无法修复
           </el-button>
           <el-button
-            v-if="canScrap(row as DeviceFaultItem)"
+            v-if="canScrapHere(row as DeviceFaultItem)"
             link
             type="danger"
             size="small"
@@ -503,6 +573,12 @@ function deviceText(item: DeviceFaultItem): string {
             报废
           </el-button>
           <span v-if="waitingReturn(row as DeviceFaultItem)" class="ts-text-hint">待归还登记故障</span>
+          <span
+            v-if="needsAssetDecision(row as DeviceFaultItem)"
+            class="ts-text-hint"
+          >
+            待资产管理员处理
+          </span>
           <span v-if="isSettled(row as DeviceFaultItem)" class="ts-text-hint">已处理</span>
         </template>
 
@@ -564,10 +640,17 @@ function deviceText(item: DeviceFaultItem): string {
                 >
                   无法修复
                 </el-button>
-                <el-button v-if="canScrap(row)" size="small" type="danger" plain @click="openHandle(row, 'scrap')">
+                <el-button
+                  v-if="canScrapHere(row)"
+                  size="small"
+                  type="danger"
+                  plain
+                  @click="openHandle(row, 'scrap')"
+                >
                   报废
                 </el-button>
                 <span v-if="waitingReturn(row)" class="ts-text-hint">待归还登记故障后可处理</span>
+                <span v-if="needsAssetDecision(row)" class="ts-text-hint">待资产管理员处理</span>
               </div>
             </div>
             <el-empty v-if="!loading && records.length === 0" :image-size="70" description="暂无故障记录" />
