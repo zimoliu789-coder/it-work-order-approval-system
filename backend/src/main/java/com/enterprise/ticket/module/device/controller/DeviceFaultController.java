@@ -108,6 +108,33 @@ public class DeviceFaultController {
      *
      * <p>测试路径：PUT http://localhost:8080/api/device-faults/1/scrap
      */
+    /**
+     * 接单（V50）。
+     *
+     * <p>只要求登录，不挂 {@code device:fault:manage} —— 那个权限码按现有角色配置
+     * 只发给管理员，而接单的是一线维修人员。真正的授权在服务层：
+     * 「管理员，或落在『处理流程』通知范围内的人」，而那套范围本来就是管理员自己配的。
+     */
+    @PutMapping("/{id}/accept")
+    @PreAuthorize("isAuthenticated()")
+    @AuditLog(module = "DEVICE", action = "FAULT_ACCEPT",
+            description = "接单设备故障报修", risk = RiskLevel.NORMAL)
+    public ApiResponse<Void> accept(@PathVariable Long id) {
+        deviceFaultService.accept(id);
+        return ApiResponse.success();
+    }
+
+    /** 判定无法修复（V50）：维修结论，设备保持维修中，待资产决策 */
+    @PutMapping("/{id}/unrepairable")
+    @PreAuthorize("isAuthenticated()")
+    @AuditLog(module = "DEVICE", action = "FAULT_UNREPAIRABLE",
+            description = "判定设备故障无法修复", risk = RiskLevel.NORMAL)
+    public ApiResponse<Void> markUnrepairable(@PathVariable Long id,
+                                              @RequestBody(required = false) DeviceFaultHandleRequest request) {
+        deviceFaultService.markUnrepairable(id, request);
+        return ApiResponse.success();
+    }
+
     @PutMapping("/{id}/scrap")
     @PreAuthorize("@perm.has('device:fault:manage')")
     @AuditLog(module = "DEVICE", action = "DEVICE_FAULT_SCRAP", risk = RiskLevel.HIGH,

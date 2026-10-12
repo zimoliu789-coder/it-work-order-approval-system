@@ -52,6 +52,20 @@ public interface DeviceFaultService {
     /** 维修完成：故障记录 → 已维修，设备 → 可用（ / ） */
     void markRepaired(Long faultId, DeviceFaultHandleRequest request);
 
+    /**
+     * 接单（V50）：待处理 → 处理中，并记下接单人。
+     *
+     * <p>权限口径：管理员，或落在「处理流程」配置的通知范围内的人 ——
+     * 不要求 {@code device:fault:manage}（那个码只发给管理员，而接单的是一线维修人员）。
+     */
+    void accept(Long faultId);
+
+    /**
+     * 判定无法修复（V50）：这是维修结论，不是资产决策 ——
+     * 设备保持「维修中」，由资产管理员另行决定报废或调拨。
+     */
+    void markUnrepairable(Long faultId, DeviceFaultHandleRequest request);
+
     /** 故障标记报废：故障记录 → 已报废，设备 → 已报废（ / ；使用中禁止报废） */
     void scrap(Long faultId, DeviceFaultHandleRequest request);
 

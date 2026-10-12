@@ -7,6 +7,9 @@ import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.common.constant.DeviceStatus;
 import com.enterprise.ticket.common.constant.FaultStatus;
+import com.enterprise.ticket.common.constant.MessageType;
+import com.enterprise.ticket.module.device.support.FaultRepairAssigneeResolver;
+import com.enterprise.ticket.module.message.service.UserNotificationService;
 import com.enterprise.ticket.common.constant.OrderStatus;
 import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.UseType;
@@ -59,6 +62,10 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
     private final DeviceMapper deviceMapper;
     private final OrderMapper orderMapper;
     private final UserMapper userMapper;
+    /** 报修「通知谁」+「谁能接单」的唯一判定来源（两处必须同源，见其类注释） */
+    private final FaultRepairAssigneeResolver faultRepairAssigneeResolver;
+    /** 处理流程的站内通知（报修待处理 / 已接单 / 已处理） */
+    private final UserNotificationService userNotificationService;
 
     // ------------------------------------------------------------------
     // 上报
@@ -130,6 +137,11 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         fault.setOccurredAt(request.getOccurredAt() != null ? request.getOccurredAt() : fallbackOccurredAt);
         fault.setStatus(FaultStatus.PENDING_REPAIR.name());
         faultMapper.insert(fault);
+        // V50：登记即通知维修人。改造前报修提交后**没有任何通知** ——
+        // 维修人只能靠不断刷新列表才发现有新单，等于整条处理流程没有起点。
+        // 放在 insert 之内（而不是两个调用点各写一次），保证「工单上报」与「台账登记」
+        // 两条入口的行为一致 —— 漏掉一条的表现是「从某个入口报修不会通知」。
+        notifyAssignees(device, fault);
         return fault.getId();
     }
 
@@ -140,7 +152,10 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void markRepaired(Long faultId, DeviceFaultHandleRequest request) {
-        requireAdmin();
+        // V50：**先鉴权、再读记录**。顺序很重要 —— 反过来会让无权限的人拿到
+        // 「这条记录存不存在」这类信息（FAULT_NOT_FOUND vs FORBIDDEN 的差别就是答案），
+        // 也让越权请求白白走一遍查询。
+        requireAdminOrRepairer(faultId);
         DeviceFault fault = requireOpenFault(faultId);
         Device device = requireDevice(fault.getDeviceId());
         // P2：校验维修人。请求体完全由客户端可控 ——「前端是选择器所以不会传错」不构成保证，
@@ -162,7 +177,9 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         changeDeviceStatus(device, DeviceStatus.MAINTENANCE, DeviceStatus.AVAILABLE);
         faultMapper.update(null, Wrappers.<DeviceFault>lambdaUpdate()
                 .eq(DeviceFault::getId, faultId)
-                .eq(DeviceFault::getStatus, FaultStatus.PENDING_REPAIR.name())
+                // V50：待处理与处理中都可标完成（接单后状态已是「处理中」）
+                .in(DeviceFault::getStatus,
+                        FaultStatus.PENDING_REPAIR.name(), FaultStatus.IN_PROGRESS.name())
                 .set(DeviceFault::getStatus, FaultStatus.REPAIRED.name())
                 .set(DeviceFault::getHandledBy, requireCurrentUserId())
                 .set(DeviceFault::getHandledAt, now)
@@ -173,6 +190,150 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
                 .set(DeviceFault::getReplacedParts,
                         trimToNull(request == null ? null : request.getReplacedParts())));
         log.info("故障记录 {} 维修完成，设备 {} 维修中 → 可用", faultId, device.getId());
+    }
+
+    /**
+     * 接单（V50）：把「待处理」推进到「处理中」，并记下是谁接的。
+     *
+     * <h2>为什么需要一个独立的「接单」动作</h2>
+     * <p>没有它，报修单在维修人眼里与「一堆待办」没有区别：谁去修、修到哪一步，
+     * 系统里都没有痕迹，同一台设备可能两个人同时去修。
+     * 接单把「责任」这件事明确下来，也让报修人看到「已经有人接手了」。
+     *
+     * <h2>为什么它能绕过 {@code device:fault:manage}</h2>
+     * <p>那个权限码按现有角色配置只发给管理员，而接单的人是一线维修人员。
+     * 硬把它加进权限目录等于为了一个动作重排整套授权。这里的口径是：
+     * <b>管理员，或落在「处理流程」配置的通知范围内的人</b> —— 而这套范围本来就是
+     * 管理员自己配的，因此并没有放宽任何人的权限，只是让配置生效。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void accept(Long faultId) {
+        DeviceFault fault = requireOpenFault(faultId);
+        Long me = requireCurrentUserId();
+        if (!RoleCode.isAdminOrAbove(currentRole()) && !faultRepairAssigneeResolver.covers(me)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN,
+                    "你不在这条报修的处理范围内，无法接单；请联系管理员在「申请类型与流程 → 故障报修 → 处理流程」中配置");
+        }
+        FaultStatus status = FaultStatus.of(fault.getStatus());
+        if (status == null || !status.isAcceptable()) {
+            throw new BusinessException(ErrorCode.FAULT_ALREADY_HANDLED,
+                    "该报修单已被接单（当前「" + FaultStatus.labelOf(fault.getStatus()) + "」），无需重复接单");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int updated = faultMapper.update(null, Wrappers.<DeviceFault>lambdaUpdate()
+                .eq(DeviceFault::getId, faultId)
+                .eq(DeviceFault::getStatus, FaultStatus.PENDING_REPAIR.name())
+                .set(DeviceFault::getStatus, FaultStatus.IN_PROGRESS.name())
+                .set(DeviceFault::getHandledBy, me)
+                .set(DeviceFault::getHandledAt, now)
+                // 顺手把维修人也填上：接单的人就是维修人。留空会让「谁在修」在列表里显示为空，
+                // 而那正是这条流程最需要被看见的信息。
+                .set(DeviceFault::getRepairerId, me));
+        if (updated == 0) {
+            // 并发接单：两个人同时点，只有一个人能成功。后者看到的是明确提示而不是静默覆盖。
+            throw new BusinessException(ErrorCode.FAULT_ALREADY_HANDLED, "该报修单刚被他人接单，请刷新后查看");
+        }
+        userNotificationService.notify(fault.getReporterId(), MessageType.FAULT_REPAIR_ACCEPTED,
+                "你的报修已被接单",
+                "你提交的设备故障报修已由「" + currentDisplayName() + "」接单，正在处理中。",
+                fault.getOrderId());
+        log.info("故障记录 {} 已由 {} 接单，待处理 → 处理中", faultId, me);
+    }
+
+    /**
+     * 判定「无法修复」（V50）。
+     *
+     * <p>与「已报废」分开：这是**维修结论**，不是**资产决策**。设备保持「维修中」状态，
+     * 由资产管理员另行决定报废或调拨 —— 不能让维修人顺手替别人做报废决定。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void markUnrepairable(Long faultId, DeviceFaultHandleRequest request) {
+        requireAdminOrRepairer(faultId);
+        DeviceFault fault = requireOpenFault(faultId);
+        LocalDateTime now = LocalDateTime.now();
+        // 设备状态**不动**：它仍是 MAINTENANCE（不能用），等资产决策。
+        // 若这里顺手改成 AVAILABLE，就等于把一台修不好的设备放回可用池。
+        faultMapper.update(null, Wrappers.<DeviceFault>lambdaUpdate()
+                .eq(DeviceFault::getId, faultId)
+                .in(DeviceFault::getStatus,
+                        FaultStatus.PENDING_REPAIR.name(), FaultStatus.IN_PROGRESS.name())
+                .set(DeviceFault::getStatus, FaultStatus.UNREPAIRABLE.name())
+                .set(DeviceFault::getHandledBy, requireCurrentUserId())
+                .set(DeviceFault::getHandledAt, now)
+                .set(DeviceFault::getHandleRemark, trimToNull(request == null ? null : request.getRemark()))
+                .set(DeviceFault::getRepairerId,
+                        request != null && request.getRepairerId() != null
+                                ? request.getRepairerId() : fault.getRepairerId()));
+        userNotificationService.notify(fault.getReporterId(), MessageType.FAULT_REPAIR_HANDLED,
+                "你的报修已判定为「无法修复」",
+                "你提交的设备故障报修已处理：无法修复。"
+                        + (request != null && trimToNull(request.getRemark()) != null
+                        ? "维修说明：" + request.getRemark() : "后续由资产管理员决定报废或调拨。"),
+                fault.getOrderId());
+        log.info("故障记录 {} 判定无法修复（设备保持维修中，待资产决策）", faultId);
+    }
+
+    // ------------------------------------------------------------------
+    // 处理流程的通知与授权（V50）
+    // ------------------------------------------------------------------
+
+    /**
+     * 登记后通知配置范围内的维修人。
+     *
+     * <p>一个人都没命中时**只记 WARN 不抛错**：报修是员工描述故障的唯一途径，
+     * 不该因为运维侧「通知谁」没配好而提交不了。真正需要被发现的是「配了但没人」，
+     * 那由这条 WARN 和页面上的配置项一起暴露。
+     */
+    private void notifyAssignees(Device device, DeviceFault fault) {
+        List<Long> assignees = faultRepairAssigneeResolver.resolve();
+        if (assignees.isEmpty()) {
+            log.warn("[报修] 故障记录 {} 没有命中任何通知对象（请检查「申请类型与流程 → 故障报修 → 处理流程」"
+                    + "的通知配置，以及最终处理部门是否有在职成员）", fault.getId());
+            return;
+        }
+        String title = "有新的设备报修待处理";
+        String body = "设备「" + device.getDeviceName() + "（" + device.getAssetNo() + "）」被上报故障："
+                + fault.getFaultDescription();
+        for (Long assignee : assignees) {
+            userNotificationService.notify(assignee, MessageType.FAULT_REPAIR_TODO, title, body, fault.getOrderId());
+        }
+        log.info("故障记录 {} 已通知 {} 名维修人", fault.getId(), assignees.size());
+    }
+
+    /**
+     * 管理员，或该故障的维修人 / 通知范围内的人。
+     *
+     * <p>「已接单人」与「配置范围内的人」都放行是刻意的：前者覆盖「接了单但配置被改过」，
+     * 后者覆盖「还没来得及接单就直接修完了」（小团队里很常见，硬要求先接单只会被绕过）。
+     */
+    private void requireAdminOrRepairer(Long faultId) {
+        if (RoleCode.isAdminOrAbove(currentRole())) {
+            return;
+        }
+        Long me = requireCurrentUserId();
+        if (faultRepairAssigneeResolver.covers(me)) {
+            return;
+        }
+        // 「已接单人」同样放行：配置若在这之后被改过，也不该让接了单的人反而收不了尾。
+        // 只在粗判不通过时才查这一行 —— 正常路径上不需要这次查询。
+        DeviceFault fault = faultId == null ? null : faultMapper.selectById(faultId);
+        if (fault != null && Objects.equals(fault.getHandledBy(), me)) {
+            return;
+        }
+        throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员或该报修的维修人可操作");
+    }
+
+    /** 当前用户显示名（用于通知正文；取不到时退化成「维修人」而不是 null） */
+    private String currentDisplayName() {
+        Long me = SecurityUtils.getCurrentUserId();
+        User user = me == null ? null : userMapper.selectById(me);
+        if (user == null) {
+            return "维修人";
+        }
+        String name = user.getDisplayName();
+        return (name == null || name.isBlank()) ? user.getUsername() : name;
     }
 
     @Override
@@ -194,7 +355,9 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         changeDeviceStatus(device, from, DeviceStatus.SCRAPPED);
         faultMapper.update(null, Wrappers.<DeviceFault>lambdaUpdate()
                 .eq(DeviceFault::getId, faultId)
-                .eq(DeviceFault::getStatus, FaultStatus.PENDING_REPAIR.name())
+                // V50：已接单的记录同样可以报废（报废是资产决策，与谁接的单无关）
+                .in(DeviceFault::getStatus,
+                        FaultStatus.PENDING_REPAIR.name(), FaultStatus.IN_PROGRESS.name())
                 .set(DeviceFault::getStatus, FaultStatus.SCRAPPED.name())
                 .set(DeviceFault::getHandledBy, requireCurrentUserId())
                 .set(DeviceFault::getHandledAt, now)
@@ -515,7 +678,12 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         if (fault == null) {
             throw new BusinessException(ErrorCode.FAULT_NOT_FOUND);
         }
-        if (!FaultStatus.PENDING_REPAIR.name().equals(fault.getStatus())) {
+        // V50：判据改成「是否还在处理流程里」而不是「是否等于待处理」。
+        // 加了「处理中」之后，若仍按等值判，已接单的记录会变得谁也不能再操作
+        // （既不能标修完，也不能标无法修复），而且提示是「已是『处理中』，不可重复操作」——
+        // 一句看起来合理、实际把维修人锁死的话。
+        FaultStatus current = FaultStatus.of(fault.getStatus());
+        if (current == null || !current.isOpen()) {
             throw new BusinessException(ErrorCode.FAULT_ALREADY_HANDLED,
                     "该故障记录已是「" + FaultStatus.labelOf(fault.getStatus()) + "」，不可重复操作");
         }

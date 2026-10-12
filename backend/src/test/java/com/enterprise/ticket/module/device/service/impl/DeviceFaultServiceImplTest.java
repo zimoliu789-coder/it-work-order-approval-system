@@ -79,6 +79,13 @@ class DeviceFaultServiceImplTest {
     private OrderMapper orderMapper;
     @Mock
     private UserMapper userMapper;
+    // V50：报修处理流程新增两个依赖 —— 不加这两个 mock，@InjectMocks 会注入 null，
+    // 于是「登记后通知维修人」这一步直接 NPE（报修提交整个失败）
+    @Mock
+    private com.enterprise.ticket.module.device.support.FaultRepairAssigneeResolver
+            faultRepairAssigneeResolver;
+    @Mock
+    private com.enterprise.ticket.module.message.service.UserNotificationService userNotificationService;
 
     @InjectMocks
     private DeviceFaultServiceImpl service;
