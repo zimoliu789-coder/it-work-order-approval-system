@@ -159,29 +159,32 @@ npm run dev
 
 站内消息列表，审批结果、权限开通、归还提醒等通知统一入口。
 
-### 数据统计
+### 监控与报表
+
+「看系统跑得怎么样」的观测面：**数据类 + 日志类**集中在这里，与「系统设置」的**配置项**分开。
 
 | 菜单   | 说明             | 权限码                 |
 | ---- | -------------- | ------------------- |
 | 使用记录 | 设备借用历史查询       | `usage:view`        |
 | 统计报表 | 借用频次/审批时效/故障统计 | `asset:report:view` |
+| 流程监控 | 审批效率观测         | `flow_monitor:view` |
+| 操作日志 | 操作审计           | `log:view`          |
+| 异常日志 | 异常堆栈检索         | `exception:view`（✅ 仅超管） |
+| 安全日志 | 登录失败/账号锁定/IP 封禁检索与解封 | `security:view`（✅ 仅超管） |
 
 ### 系统设置
 
+只保留**配置类**（配系统怎么跑）。
+
 | 菜单      | 说明                   | 是否仅超管          |
 | ------- | -------------------- | -------------- |
+| 系统参数    | 全系统参数查看              | 查看：admin；修改：超管 |
 | 角色与权限   | 角色维护 + 权限勾选树         | 查看：admin；维护：超管 |
-| 流程监控    | 审批效率观测               | admin          |
-| 操作日志    | 操作审计                 | admin          |
-| 异常日志    | 异常堆栈检索               | ✅ 仅超管          |
-| 安全日志    | 登录失败/账号锁定/IP 封禁检索与解封 | ✅ 仅超管          |
-| 在线升级    | 上传包/应用/回滚            | ✅ 仅超管          |
 | AD 域控配置 | 域控对接（测试连接/同步）        | ✅ 仅超管          |
 | 主备配置    | 添加备节点/切换/同步          | ✅ 仅超管          |
+| 在线升级    | 上传包/应用/回滚            | ✅ 仅超管          |
 | 备份记录    | 备份历史 + 手动触发备份        | ✅ 仅超管          |
-| 系统参数    | 全系统参数查看              | 查看：admin；修改：超管 |
-| 申请类型管理  | 自定义申请类型 + 表单设计       | ✅ 仅超管          |
-| 审批流程模板  | 审批流设计/发布             | ✅ 仅超管          |
+| 申请类型与流程 | 自定义申请类型 + 表单设计 + 审批流设计/发布（完整流程设计器从页内进入，不占菜单） | ✅ 仅超管          |
 
 ---
 
@@ -304,9 +307,9 @@ ghcr.io/zimoliu789-coder/it-work-order-approval-system/{backend,frontend,backup}
 | 审批中心  | `order:*`、`dashboard:view`                                                                                                                                               | 提交/审批/待办/全部工单 + 仪表盘 |
 | 消息中心  | `message:list`                                                                                                                                                           | 我的消息                |
 | 资产管理  | `device:*`、`inventory:*`                                                                                                                                                 | 台账/分类/故障/盘点         |
-| 数据统计  | `usage:view`、`asset:report:view`                                                                                                                                         | 使用记录/统计报表           |
+| 监控与报表 | `usage:view`、`asset:report:view`、`flow_monitor:view`、`log:view`、`exception:view`、`security:view`                                                                                                                                         | 使用记录/统计报表           |
 | 组织与人员 | `staff:*`、`department:manage`                                                                                                                                            | 员工维护/导入/部门维护        |
-| 系统设置  | `role:*`、`config:*`、`log:*`、`ha:*`、`backup:*`、`ad:*`、`upgrade:*`、`exception:view`、`security:view`、`flow_monitor:view`、`apply_type:*`、`approval_flow:*`、`form_template:*` | 平台级运维               |
+| 系统设置  | `role:*`、`config:*`、`ha:*`、`backup:*`、`ad:*`、`upgrade:*`、`apply_type:*`、`approval_flow:*`、`form_template:*` | 平台级运维               |
 
 权限码命名约定 `<模块>:<对象>:<动作>`，动作只有三种：`view`（看）、`manage`（改）、`import`（导入）。
 

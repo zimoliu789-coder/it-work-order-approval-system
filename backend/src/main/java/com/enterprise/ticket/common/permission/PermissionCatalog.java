@@ -41,7 +41,15 @@ public final class PermissionCatalog {
     public static final String GROUP_ORDER = "group:order";
     public static final String GROUP_MESSAGE = "group:message";
     public static final String GROUP_ASSET = "group:asset";
-    public static final String GROUP_USAGE = "group:usage";
+    /**
+     * 「监控与报表」—— 由原「数据统计」升格而来：把系统设置里的四个观测面
+     * （流程监控 / 操作日志 / 异常日志 / 安全日志）与使用记录 / 统计报表归到一组，
+     * 语义是「看系统跑得怎么样」，与「系统设置」保留的「配系统怎么跑」分开。
+     *
+     * <p>分组码仅用于树形展示、不参与授权（{@code buildAllCodes()} 只收集叶子码），
+     * 因此从 {@code group:usage} 改名为 {@code group:monitor} 不影响任何已授权数据。
+     */
+    public static final String GROUP_MONITOR = "group:monitor";
     public static final String GROUP_SYSTEM = "group:system";
     /**
      * 组织与人员（ 新设的一级目录）。
@@ -304,12 +312,20 @@ public final class PermissionCatalog {
                     menu(INVENTORY_VIEW, "设备盘点", "/asset/inventory"),
                     action(INVENTORY_MANAGE, "盘点任务管理（新建 / 核对 / 完成）")
             )),
-            group(GROUP_USAGE, "数据统计", List.of(
+            group(GROUP_MONITOR, "监控与报表", List.of(
                     menu(USAGE_VIEW, "使用记录", "/usage/records"),
                     // 统计报表： 按 从「资产管理」移入本组 ——
                     // 它报的是借用频次 / 审批时效 / 故障统计，与「设备台账」这种
                     // 「资产本体」问题域不同，和「使用记录」同属「跑出来的数据」。
-                    menu(ASSET_REPORT_VIEW, "统计报表", "/asset/report")
+                    menu(ASSET_REPORT_VIEW, "统计报表", "/asset/report"),
+                    // ---- 以下四项由「系统设置」移入（本次菜单调整）----
+                    // 共性是「看系统跑得怎么样」，属观测面；「系统设置」只留「配系统怎么跑」的配置项。
+                    menu(FLOW_MONITOR_VIEW, "流程监控", "/system/flow-monitor"),
+                    menu(LOG_VIEW, "操作日志", "/system/logs"),
+                    // 异常日志：只归超管 —— 异常堆栈是给能改代码的人看的（见常量注释）。
+                    menu(EXCEPTION_VIEW, "异常日志", "/system/exception-log"),
+                    // 安全日志：登录失败 / 账号锁定 / IP 封禁的检索与人工解封，同样只归超管。
+                    menu(SECURITY_VIEW, "安全日志", "/system/security-log")
             )),
             // ---------------- 组织与人员（ 合并出的新一级目录） ----------------
             group(GROUP_ORG, "组织与人员", List.of(
@@ -320,27 +336,15 @@ public final class PermissionCatalog {
                     action(STAFF_IMPORT, "员工批量导入"),
                     action(DEPARTMENT_MANAGE, "部门维护（新增 / 编辑 / 移动 / 设主管 / 删除）")
             )),
-            // ---------------- 系统设置（平台级运维；原「系统管理」更名并重排） ----------------
-            // 顺序即 给出的顺序：
-            // 角色与权限 / 流程监控 / 操作日志 / 在线升级 / AD域控配置 / 主备配置 / 系统参数 / 高级设置
+            // ---------------- 系统设置（平台级运维；本次调整后**只留配置类**） ----------------
+            // 观测类（流程监控 / 操作日志 / 异常日志 / 安全日志）已移入 GROUP_MONITOR。
+            // 顺序即需求方本次给出的顺序：
+            // 系统参数 / 角色与权限 / AD 域控配置 / 主备配置 / 在线升级 / 备份记录。
             group(GROUP_SYSTEM, "系统设置", List.of(
+                    menu(CONFIG_VIEW, "系统参数", "/system/config"),
+                    action(CONFIG_MANAGE, "系统参数修改"),
                     menu(ROLE_VIEW, "角色与权限", "/system/role"),
                     action(ROLE_MANAGE, "角色维护"),
-                    // 流程监控（ · M7）：从「审批配置」一级目录挪进来。
-                    // 它报的是审批效率，与「在线升级 / 操作日志」同属「平台跑得怎么样」的观测面。
-                    menu(FLOW_MONITOR_VIEW, "流程监控", "/system/flow-monitor"),
-                    menu(LOG_VIEW, "操作日志", "/system/logs"),
-                    // 异常日志：与操作日志相邻，但只归超管 ——
-                    // 异常堆栈是给能改代码的人看的，管理员看了也无从下手（见常量注释）。
-                    menu(EXCEPTION_VIEW, "异常日志", "/system/exception-log"),
-                    // 安全日志：登录失败 / 账号锁定 / IP 封禁的检索与人工解封。
-                    // 与异常日志相邻（都是「系统出了什么事」的观测面），同样只归超管。
-                    menu(SECURITY_VIEW, "安全日志", "/system/security-log"),
-                    action(JOB_RUN, "定时任务手动触发"),
-                    // 在线一键升级：两个码都只归超管 —— 升级接口能替换
-                    // 服务器上的可执行文件，等价于代码执行能力。
-                    menu(UPGRADE_VIEW, "在线升级", "/system/upgrade"),
-                    action(UPGRADE_EXECUTE, "在线升级执行（上传包 / 应用 / 回滚）"),
                     // AD 域控：决定「谁能进系统」+ 存服务账号绑定密码。
                     menu(AD_VIEW, "AD 域控配置", "/system/ldap"),
                     action(AD_MANAGE, "AD 域控配置维护（测试连接 / 立即同步 / 保存配置）"),
@@ -348,12 +352,16 @@ public final class PermissionCatalog {
                     // 不要藏进高级设置，维护人员一眼能看到」。
                     menu(HA_VIEW, "主备配置", "/system/ha"),
                     action(HA_MANAGE, "主备配置维护（添加备节点 / 手动切换 / 立即同步）"),
+                    // 在线一键升级：两个码都只归超管 —— 升级接口能替换
+                    // 服务器上的可执行文件，等价于代码执行能力。
+                    menu(UPGRADE_VIEW, "在线升级", "/system/upgrade"),
+                    action(UPGRADE_EXECUTE, "在线升级执行（上传包 / 应用 / 回滚）"),
                     // 备份记录（P0）：与「主备配置」同属基础设施级观测面 ——
                     // 一个看「故障时能不能顶上」，一个看「数据丢没丢得回来」。
                     menu(BACKUP_VIEW, "备份记录", "/system/backup"),
                     action(BACKUP_MANAGE, "手动触发数据库备份"),
-                    menu(CONFIG_VIEW, "系统参数", "/system/config"),
-                    action(CONFIG_MANAGE, "系统参数修改"),
+                    // 定时任务手动触发：不占菜单，仍挂在系统设置组下。
+                    action(JOB_RUN, "定时任务手动触发"),
                     // 审批管理三项（ ：从原「高级设置」拿出来，
                     // 直接放在「系统设置」下，不再藏一层）。
                     //
@@ -361,6 +369,10 @@ public final class PermissionCatalog {
                     // 只遍历组的直接子节点），嵌三层会让孙节点的权限码从目录里**静默**消失 ——
                     // 角色页勾选树上根本看不到它们。因此这里与其它系统设置项平铺，
                     // 顺序上紧挨在一起以表达「同属审批配置」。
+                    //
+                    // ⚠️ 需求方本次列的「系统设置只留 6 项」未提及这三项。它们是申请类型 /
+                    //    表单 / 审批流程的**唯一菜单入口**（申请类型管理，见 menus.ts），
+                    //    移走会让该功能在导航里消失，故暂留在此。
                     menu(APPLY_TYPE_VIEW, "申请类型管理", "/system/apply-type"),
                     action(APPLY_TYPE_MANAGE, "申请类型维护"),
                     action(FORM_TEMPLATE_VIEW, "表单模板查看"),

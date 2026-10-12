@@ -31,7 +31,7 @@ import type { RoleCode } from '@/types/api'
  * - **（本版）**：组织与人员三合一（员工档案 + 业务分组 + 最终处理小组
  *   → 一个「组织与人员」页）、AD 页签合并、参数按业务域重组。改造前那套
  *   「员工管理 / 审批配置」一级目录已撤销：它们是把**配置工具**摆到一级菜单的结果，
- *   而需求文档要的是「业务系统」——日常使用（审批中心 / 资产管理 / 组织与人员 / 消息 / 数据统计）
+ *   而需求文档要的是「业务系统」——日常使用（审批中心 / 资产管理 / 组织与人员 / 消息 / 监控与报表）
  *   与系统配置（系统设置）分开，配置入口收进「系统设置」。
  */
 export interface MenuItem {
@@ -82,7 +82,7 @@ export const APP_MENUS: MenuItem[] = [
       { path: '/asset/fault', title: '设备故障记录', perm: 'device:fault:view', ready: true },
       // 设备盘点（P2）：盘点的对象就是台账本体，报告里的「盘亏」也是台账数据
       { path: '/asset/inventory', title: '设备盘点', perm: 'inventory:view', ready: true }
-      // 「统计报表」已按需求文档移入「数据统计」——它报的是数据，不是资产本体。
+      // 「统计报表」已按需求文档移入「监控与报表」——它报的是数据，不是资产本体。
     ]
   },
   {
@@ -108,70 +108,68 @@ export const APP_MENUS: MenuItem[] = [
     children: [{ path: '/message/list', title: '我的消息', perm: 'message:list', ready: true }]
   },
   {
-    // 「使用记录」升格为「数据统计」：改造前它只是「查设备借用历史」，
-    // 需求文档把它与统计报表归到一起，定义为「跑出来的数据」这一类。
-    path: '/usage',
-    title: '数据统计',
+    // 「数据统计」升格为「监控与报表」：除原有的使用记录 / 统计报表外，
+    // 把原先散在「系统设置」里的四个观测面（流程监控 / 操作日志 / 异常日志 / 安全日志）收进来 ——
+    // 共性是「看系统跑得怎么样」，与「系统设置」保留的「配系统怎么跑」在语义上分开。
+    //
+    // ⚠️ 子项 path 保持原值（仍挂在 /system/* 下）**不动**：菜单分组只影响侧边栏归组，
+    //    路由与权限码都不变 —— 避免动 URL 带来的深层链接、列配置（按 routePath 存）与测试回归。
+    path: '/monitor',
+    title: '监控与报表',
     icon: 'DataLine',
     children: [
       { path: '/usage/records', title: '使用记录', perm: 'usage:view', ready: true },
-      { path: '/asset/report', title: '统计报表', perm: 'asset:report:view', ready: true }
+      { path: '/asset/report', title: '统计报表', perm: 'asset:report:view', ready: true },
+      { path: '/system/flow-monitor', title: '流程监控', perm: 'flow_monitor:view', ready: true },
+      { path: '/system/logs', title: '操作日志', perm: 'log:view', ready: true },
+      // 异常日志：只归超管 —— 异常堆栈是给能改代码的人看的，管理员看了也无从下手；
+      // 与「基础设施级告警只发超管」同一取向。
+      { path: '/system/exception-log', title: '异常日志', perm: 'exception:view', ready: true },
+      // 安全日志：登录失败 / 账号锁定 / IP 封禁的检索与人工解封，同样只归超管
+      //（解封 IP 属基础设施级动作）。security:view 不在 DEFAULT_PERMISSIONS 里 ⇒ 无需授权迁移。
+      { path: '/system/security-log', title: '安全日志', perm: 'security:view', ready: true }
     ]
   },
   {
+    // 系统设置：**只保留配置类**（配系统怎么跑）。
+    // 观测类（流程监控 / 操作日志 / 异常日志 / 安全日志）已移入「监控与报表」。
     path: '/system',
     title: '系统设置',
     icon: 'Setting',
     children: [
-      { path: '/system/role', title: '角色与权限', perm: 'role:view', ready: true },
-      { path: '/system/flow-monitor', title: '流程监控', perm: 'flow_monitor:view', ready: true },
-      { path: '/system/logs', title: '操作日志', perm: 'log:view', ready: true },
-      // 异常日志：与操作日志相邻，但**只归超管** ——
-      // 异常堆栈是给能改代码的人看的，管理员看了也无从下手；
-      // 与「基础设施级告警只发超管」同一取向。
-      // 位置与后端 PermissionCatalog.TREE 保持一致（操作日志之后、定时任务之前），
-      // 否则角色页勾选树的顺序会和侧边栏菜单对不上。
-      { path: '/system/exception-log', title: '异常日志', perm: 'exception:view', ready: true },
-      // 安全日志：登录失败 / 账号锁定 / IP 封禁的检索与人工解封。
-      // 与异常日志相邻（同属「系统出了什么事」的观测面），同样只归超管 ——
-      // 解封 IP 是基础设施级动作。security:view 不在 DEFAULT_PERMISSIONS 里 ⇒ 无需授权迁移。
-      { path: '/system/security-log', title: '安全日志', perm: 'security:view', ready: true },
-      // 在线一键升级：升级接口能替换服务器上的可执行文件，
-      // 等价于代码执行能力，因此连 view 也不给 admin，只归超管。
-      { path: '/system/upgrade', title: '在线升级', perm: 'system:upgrade:view', ready: true },
-      // AD 域控配置（； 拆为独立页）：决定「谁能进系统」
-      // + 存服务账号绑定密码，属平台级配置。可见性由 ad:view 控制（仅超管，刻意不给 admin）。
-      { path: '/system/ldap', title: 'AD 域控配置', perm: 'ad:view', ready: true },
-      // 主备配置（， ）：主备双机热备的可视化页。
-      // 需求文档明确「放在系统设置下，不要藏进高级设置，维护人员一眼能看到」，故与 AD、系统参数平铺。
-      // 可见性由 ha:view 控制（仅超管；ha:view / ha:manage 都不在 DEFAULT_PERMISSIONS 里
-      // ⇒ 既有角色不会被授予、本批**无需授权迁移**）。写操作由 ha:manage 控制。
-      // 位置与后端 PermissionCatalog.TREE 保持一致（AD 域控配置与系统参数之间），
-      // 否则角色页勾选树的顺序会和侧边栏菜单对不上。
-      { path: '/system/ha', title: '主备配置', perm: 'ha:view', ready: true },
-      // 备份记录（P0）：与「主备配置」同属基础设施级观测面 ——
-      // 一个看「故障时能不能顶上」，一个看「数据丢没丢得回来」。
-      // 可见性由 backup:view 控制（仅超管：backup:view / backup:manage 都不在
-      // DEFAULT_PERMISSIONS 里 ⇒ 既有角色不会被授予、本批**无需授权迁移**）。
-      // 位置与后端 PermissionCatalog.TREE 保持一致（主备配置与系统参数之间）。
-      { path: '/system/backup', title: '备份记录', perm: 'backup:view', ready: true },
       // 系统参数（需求方三波·第一波·）：可编辑保存、热生效，仅超管
       { path: '/system/config', title: '系统参数', perm: 'config:view', ready: true },
-      // ---- 审批管理（：从原「高级设置」拿出来，直接放在系统设置下）----
+      { path: '/system/role', title: '角色与权限', perm: 'role:view', ready: true },
+      // AD 域控配置：决定「谁能进系统」+ 存服务账号绑定密码，属平台级配置。
+      // 可见性由 ad:view 控制（仅超管，刻意不给 admin）。
+      { path: '/system/ldap', title: 'AD 域控配置', perm: 'ad:view', ready: true },
+      // 主备配置：需求文档明确「放在系统设置下，不要藏进高级设置，维护人员一眼能看到」。
+      // 可见性由 ha:view 控制（仅超管；ha:view / ha:manage 都不在 DEFAULT_PERMISSIONS 里
+      // ⇒ 既有角色不会被授予、无需授权迁移）。写操作由 ha:manage 控制。
+      { path: '/system/ha', title: '主备配置', perm: 'ha:view', ready: true },
+      // 在线一键升级：升级接口能替换服务器上的可执行文件，等价于代码执行能力，
+      // 因此连 view 也不给 admin，只归超管。
+      { path: '/system/upgrade', title: '在线升级', perm: 'system:upgrade:view', ready: true },
+      // 备份记录：与「主备配置」同属基础设施级观测面 —— 它看的是「数据丢没丢得回来」。
+      // 可见性由 backup:view 控制（仅超管；backup:view / backup:manage 都不在
+      // DEFAULT_PERMISSIONS 里 ⇒ 既有角色不会被授予、无需授权迁移）。
+      { path: '/system/backup', title: '备份记录', perm: 'backup:view', ready: true },
+      // ---- 申请类型与流程（配单怎么批）----
       //
       // ⚠️ 需求文档想要一个「审批管理」分组（申请类型管理 + 审批流程模板 + 流程监控 三项）。
       // 但后端权限目录只支持**两层**：`buildAllCodes()` 只遍历组的直接子节点，
       // 嵌三层会让孙节点的权限码从目录里静默消失（角色页勾选树上直接看不到，
       // 保存后「权限消失」且不报错）。因此这里与其它系统设置项**平铺**，
-      // 用相邻位置与注释表达「同属审批配置」。流程监控已在上方（按需求文档顺序排在前面）。
+      // 用相邻位置与注释表达「同属审批配置」。
       //
-      // 这三项都是「配单怎么批」的小众配置（表单设计器 / 流程设计器 / 申请类型），
-      // 需求文档取向：出厂预置一套能用的，普通管理员看不到、也不需要动。
-      //
-      //  变更：**「审批流程模板」菜单已下线**，其能力并入「申请类型与流程」合并页
-      // （说明：「不要分两个菜单，点进一个申请类型左边配表单、右边配审批流程，一个页面搞定」）。
+      // 「审批流程模板」菜单已下线，其能力并入「申请类型与流程」合并页
+      //（「不要分两个菜单，点进一个申请类型左边配表单、右边配审批流程，一个页面搞定」）。
       // 权限码 `apply_type:view` 继续承担本页准入；`approval_flow:view` 只保留给
       // 「完整流程设计器」整屏页（由配置面板里的「打开完整流程设计器」进入，不占菜单）。
+      //
+      // ⚠️ 本次需求方列的「系统设置只留 6 项」未提及本项。本项同属配置类，且是
+      //    申请类型 / 表单 / 审批流程管理的**唯一菜单入口**，移走会让该功能在导航里消失，
+      //    故暂留在此（若确认要移走，删掉下面这一行即可）。
       { path: '/system/apply-type', title: '申请类型与流程', perm: 'apply_type:view', ready: true }
     ]
   }
