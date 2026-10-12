@@ -13,6 +13,24 @@ export const upgradeApi = {
     return http.get<UpgradeOverview>('/system/upgrade/overview')
   },
 
+  /**
+   * 启用 / 关闭在线升级。
+   *
+   * 开关落在 system_config，改完即生效 —— 这就是「不用去改 .env」的落点。
+   */
+  setEnabled(enabled: boolean) {
+    return http.put<void>('/system/upgrade/overview/enabled', { enabled })
+  },
+
+  /**
+   * 一键在线升级：由运维代理拉取最新镜像并重建容器。
+   *
+   * Docker 部署下这是唯一的升级入口（容器跑的是镜像，上传包不会被加载）。
+   */
+  applyOnline() {
+    return http.post<UpgradeTaskItem>('/system/upgrade/online')
+  },
+
   /** 升级历史（倒序） */
   tasks() {
     return http.get<UpgradeTaskItem[]>('/system/upgrade/tasks')

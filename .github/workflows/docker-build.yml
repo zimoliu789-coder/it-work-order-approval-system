@@ -22,6 +22,9 @@ jobs:
           - { name: backend, path: backend, dockerfile: Dockerfile }
           - { name: frontend, path: frontend, dockerfile: Dockerfile }
           - { name: backup, path: deploy/backup, dockerfile: Dockerfile }
+          # 运维代理（V49）：安装向导 + 在线升级执行者。
+          # 它与其它镜像同一 tag 发布，便于「一次 pull 拿到整套」。
+          - { name: ops-agent, path: deploy/ops, dockerfile: Dockerfile }
     steps:
       - name: Checkout
         uses: actions/checkout@v4

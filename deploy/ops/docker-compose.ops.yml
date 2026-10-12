@@ -1,0 +1,63 @@
+# =====================================================================
+# 运维代理（ops-agent）独立编排（V49 · 需求 2/3）
+#
+# <h2>为什么它必须是一份**独立**的 compose 文件</h2>
+# 主 docker-compose.yml 里的 MYSQL_ROOT_PASSWORD 用的是 ${VAR:?} 语法（缺失即拒绝启动）。
+# 而 Compose 在决定启动哪些服务之前，会对**整份文件**做变量插值 —— 也就是说，
+# 即使只 `docker compose up -d ops-agent`，主文件里那个 `:?` 也会让命令直接失败。
+# 这不是可以绕过的细节，是 Compose 的既定行为。
+# 因此首次部署必须能在一份「不含任何 :? 变量」的文件里把 agent 先拉起来。
+#
+# <h2>启动方式（唯一一条命令）</h2>
+#   cd <deploy 目录>
+#   docker compose -f ops/docker-compose.ops.yml up -d
+# 然后浏览器打开 http://<宿主机>:8090 进入安装向导。
+#
+# <h2>安装完成后它继续做什么</h2>
+# 常驻，承担「一键在线升级」的执行：后端把请求写成 ops-data/requests/<taskNo>.json，
+# 它轮询到之后执行 docker compose pull + up -d --force-recreate backend frontend。
+# 不想留这个能力就把它停掉：docker compose -f ops/docker-compose.ops.yml stop
+# （停掉不影响系统运行，只是升级页会显示「运维代理未就绪」并给出可复制命令）
+# =====================================================================
+
+name: ticket-ops
+
+services:
+  ops-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/zimoliu789-coder/it-work-order-approval-system/ops-agent:${IMAGE_TAG:-latest}
+    container_name: ticket-ops-agent
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # 安装向导开关。装完可以设为 false 只保留升级执行能力（少一个入口就少一分风险）
+      OPS_UI_ENABLED: ${OPS_UI_ENABLED:-true}
+      DEPLOY_DIR: /deploy
+      # 与后端共享的目录：agent 写心跳/回执，后端写升级请求。
+      # 它同时是 UPGRADE_STORAGE_ROOT 的父目录，所以「当前版本」与回执都在这里，
+      # 后端重启后能读到 —— 不需要两边各配一遍路径。
+      OPS_SHARED_DIR: /deploy/ops-data
+      COMPOSE_PROJECT_NAME: ticket-system
+      # 向导里的默认值，只是给不熟悉的人一个提示，不参与任何判断
+      OPS_DEFAULT_DATA_ROOT: ${OPS_DEFAULT_DATA_ROOT:-}
+      OPS_DEFAULT_COOKIE_SECURE: ${OPS_DEFAULT_COOKIE_SECURE:-false}
+    ports:
+      # ⚠️ 默认只绑本机回环：安装向导不经过 nginx，是**独立于主栈的一个入口**，
+      #    一旦绑到 0.0.0.0 就等于把「重建整套容器」的能力挂到了内网上。
+      #    需要从别的机器打开向导时，把 OPS_BIND 显式改成宿主内网 IP（不要用 0.0.0.0）。
+      - "${OPS_BIND:-127.0.0.1}:${OPS_PORT:-8090}:8090"
+    volumes:
+      # ⚠️ 挂 docker.sock ≈ 把宿主 root 交给这个容器（容器内 docker run -v /:/host 即等同）。
+      #    这是「自动 pull + up -d」无法回避的代价，因此只挂给这一个容器：
+      #    backend / frontend / nginx / mysql / redis **全都不挂**。
+      #    收窄手段见 deploy/README.md「运维代理与 docker.sock」一节。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # deploy 目录可写：引导阶段要生成 .env，升级阶段要读 compose 文件
+      - ../:/deploy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

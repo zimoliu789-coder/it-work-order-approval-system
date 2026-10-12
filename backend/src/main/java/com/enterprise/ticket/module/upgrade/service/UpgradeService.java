@@ -91,6 +91,14 @@ public class UpgradeService {
 
     private static final DateTimeFormatter TASK_NO_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
+    /**
+     * 在线镜像升级在升级历史里的「包名」。
+     *
+     * <p>用中文而不是留空：历史列表里一排任务，只有包名能一眼区分
+     * 「这次是拉镜像」还是「这次是上传的离线包」。留空会让两类任务长得一模一样。
+     */
+    private static final String ONLINE_PACKAGE_NAME = "（在线镜像升级）";
+
     // ==================================================================
     // 查询
     // ==================================================================
@@ -287,6 +295,69 @@ public class UpgradeService {
             throw e;
         }
 
+        return detail(taskNo);
+    }
+
+    /**
+     * 一键在线升级：拉取最新镜像并重建容器（V49 · 第 2 项）。
+     *
+     * <h2>为什么它与「上传升级包」是两条互不相容的路</h2>
+     * <p>容器跑的是<b>镜像</b>：上传的 jar/dist 落在宿主目录里根本不会被加载。
+     * 因此 Docker 部署的升级动作只能是「拉最新镜像 + 重建容器」，
+     * 而上传包这条路径只服务非容器化部署。页面按 {@code agentReady} 二选一显示，
+     * **不并列** —— 两个入口同时摆出来，管理员一定会去点错的那个。
+     *
+     * <h2>为什么也要落一条任务记录</h2>
+     * <p>在线升级同样会改变线上运行形态，必须和上传包升级一样留下「谁在什么时候升级到哪一版」的痕迹。
+     * 因此这里建一条真实的任务行（包名为「在线镜像升级」），走同一张表、同一套状态机、同一份回执契约 ——
+     * 复用既有的 {@code UpgradeRecoveryRunner} 对账与超时兜底，不另开一套。
+     */
+    public UpgradeTaskVO applyOnline() {
+        requireEnabled();
+        if (!opsAgentBridge.agentReady()) {
+            throw new BusinessException(ErrorCode.UPGRADE_APPLY_UNAVAILABLE,
+                    "运维代理（ops-agent）未就绪，无法执行一键在线升级。"
+                            + "请确认 ops-agent 容器正在运行；非容器化部署请改用「上传升级包」。");
+        }
+        UpgradeTask active = upgradeTaskMapper.selectActive();
+        if (active != null) {
+            throw new BusinessException(ErrorCode.UPGRADE_TASK_CONFLICT,
+                    "已有未完成的升级任务（" + active.getTaskNo() + "，状态："
+                            + UpgradeStatus.labelOf(active.getStatus()) + "），请先完成它再发起新的升级");
+        }
+
+        String taskNo = generateTaskNo();
+        UpgradeTask task = newTask(taskNo, ONLINE_PACKAGE_NAME);
+        task.setSourceVersion(storage.readCurrentVersion().orElse(null));
+        task.setTargetVersion("latest");
+        try {
+            upgradeTaskMapper.insert(task);
+        } catch (DuplicateKeyException e) {
+            throw new BusinessException(ErrorCode.UPGRADE_TASK_CONFLICT, "已有未完成的升级任务，请刷新后重试");
+        }
+
+        // 先到「待应用」再进「应用中」：markApplying 是一条 CAS（WHERE status='READY_TO_APPLY'），
+        // 它保证了「同一条任务不会被下发两次」。绕过它直接写 APPLYING，
+        // 就等于放弃了那道防重闸门。
+        stage(task, UpgradeStatus.READY_TO_APPLY, "READY", 80, "已就绪：将拉取最新镜像并重建容器");
+        int updated = upgradeTaskMapper.markApplying(task.getId(),
+                "已下发在线升级请求给运维代理（ops-agent），等待其拉取镜像并重建容器…");
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.UPGRADE_TASK_STATUS_INVALID,
+                    "当前任务状态为「" + UpgradeStatus.labelOf(task.getStatus()) + "」，不允许发起应用");
+        }
+
+        try {
+            opsAgentBridge.requestApply(taskNo, "latest");
+        } catch (RuntimeException e) {
+            // 请求没写出去：产物与运行中的系统都没被碰过，退回「待应用」让管理员重试，
+            // 比判 FAILED 更合理（他没有做错任何事）
+            upgradeTaskMapper.revertToReady(task.getId(), "在线升级请求下发失败：" + e.getMessage());
+            throw e;
+        }
+
+        log.warn("[升级] 已发起在线升级 taskNo={} 操作人={} 目标=latest",
+                taskNo, SecurityUtils.getCurrentUsername());
         return detail(taskNo);
     }
 

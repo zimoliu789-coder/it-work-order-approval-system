@@ -59,6 +59,9 @@ uploads/
 .workbuddy/
 .tmp-m1-hdr/
 backend/data/
+# 运维代理与后端共享的运行期目录（心跳 / 升级请求 / 回执 / 审计日志）。
+# 它由 ops-agent 首次启动时创建，属于运行期数据，不进版本库。
+deploy/ops-data/
 # 例外：测试资源下的 target 目录需保留（与上方 backend 段的说明一致，必须是最后一条，
 # 否则会被上面的 target/ 规则重新忽略掉）
 !backend/src/**/target/

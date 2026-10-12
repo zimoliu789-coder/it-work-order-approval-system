@@ -112,8 +112,23 @@ export interface UpgradeTaskItem {
 export interface UpgradeOverview {
   /** 总开关（生产默认关闭） */
   enabled: boolean
+  /**
+   * 环境变量把功能强制钉在「开」上（页面开关关不掉）。
+   *
+   * 只有这一种情况下开关要置灰 —— 否则管理员会反复点一个没反应的按钮。
+   */
+  envForced: boolean
   /** 当前已应用版本（读 state/current.json，首次部署为空） */
   currentVersion?: string
+  /**
+   * 运维代理（ops-agent）是否就绪。
+   *
+   * 这个字段决定页面显示**哪一个**升级入口，因此两者绝不并列：
+   * 就绪（Docker 部署）⇒ 一键在线升级；未就绪（非容器化）⇒ 上传升级包。
+   */
+  agentReady: boolean
+  /** 运维代理版本（未就绪时为空） */
+  agentVersion?: string
   /** 是否配置了外部应用命令 */
   applyCommandConfigured: boolean
   rollbackEnabled: boolean

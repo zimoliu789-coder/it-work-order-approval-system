@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import type { UploadFile } from 'element-plus'
+import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import { Refresh, Upload } from '@element-plus/icons-vue'
 import { upgradeApi } from '@/api/upgrade'
 import { useResponsive } from '@/composables/useResponsive'
@@ -303,6 +303,63 @@ onUnmounted(() => {
 
 /** 供模板使用（避免在模板里直接引用 types 的函数） */
 const activeStatuses = UPGRADE_ACTIVE_STATUSES
+
+// ---------------------------------------------------------------------
+// V49：开关与「按部署形态二选一」的升级入口
+// ---------------------------------------------------------------------
+
+/** 环境变量把功能钉在「开」上时，页面开关关不掉 —— 必须置灰并说明，否则像按钮坏了 */
+const envForced = computed(() => overview.value?.envForced === true)
+
+/**
+ * 运维代理是否就绪 —— 它决定显示哪一个升级入口。
+ *
+ * 两者**刻意不并列**：Docker 部署下「上传升级包」是无效动作（容器跑的是镜像，
+ * 上传的 jar/dist 落在宿主目录里不会被加载）。把无效入口一并摆出来，
+ * 管理员一定会去点错的那个，而且点完不会报错 —— 最难发现的一类问题。
+ */
+const agentReady = computed(() => overview.value?.agentReady === true)
+
+const togglingEnabled = ref(false)
+const onlineStarting = ref(false)
+
+async function toggleEnabled(value: string | number | boolean): Promise<void> {
+  const next = value === true
+  togglingEnabled.value = true
+  try {
+    await upgradeApi.setEnabled(next)
+    // 提示语里点明「改了立刻生效」：过去这一步要 SSH 改 .env 再重建容器，
+    // 管理员的第一反应往往是「我是不是还得重启一下」
+    ElMessage.success(next ? '已启用在线升级（立刻生效，无需重启）' : '已关闭在线升级')
+  } catch {
+    // 由请求层统一提示
+  } finally {
+    togglingEnabled.value = false
+    await refreshAll()
+  }
+}
+
+async function startOnlineUpgrade(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '将拉取最新镜像并重建后端与前端容器。过程中系统会短暂不可用（约 1 分钟），是否继续？',
+      '一键在线升级',
+      { type: 'warning', confirmButtonText: '开始升级', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  onlineStarting.value = true
+  try {
+    await upgradeApi.applyOnline()
+    ElMessage.success('已下发升级请求，运维代理正在拉取镜像并重建容器')
+    await refreshAll(true)
+  } catch {
+    // 由请求层统一提示（含「代理未就绪」这类明确原因）
+  } finally {
+    onlineStarting.value = false
+  }
+}
 </script>
 
 <template>
@@ -317,14 +374,12 @@ const activeStatuses = UPGRADE_ACTIVE_STATUSES
     >
       <template #default>
         <div>
-          本环境尚未开启在线升级（<code>app.upgrade.enabled=false</code>）。
-          这是<b>生产环境的默认取向</b>：升级接口能替换服务器上的可执行文件，
-          等价于代码执行能力，需要显式开启。
+          本环境尚未开启在线升级。升级接口能替换服务器上的可执行文件，
+          等价于代码执行能力，因此<b>默认关闭、需要你显式打开</b>。
         </div>
         <div class="upgrade-page__notice-tip">
-          启用方式：在部署配置中设置 <code>UPGRADE_ENABLED=true</code>，
-          并配置 <code>UPGRADE_APPLY_COMMAND</code> 指向编排脚本
-          （见 <code>deploy/ha/scripts/upgrade-apply.sh</code> 与部署手册「在线升级」章节）。
+          打开方式：把下面「能力总览」里的「启用在线升级」开关拨开即可，
+          开关存在数据库里、改完立刻生效 —— <b>不需要去改 .env，也不需要重建容器</b>。
         </div>
       </template>
     </el-alert>
@@ -340,17 +395,23 @@ const activeStatuses = UPGRADE_ACTIVE_STATUSES
         <el-descriptions-item label="当前版本">
           {{ overview?.currentVersion || '（未知，首次部署）' }}
         </el-descriptions-item>
-        <el-descriptions-item label="在线升级">
-          <el-tag :type="enabled ? 'success' : 'info'" size="small">
-            {{ enabled ? '已启用' : '未启用' }}
-          </el-tag>
+        <el-descriptions-item label="启用在线升级">
+          <el-switch
+            :model-value="enabled"
+            :loading="togglingEnabled"
+            :disabled="envForced || togglingEnabled"
+            @change="toggleEnabled"
+          />
+          <span v-if="envForced" class="upgrade-page__muted">
+            （由部署配置强制开启，此处关不掉）
+          </span>
         </el-descriptions-item>
-        <el-descriptions-item label="外部应用命令">
-          <el-tag :type="applyConfigured ? 'success' : 'warning'" size="small">
-            {{ applyConfigured ? '已配置' : '未配置' }}
+        <el-descriptions-item label="升级方式">
+          <el-tag :type="agentReady ? 'success' : 'info'" size="small">
+            {{ agentReady ? '一键在线升级' : '上传升级包' }}
           </el-tag>
-          <span v-if="!applyConfigured" class="upgrade-page__muted">
-            （上传后停在「待应用」，需运维手动应用）
+          <span v-if="agentReady && overview?.agentVersion" class="upgrade-page__muted">
+            （运维代理 v{{ overview.agentVersion }}）
           </span>
         </el-descriptions-item>
         <el-descriptions-item label="回滚">
@@ -361,12 +422,47 @@ const activeStatuses = UPGRADE_ACTIVE_STATUSES
       </el-descriptions>
     </el-card>
 
-    <el-card class="upgrade-page__card" shadow="never">
+    <el-card v-if="agentReady" class="upgrade-page__card" shadow="never">
+      <template #header>
+        <div class="upgrade-page__card-head">
+          <span>一键在线升级</span>
+          <span class="upgrade-page__muted">拉取最新镜像并重建后端与前端容器</span>
+        </div>
+      </template>
+
+      <p class="upgrade-page__muted">
+        当前是 Docker 部署：容器跑的是镜像，所以升级的动作是「拉取最新镜像 → 重建容器」。
+        系统会把请求交给运维代理（ops-agent）执行，不需要你 SSH 上去敲命令。
+      </p>
+
+      <el-alert
+        class="upgrade-page__hint"
+        type="info"
+        :closable="false"
+        show-icon
+        title="升级过程中服务会短暂不可用（重建容器约 1 分钟）；已提交的工单与数据不受影响。"
+      />
+
+      <div class="upgrade-page__actions">
+        <el-button
+          type="primary"
+          :icon="Refresh"
+          :disabled="!enabled"
+          :loading="onlineStarting"
+          @click="startOnlineUpgrade"
+        >
+          立即升级到最新版
+        </el-button>
+      </div>
+    </el-card>
+
+    <el-card v-else class="upgrade-page__card" shadow="never">
       <template #header>
         <div class="upgrade-page__card-head">
           <span>上传升级包</span>
           <span class="upgrade-page__muted">
-            包内需含 manifest.json、backend.jar 与 frontend/dist/**，上限 {{ maxSizeMb }}MB
+            非 Docker 部署专用；包内需含 manifest.json、backend.jar 与
+            frontend/dist/**，上限 {{ maxSizeMb }}MB
           </span>
         </div>
       </template>

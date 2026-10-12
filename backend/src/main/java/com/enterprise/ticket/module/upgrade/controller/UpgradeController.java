@@ -96,7 +96,25 @@ public class UpgradeController {
     }
 
     /**
+     * 一键在线升级（V49）：拉取最新镜像并重建容器。
+     *
+     * <p>这是 Docker 部署下<b>唯一</b>的升级入口 —— 容器跑的是镜像，
+     * 上传的 jar/dist 落在宿主目录里不会被加载，因此两条路径不并列提供。
+     * 执行者是运维代理（ops-agent），后端只负责下发请求并记录任务：
+     * 后端不能重建自己。
+     */
+    @PostMapping("/online")
+    @PreAuthorize("@perm.has('system:upgrade:manage')")
+    @AuditLog(module = "SYSTEM", action = "UPGRADE_ONLINE",
+            description = "一键在线升级（拉取最新镜像并重建容器）", risk = RiskLevel.HIGH)
+    public ApiResponse<UpgradeTaskVO> applyOnline() {
+        return ApiResponse.success("已下发在线升级请求", upgradeService.applyOnline());
+    }
+
+    /**
      * 上传升级包（校验 → 备份 → 落盘 → 待应用）。
+     *
+     * <p>只服务非容器化部署（宿主直接跑 jar）。Docker 部署请用 {@code POST /online}。
      *
      * <p>测试路径：{@code POST /api/system/upgrade/package?fileName=ticket-1.1.0.zip}
      * （{@code Content-Type: application/octet-stream}，body 为包内容）

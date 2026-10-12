@@ -162,6 +162,16 @@ services:
       EXPORT_STORAGE_ROOT: /data/exports
       LOG_PATH: /data/logs
 
+      # ---- 在线升级（V49）----
+      # 总开关**不在这里**：它已落库（system_config.upgrade_enabled），
+      # 管理员在「在线升级」页上点一下即生效，不需要改 .env、不需要重建容器。
+      # 这里只声明两个路径，它们都指向与运维代理共享的目录：
+      #   ops-dir  后端写升级请求（requests/<taskNo>.json），agent 轮询并执行 pull + up -d
+      #   storage  升级工作根目录；回执（state/result/*.json）与当前版本（state/current.json）
+      #            必须落在 agent 也能写到的位置，否则升级完后端读不到回执，任务会一直停在「应用中」
+      UPGRADE_OPS_DIR: /data/ops
+      UPGRADE_STORAGE_ROOT: /data/ops/upgrade
+
       # ---- 演示数据必须关闭 ----
       # DemoDataInitializer 会创建演示员工与分组；生产开着等于凭空多出一批可登录账号
       DEMO_DATA_ENABLED: "false"
@@ -169,6 +179,10 @@ services:
       - ${DATA_ROOT}/attachments:/data/attachments
       - ${DATA_ROOT}/exports:/data/exports
       - ${DATA_ROOT}/logs:/data/logs
+      # 与运维代理共享的目录。用相对路径（相对本文件）而不是 DATA_ROOT 下的绝对路径，
+      # 是因为**首次部署时 DATA_ROOT 还不存在** —— 这一卷要能在安装向导写出 .env 之前就挂上。
+      # 它只是几个小 JSON（心跳 / 请求 / 回执），放在部署目录下不会带来容量问题。
+      - ./ops-data:/data/ops
     # 仅声明端口供同网络服务访问，不映射到宿主
     expose:
       - "8080"

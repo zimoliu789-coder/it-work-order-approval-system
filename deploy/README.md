@@ -167,6 +167,65 @@ sudo bash scripts/preflight.sh
 
 ---
 
+## 三点五、首次安装（引导模式 · 推荐）
+
+> 不想在服务器上编辑 `.env`？用引导模式：一条命令起运维代理，剩下的全在网页上填。
+> 下面的「四、启动」是传统方式（手工生成 `.env`），两种方式**二选一**即可。
+
+### 1. 启动运维代理
+
+```bash
+cd /vol1/1000/docker/it-work-order-approval-system/deploy
+docker compose -f ops/docker-compose.ops.yml up -d
+```
+
+一条命令就够 —— 这份编排文件**不含任何必填变量**，所以能在还没有 `.env` 时跑起来。
+（主 compose 不行：里面 `${MYSQL_ROOT_PASSWORD:?}` 会让 Compose 在**解析阶段**直接报错，
+即使只想启动其中一个服务也一样 —— 这是 Compose 的既定行为，不是配置问题。）
+
+### 2. 打开安装向导
+
+浏览器访问 `http://<服务器IP>:8090`。
+
+> 默认只绑定 `127.0.0.1`。要从别的机器打开，把 `OPS_BIND` 设成服务器的内网 IP 后重启代理：
+> `OPS_BIND=192.168.1.60 docker compose -f ops/docker-compose.ops.yml up -d`
+
+向导里填四件事：**数据目录、网页端口、访问方式（http / https）、超管登录名与密码**。
+点「开始安装」后它依次完成：写 `.env`（随机密钥在本机生成，不经过网络）→ 起 mysql / redis 并等就绪
+→ 起全部服务 → 等后端健康（此刻自动跑完数据库迁移）→ 完成。
+
+**装完向导即失效**：再调写接口返回 410。它不会留下一个能改数据库口令的长期入口。
+
+### 3. 之后
+
+访问 `http://<服务器IP>:<网页端口>` 登录即可。想彻底去掉向导入口，把代理的 UI 关掉：
+
+```bash
+OPS_UI_ENABLED=false docker compose -f ops/docker-compose.ops.yml up -d
+```
+
+### 运维代理与 docker.sock（重要，请务必知悉）
+
+「一键在线升级」需要有人执行 `docker compose pull && up -d`，而后端**不能重建自己**
+（`up -d` 会把它自己杀掉，栈会停在半更新状态）。所以这份能力交给运维代理，代价是它必须挂 `docker.sock`。
+
+> ⚠️ **挂 `docker.sock` ≈ 把宿主机 root 交给这个容器**（容器内 `docker run -v /:/host` 即等同）。
+> 这一点无法通过容器内降权消除，只能收窄：
+
+| 措施 | 做法 |
+|---|---|
+| 只挂给一个容器 | backend / frontend / nginx / mysql / redis **全都不挂** |
+| 不对外发布 | 默认绑 `127.0.0.1:8090`；跨机访问请显式写内网 IP，**不要用 `0.0.0.0`** |
+| 装完即失效 | 写接口在 `.installed` 存在后一律返回 410 |
+| 白名单命令 | 只执行 `docker compose pull` 与 `up -d --force-recreate backend frontend`；请求文件里只有 taskNo 与版本号，**不含任何命令或路径** |
+| 非 root | 以 uid 10001 运行，只拿 docker.sock 的访问权，不挂宿主其它路径 |
+| 审计 | 每次操作写 `ops-data/logs/agent.log` |
+
+不接受挂 `docker.sock` 也可以：停掉代理即可（`docker compose -f ops/docker-compose.ops.yml stop`）——
+系统照常运行，只是升级页会显示「运维代理未就绪」并给出可复制命令。
+
+---
+
 ## 四、启动
 
 ```bash
@@ -476,6 +535,17 @@ sudo docker compose up -d --remove-orphans    # 拉起全部
 ### 升级 / 回滚
 
 镜像标签由 `IMAGE_TAG` 控制（默认 `latest`；也可填不可变标签 `commit-<短sha>` 用于锁定或回滚）。
+
+> **V49 起升级入口按部署形态自适应**（页面只显示其中一个，不并列）：
+> - **Docker 部署且运维代理就绪** ⇒ 只显示「一键在线升级（拉取最新镜像并重建容器）」。
+>   容器跑的是镜像，**上传升级包无效**（上传的 jar / dist 落在宿主目录里不会被加载），
+>   所以这个入口干脆不显示，避免点错；
+> - **非 Docker 部署（宿主直接跑 jar）** ⇒ 才显示「上传升级包」。
+>
+> **总开关也从 `.env` 搬进了数据库**：现在到「在线升级」页把开关拨开即可，
+> 改完立刻生效，不需要改 `UPGRADE_ENABLED`、也不需要重建容器。
+> `.env` 里如果还留着 `UPGRADE_ENABLED=true`，它会被当作「强制开启」，
+> 页面上会注明「由部署配置强制开启，此处关不掉」—— 建议按新方式删掉这一行。
 
 > ⚠️ **严禁新旧版本实例混跑。** 库结构由镜像内置的 Flyway 迁移驱动。含 **表名变更** 的版本
 > （如 `V47` 把 `users`→`employee`、`orders`→`borrow_order`）一旦被某个实例执行过，
