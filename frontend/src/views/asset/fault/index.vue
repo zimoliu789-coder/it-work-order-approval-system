@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { deviceFaultApi } from '@/api/device'
 import ListQueryNotice from '@/components/ListQueryNotice.vue'
 import TablePage from '@/components/TablePage.vue'
 import UserSelectDialog from '@/components/UserSelectDialog.vue'
 import { useListQuery } from '@/composables/useListQuery'
 import { useResponsive } from '@/composables/useResponsive'
-import { FAULT_STATUS_OPTIONS, faultStatusTagType, deviceStatusTagType } from '@/types/device'
+import { FAULT_STATUS_OPTIONS, faultStatusTagType, deviceStatusTagType, isOpenFault } from '@/types/device'
 import type { DeviceFaultHandlePayload, DeviceFaultItem, FaultStatusCode } from '@/types/device'
 import type { UserOption } from '@/types/user'
 import type { ColumnDef } from '@/types/table'
@@ -15,12 +16,19 @@ import type { ColumnDef } from '@/types/table'
  * 设备故障记录（，仅 super_admin / admin）
  *
  * 来源三合一：借用人在使用中上报、管理员在台账直接登记、归还时登记为故障。
+ *
+ * <h2>V50：从「三态」变成处理流程</h2>
+ * 处理链路：待处理 →（接单）处理中 →（修完）已修复 / 无法修复。
  * 处理动作：
- * - 维修完成：设备「维修中 → 可用」（要求设备当前处于维修中）；
- * - 标记报废：设备 → 已报废（使用中禁止； 状态机）。
+ * - **接单**：待处理 → 处理中，接单人即被记为维修人。没有这一步，
+ *   同一台设备可能两个人同时去修，而报修人也看不出「有没有人接手」；
+ * - **维修完成**：设备「维修中 → 可用」；
+ * - **无法修复**：维修结论 —— **设备状态不变**（仍维修中），报废与否由资产管理员另行决定。
+ *   它与「报废」刻意分开，见后端 `FaultStatus` 的类注释；
+ * - **标记报废**：设备 → 已报废（使用中禁止；状态机）。
  *
  * 说明：使用中上报的故障记录，其设备仍为「使用中」，需先归还并登记为故障，
- * 设备进入「维修中」后，此处才可登记维修完成或报废。
+ * 设备进入「维修中」后，此处才可接单 / 登记结果 / 报废。
  *
  * ---
  *  · W4-E：迁入公共表格层（`TablePage` + 列自定义）并接入筛选记忆（`useListQuery`）。
@@ -52,7 +60,9 @@ const columns: ColumnDef[] = [
   // P2：维修过程三项（人 / 费用 / 配件）。与「处理信息」（登记人 + 时间）分开两列 ——
   // 「谁登记的」与「谁动手修的」在维修外包场景下是两个人，合在一格里必然被读错。
   { key: 'repairInfo', label: '维修信息', minWidth: 190, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 180, fixed: 'right', configurable: false }
+  // V50 起操作列最多同时出现四个动作（接单 / 维修完成 / 无法修复 / 报废），
+  // 180px 会把它们挤成两行；260px 让最常见的一种状态恰好一行放下。
+  { key: 'action', label: '操作', width: 260, fixed: 'right', configurable: false }
 ]
 
 const loading = ref(false)
@@ -64,15 +74,17 @@ const size = ref(10)
 /** 筛选条件（默认值 = 改造前首屏取值；仅这两个字段参与记忆，`page` / `size` 刻意不持久化） */
 const { query, remembered, persist, reset } = useListQuery({
   routePath: '/asset/fault',
-  defaults: { deviceKeyword: '', status: null as FaultStatusCode | null }
+  // `onlyMine` 默认 false —— 首屏请求与改造前逐字节一致（零回归）
+  defaults: { deviceKeyword: '', status: null as FaultStatusCode | null, onlyMine: false }
 })
 
-// 处理弹窗（维修完成 / 报废共用）
+// 处理弹窗（维修完成 / 无法修复 / 报废共用）
 const handleVisible = ref(false)
-const handleKind = ref<'repair' | 'scrap'>('repair')
+const handleKind = ref<'repair' | 'unrepairable' | 'scrap'>('repair')
 const handleTarget = ref<DeviceFaultItem | null>(null)
 const handleRemark = ref('')
 const submitting = ref(false)
+const acting = ref(false)
 
 onMounted(load)
 
@@ -83,7 +95,8 @@ async function load(): Promise<void> {
       page: page.value,
       size: size.value,
       deviceKeyword: query.deviceKeyword.trim() || undefined,
-      status: query.status
+      status: query.status,
+      onlyMine: query.onlyMine
     })
     records.value = result.records
     total.value = result.total
@@ -102,11 +115,25 @@ function handleSearch(): void {
   void load()
 }
 
-/** 重置：恢复默认值 + 清除本页持久化偏好（D4 第 4 条：既有「重置」按钮同时清空持久化） */
+/**
+ * 重置：恢复默认值 + 清除本页持久化偏好（D4 第 4 条：既有「重置」按钮同时清空持久化）
+ */
 async function handleReset(): Promise<void> {
   await reset()
   page.value = 1
   await load()
+}
+
+/**
+ * 「待我处理」勾选即查询。
+ *
+ * 它不跟其它筛选一起等「查询」按钮：这是一键切到「我的待办」的快捷入口，
+ * 勾了却还要再点一次查询，会让人以为勾选没生效。
+ */
+function handleOnlyMineChange(): void {
+  page.value = 1
+  void persist()
+  void load()
 }
 
 function handlePageChange(next: number): void {
@@ -120,19 +147,73 @@ function handleSizeChange(next: number): void {
   void load()
 }
 
-/** 待维修且设备处于维修中时才可登记维修完成 */
+/** 没人接单时可接单。接单后这单挂在自己名下，别人不能再接。 */
+function canAccept(item: DeviceFaultItem): boolean {
+  return item.status === 'PENDING_REPAIR'
+}
+
+/**
+ * 未完结（待处理 / 处理中）且设备已收回（维修中）时才可登记结果。
+ *
+ * ⚠️ 判据必须用 isOpenFault 而不是 `=== 'PENDING_REPAIR'`：
+ * 接单之后状态变成「处理中」，若仍按旧判据，接单人反而看不到「维修完成」按钮 ——
+ * 接了单却交不了差，而且页面上一点报错都没有。
+ */
 function canRepair(item: DeviceFaultItem): boolean {
-  return item.status === 'PENDING_REPAIR' && item.deviceStatus === 'MAINTENANCE'
+  return isOpenFault(item.status) && item.deviceStatus === 'MAINTENANCE'
 }
 
-/** 待维修且设备为维修中 / 可用时可标记报废（使用中禁止，） */
+/**
+ * 判定「无法修复」的条件与「维修完成」相同 —— 都要先把设备收回来（维修中）。
+ *
+ * 它是**维修结论**、不是资产决策：设备状态不变，仍等资产管理员决定报废或调拨。
+ * 因此它与「报废」是两个按钮、两条路径，不能合并。
+ */
+function canUnrepairable(item: DeviceFaultItem): boolean {
+  return canRepair(item)
+}
+
+/** 未完结且设备为维修中 / 可用时可标记报废（使用中禁止，） */
 function canScrap(item: DeviceFaultItem): boolean {
-  return item.status === 'PENDING_REPAIR' && (item.deviceStatus === 'MAINTENANCE' || item.deviceStatus === 'AVAILABLE')
+  return isOpenFault(item.status) && (item.deviceStatus === 'MAINTENANCE' || item.deviceStatus === 'AVAILABLE')
 }
 
-/** 待维修但设备仍在使用中：提示需先归还登记故障 */
+/** 未完结但设备仍在使用中：提示需先归还登记故障 */
 function waitingReturn(item: DeviceFaultItem): boolean {
-  return item.status === 'PENDING_REPAIR' && item.deviceStatus === 'IN_USE'
+  return isOpenFault(item.status) && item.deviceStatus === 'IN_USE'
+}
+
+/** 操作列没有任何可用动作 —— 即这单已经定性结束（已修复 / 无法修复 / 已报废） */
+function isSettled(item: DeviceFaultItem): boolean {
+  return !canAccept(item) && !canRepair(item) && !canScrap(item) && !waitingReturn(item)
+}
+
+/**
+ * 接单。
+ *
+ * 二次确认不是走过场：接单后这单就挂在自己名下、别人不能再接，
+ * 一次误点会让真正能修的人被挡在外面，而当事人只会觉得「系统卡住了」。
+ */
+async function acceptFault(item: DeviceFaultItem): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确认接下「${deviceText(item)}」这单报修？接单后由你负责处理，其他人不能再接。`,
+      '接单',
+      { type: 'info', confirmButtonText: '接单', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  acting.value = true
+  try {
+    await deviceFaultApi.accept(item.id)
+    ElMessage.success('已接单，请在修完后登记维修结果')
+    await load()
+  } catch {
+    // 并发接单（刚被别人接走）等冲突由请求层统一提示
+  } finally {
+    acting.value = false
+  }
 }
 
 // P2 维修过程（仅「维修完成」填）：维修人可以留空（外送维修没有系统账号）
@@ -142,7 +223,69 @@ const repairCost = ref('')
 const replacedParts = ref('')
 const pickerVisible = ref(false)
 
-function openHandle(item: DeviceFaultItem, kind: 'repair' | 'scrap'): void {
+// 弹窗文案随动作变化（维持单一 dialog，避免三份几乎相同的表单各自漂移）
+const handleDialogTitle = computed(() => {
+  switch (handleKind.value) {
+    case 'repair':
+      return '登记维修完成'
+    case 'scrap':
+      return '故障设备报废'
+    default:
+      return '判定「无法修复」'
+  }
+})
+
+const handleRemarkLabel = computed(() => {
+  switch (handleKind.value) {
+    case 'repair':
+      return '维修说明'
+    case 'scrap':
+      return '报废原因'
+    default:
+      return '无法修复说明'
+  }
+})
+
+const handleRemarkPlaceholder = computed(() => {
+  switch (handleKind.value) {
+    case 'repair':
+      return '选填，如：更换屏幕后恢复正常'
+    case 'scrap':
+      return '选填，如：主板损坏无法修复'
+    default:
+      return '选填，如：主板进水腐蚀，无维修价值'
+  }
+})
+
+const handleConfirmText = computed(() => {
+  switch (handleKind.value) {
+    case 'repair':
+      return '确认维修完成'
+    case 'scrap':
+      return '确认报废'
+    default:
+      return '确认无法修复'
+  }
+})
+
+const handleConfirmType = computed<'success' | 'warning' | 'danger'>(() => {
+  switch (handleKind.value) {
+    case 'repair':
+      return 'success'
+    case 'scrap':
+      return 'danger'
+    default:
+      return 'warning'
+  }
+})
+
+/**
+ * 是否需要填「实际维修人」：修好了要，判定修不好**也要** ——
+ * 「谁看过、结论是什么」同样需要留痕。只有报废不涉及（那是资产动作，不是维修动作）。
+ */
+const needsRepairer = computed(() => handleKind.value !== 'scrap')
+
+function openHandle(item: DeviceFaultItem, kind: 'repair' | 'unrepairable' | 'scrap'): void {
   handleKind.value = kind
   handleTarget.value = item
   handleRemark.value = ''
@@ -189,21 +332,25 @@ async function submitHandle(): Promise<void> {
   }
   submitting.value = true
   try {
-    const isRepair = handleKind.value === 'repair'
+    const kind = handleKind.value
     const payload: DeviceFaultHandlePayload = {
       remark: handleRemark.value.trim() || null,
-      // 三项只在「维修完成」时提交：报废不涉及维修人/费用/配件，
-      // 传过去后端也不会落库（scrap 分支根本不 set 这三列）
-      repairerId: isRepair ? repairerId.value : null,
-      repairCost: isRepair ? parseCost() : null,
-      replacedParts: isRepair ? replacedParts.value.trim() || null : null
+      // 维修人：修好与「修不好」都要记（后者同样要留下「谁看的」）；只有报废不涉及。
+      repairerId: needsRepairer.value ? repairerId.value : null,
+      // 费用 / 配件**只有「维修完成」才提交**：
+      // 「无法修复」时后端不落这两列，传过去只会让填表的人以为记上了、其实什么都没存。
+      repairCost: kind === 'repair' ? parseCost() : null,
+      replacedParts: kind === 'repair' ? replacedParts.value.trim() || null : null
     }
-    if (handleKind.value === 'repair') {
+    if (kind === 'repair') {
       await deviceFaultApi.repair(target.id, payload)
       ElMessage.success('已登记维修完成，设备回到可用')
-    } else {
+    } else if (kind === 'scrap') {
       await deviceFaultApi.scrap(target.id, payload)
       ElMessage.success('设备已标记报废')
+    } else {
+      await deviceFaultApi.markUnrepairable(target.id, payload)
+      ElMessage.success('已判定「无法修复」，设备仍为维修中，待资产处理')
     }
     handleVisible.value = false
     await load()
@@ -229,7 +376,8 @@ function deviceText(item: DeviceFaultItem): string {
         <div>
           <h3 class="ts-df__title">设备故障记录</h3>
           <p class="ts-text-secondary ts-df__desc">
-            汇总借用人上报、台账登记、归还登记的故障。设备处于「维修中」时可登记维修完成或标记报废；使用中上报的故障需先归还并登记为故障。
+            汇总借用人上报、台账登记、归还登记的故障。处理流程：待处理 → 接单（处理中）→ 已修复 / 无法修复。
+            设备处于「维修中」时才可接单后的登记结果或报废；使用中上报的故障需先归还并登记为故障。
           </p>
         </div>
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -250,6 +398,10 @@ function deviceText(item: DeviceFaultItem): string {
         <el-select v-model="query.status" class="ts-df__filter-item" placeholder="故障状态" clearable>
           <el-option v-for="item in FAULT_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
+        <!-- 「待我处理」= 未完结 + 没人接单或我接的单；勾选即查询 -->
+        <el-checkbox v-model="query.onlyMine" class="ts-df__filter-check" @change="handleOnlyMineChange">
+          待我处理
+        </el-checkbox>
         <div class="ts-df__filter-actions">
           <el-button type="primary" :loading="loading" @click="handleSearch">查询</el-button>
           <el-button @click="handleReset">重置</el-button>
@@ -314,6 +466,16 @@ function deviceText(item: DeviceFaultItem): string {
         </template>
         <template #cell-action="{ row }">
           <el-button
+            v-if="canAccept(row as DeviceFaultItem)"
+            link
+            type="primary"
+            size="small"
+            :loading="acting"
+            @click="acceptFault(row as DeviceFaultItem)"
+          >
+            接单
+          </el-button>
+          <el-button
             v-if="canRepair(row as DeviceFaultItem)"
             link
             type="success"
@@ -321,6 +483,15 @@ function deviceText(item: DeviceFaultItem): string {
             @click="openHandle(row as DeviceFaultItem, 'repair')"
           >
             维修完成
+          </el-button>
+          <el-button
+            v-if="canUnrepairable(row as DeviceFaultItem)"
+            link
+            type="warning"
+            size="small"
+            @click="openHandle(row as DeviceFaultItem, 'unrepairable')"
+          >
+            无法修复
           </el-button>
           <el-button
             v-if="canScrap(row as DeviceFaultItem)"
@@ -332,16 +503,7 @@ function deviceText(item: DeviceFaultItem): string {
             报废
           </el-button>
           <span v-if="waitingReturn(row as DeviceFaultItem)" class="ts-text-hint">待归还登记故障</span>
-          <span
-            v-if="
-              !canRepair(row as DeviceFaultItem) &&
-              !canScrap(row as DeviceFaultItem) &&
-              !waitingReturn(row as DeviceFaultItem)
-            "
-            class="ts-text-hint"
-          >
-            已处理
-          </span>
+          <span v-if="isSettled(row as DeviceFaultItem)" class="ts-text-hint">已处理</span>
         </template>
 
         <!-- 移动端卡片：保留改造前结构（「处理时间」仅在已处理时出现） -->
@@ -380,8 +542,27 @@ function deviceText(item: DeviceFaultItem): string {
                 <span>{{ row.handledAt }}</span>
               </div>
               <div class="ts-df__card-actions">
+                <el-button
+                  v-if="canAccept(row)"
+                  size="small"
+                  type="primary"
+                  plain
+                  :loading="acting"
+                  @click="acceptFault(row)"
+                >
+                  接单
+                </el-button>
                 <el-button v-if="canRepair(row)" size="small" type="success" plain @click="openHandle(row, 'repair')">
                   维修完成
+                </el-button>
+                <el-button
+                  v-if="canUnrepairable(row)"
+                  size="small"
+                  type="warning"
+                  plain
+                  @click="openHandle(row, 'unrepairable')"
+                >
+                  无法修复
                 </el-button>
                 <el-button v-if="canScrap(row)" size="small" type="danger" plain @click="openHandle(row, 'scrap')">
                   报废
@@ -401,26 +582,26 @@ function deviceText(item: DeviceFaultItem): string {
     <!-- 处理弹窗（维修完成 / 报废） -->
     <el-dialog
       v-model="handleVisible"
-      :title="handleKind === 'repair' ? '登记维修完成' : '故障设备报废'"
+      :title="handleDialogTitle"
       :width="isMobile ? '94%' : '460px'"
     >
       <p class="ts-text-secondary ts-df__hint">
         设备：{{ handleTarget ? deviceText(handleTarget) : '-' }}
       </p>
       <el-form label-width="90px" :label-position="isMobile ? 'top' : 'right'">
-        <el-form-item :label="handleKind === 'repair' ? '维修说明' : '报废原因'">
+        <el-form-item :label="handleRemarkLabel">
           <el-input
             v-model="handleRemark"
             type="textarea"
             :rows="3"
             maxlength="500"
             show-word-limit
-            :placeholder="handleKind === 'repair' ? '选填，如：更换屏幕后恢复正常' : '选填，如：主板损坏无法修复'"
+            :placeholder="handleRemarkPlaceholder"
           />
         </el-form-item>
 
-        <!-- P2：维修过程三项，仅「维修完成」需要 -->
-        <el-form-item v-if="handleKind === 'repair'" label="实际维修人">
+        <!-- 维修人：修好了要记，判定「无法修复」也要记（谁看的、结论是什么） -->
+        <el-form-item v-if="needsRepairer" label="实际维修人">
           <el-input :model-value="repairerName" readonly placeholder="选填；外送维修可留空">
             <template #append>
               <el-button @click="pickerVisible = true">选择</el-button>
@@ -428,6 +609,7 @@ function deviceText(item: DeviceFaultItem): string {
           </el-input>
           <el-button v-if="repairerId != null" link type="danger" @click="clearRepairer">清除</el-button>
         </el-form-item>
+        <!-- 费用 / 配件只有「维修完成」会落库，因此只在那一档出现 -->
         <el-form-item v-if="handleKind === 'repair'" label="维修费用">
           <el-input v-model="repairCost" placeholder="元，如 320（可留空；保修内免费填 0）" />
         </el-form-item>
@@ -435,17 +617,17 @@ function deviceText(item: DeviceFaultItem): string {
           <el-input v-model="replacedParts" maxlength="200" placeholder="选填，如：屏幕总成 ×1" />
         </el-form-item>
       </el-form>
+      <p v-if="handleKind === 'unrepairable'" class="ts-text-secondary ts-df__warn">
+        判定「无法修复」后，这单报修到此结束；<b>设备状态不变</b>（仍为「维修中」），
+        由资产管理员另行决定报废或调拨 —— 这一步不代表设备已报废。
+      </p>
       <p v-if="handleKind === 'scrap'" class="ts-text-secondary ts-df__warn">
         报废后设备进入「已报废」，不可再被借用；资产编号不可复用。
       </p>
       <template #footer>
         <el-button @click="handleVisible = false">取消</el-button>
-        <el-button
-          :type="handleKind === 'repair' ? 'success' : 'danger'"
-          :loading="submitting"
-          @click="submitHandle"
-        >
-          {{ handleKind === 'repair' ? '确认维修完成' : '确认报废' }}
+        <el-button :type="handleConfirmType" :loading="submitting" @click="submitHandle">
+          {{ handleConfirmText }}
         </el-button>
       </template>
     </el-dialog>
@@ -483,6 +665,11 @@ function deviceText(item: DeviceFaultItem): string {
 
 .ts-df__filter-keyword {
   width: 240px;
+}
+
+.ts-df__filter-check {
+  margin: 0 4px;
+  white-space: nowrap;
 }
 
 .ts-df__filter-actions {
@@ -552,6 +739,10 @@ function deviceText(item: DeviceFaultItem): string {
   .ts-df__filter-item,
   .ts-df__filter-keyword {
     width: 100%;
+  }
+
+  .ts-df__filter-check {
+    margin: 0 0 4px;
   }
 
   .ts-df__filter-actions .el-button {

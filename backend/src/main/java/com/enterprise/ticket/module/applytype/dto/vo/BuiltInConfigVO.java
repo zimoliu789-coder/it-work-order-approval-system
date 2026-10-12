@@ -2,6 +2,7 @@ package com.enterprise.ticket.module.applytype.dto.vo;
 
 import com.enterprise.ticket.common.flow.FlowDefinition;
 import com.enterprise.ticket.common.form.FormSchema;
+import com.enterprise.ticket.module.device.dto.vo.FaultRepairHandlerConfigVO;
 import lombok.Data;
 
 /**
@@ -31,6 +32,15 @@ public class BuiltInConfigVO {
 
     /** 审批流程是否可编辑；故障报修为 false（它不产生工单，域模型里没有审批环节） */
     private boolean flowEditable;
+
+    /**
+     * 是否有「处理流程」（V50）：报修为 true。
+     *
+     * <p>与 {@link #flowEditable} 并列而不是互相推导 —— 它们回答的是两个问题：
+     * 「能改审批流吗」与「有处理流吗」。故障报修恰好是 {@code false / true} 这个组合，
+     * 页面必须能同时知道这两件事，才能既隐藏审批流编辑器、又渲染出处理流程配置区。
+     */
+    private boolean hasHandler;
 
     /** 「为什么流程区不可编辑 / 为什么表单不可改」的一句话说明，直接展示给管理员 */
     private String formNote;
@@ -64,4 +74,14 @@ public class BuiltInConfigVO {
 
     /** 条件分支可引用的字段清单（借用域字段目录）；无流程可配时为 null */
     private FormSchema fieldSchema;
+
+    /**
+     * 「处理流程」配置（V50）：通知给谁 / 实际会通知到几个人 / 三个下拉的候选。
+     *
+     * <p>只有 {@link #hasHandler} 为 true 的内置类型（当前即「故障报修」）才有这一块，
+     * 其余为 {@code null} —— 用 {@code null} 而不是空对象，是为了让页面能用
+     * {@code v-if="cfg.handler"} 直接决定整块配置区是否渲染，
+     * 而不是去猜「字段都在但值为空」到底表示「没有这一项」还是「有但没配」。
+     */
+    private FaultRepairHandlerConfigVO handler;
 }

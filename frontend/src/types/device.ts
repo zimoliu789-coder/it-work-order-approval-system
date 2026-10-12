@@ -265,8 +265,24 @@ export interface DeviceImportFailureReportPayload {
 // 设备故障上报（，）
 // ---------------------------------------------------------------------------
 
-/** 故障记录状态码：待维修 / 维修完成 / 已报废 */
-export type FaultStatusCode = 'PENDING_REPAIR' | 'REPAIRED' | 'SCRAPPED'
+/**
+ * 故障记录状态码（V50 起为处理流程五态）。
+ *
+ * ⚠️ 取值是**后端已落库的字符串**，与中文标签不是一回事：
+ * `PENDING_REPAIR` 界面上叫「待处理」（V50 之前叫「待维修」），
+ * 改名要写数据迁移去扫历史行，收益只是名字好看 —— 因此枚举名一字未动。
+ *
+ * 处理链路：`PENDING_REPAIR`（待处理）→ `IN_PROGRESS`（处理中）
+ * → `REPAIRED`（已修复）/ `UNREPAIRABLE`（无法修复）；
+ * `SCRAPPED`（已报废）是**独立的终态**，与「无法修复」不是一回事
+ * （前者是资产决策、后者是维修结论，见后端 FaultStatus 的类注释）。
+ */
+export type FaultStatusCode =
+  | 'PENDING_REPAIR'
+  | 'IN_PROGRESS'
+  | 'REPAIRED'
+  | 'UNREPAIRABLE'
+  | 'SCRAPPED'
 
 /**
  * 故障记录
@@ -359,22 +375,54 @@ export interface DeviceFaultQuery {
   status?: FaultStatusCode | null
   /** 设备名称 / 资产编号（模糊） */
   deviceKeyword?: string
+  /**
+   * 「待我处理」：只看未完结、且没人接单或由我接单的报修。
+   *
+   * 由**服务端**过滤。本页是服务端分页的，前端过滤只能筛出「当前这一页里符合的几条」，
+   * 总数与分页会一起失真（第 1 页 2 条、第 2 页 3 条，翻页时像在随机跳）。
+   */
+  onlyMine?: boolean
 }
 
-/** 故障状态筛选选项 */
+/** 故障状态筛选选项（顺序即处理流程的推进顺序） */
 export const FAULT_STATUS_OPTIONS: Array<{ value: FaultStatusCode; label: string }> = [
-  { value: 'PENDING_REPAIR', label: '待维修' },
-  { value: 'REPAIRED', label: '维修完成' },
+  { value: 'PENDING_REPAIR', label: '待处理' },
+  { value: 'IN_PROGRESS', label: '处理中' },
+  { value: 'REPAIRED', label: '已修复' },
+  { value: 'UNREPAIRABLE', label: '无法修复' },
   { value: 'SCRAPPED', label: '已报废' }
 ]
 
-/** 故障状态标签样式（：移动端与 PC 共用同一套语义色） */
-export function faultStatusTagType(status: FaultStatusCode): 'success' | 'info' | 'warning' | 'danger' {
+/** 未完结的故障状态（待处理 / 处理中）——「还能不能动手处理」的唯一判据 */
+export const OPEN_FAULT_STATUSES: ReadonlyArray<FaultStatusCode> = ['PENDING_REPAIR', 'IN_PROGRESS']
+
+/** 该故障是否仍未完结（可接单 / 可维修 / 可判定无法修复） */
+export function isOpenFault(status: FaultStatusCode): boolean {
+  return OPEN_FAULT_STATUSES.includes(status)
+}
+
+/**
+ * 故障状态标签样式（：移动端与 PC 共用同一套语义色）。
+ *
+ * 配色语义：
+ * - 「待处理」用警告色 —— 它是**需要有人动手**的状态，安静下来就等于没人管；
+ * - 「处理中」用主色 —— 已有人接手，不需要再催；
+ * - 「已修复」成功色；
+ * - 「无法修复」中性灰 —— 它是一个**收尾结论**（这单修不了），不是错误，也不是报废；
+ * - 「已报废」危险色（沿用 V50 之前的取值，避免既有呈现变化）。
+ */
+export function faultStatusTagType(
+  status: FaultStatusCode
+): 'primary' | 'success' | 'info' | 'warning' | 'danger' {
   switch (status) {
     case 'REPAIRED':
       return 'success'
     case 'PENDING_REPAIR':
       return 'warning'
+    case 'IN_PROGRESS':
+      return 'primary'
+    case 'UNREPAIRABLE':
+      return 'info'
     case 'SCRAPPED':
       return 'danger'
     default:

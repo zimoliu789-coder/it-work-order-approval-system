@@ -203,6 +203,9 @@ export const deviceFaultApi = {
     if (query.size != null) params.size = query.size
     if (query.status) params.status = query.status
     if (query.deviceKeyword) params.deviceKeyword = query.deviceKeyword
+    // 只在为 true 时携带：false 与「不传」对后端是同一件事，
+    // 但少发一个参数能让「首屏请求与改造前逐字节一致」这条零回归约定继续成立
+    if (query.onlyMine) params.onlyMine = true
     return http.get<PageResult<DeviceFaultItem>>('/device-faults', params)
   },
 
@@ -211,9 +214,30 @@ export const deviceFaultApi = {
     return http.get<DeviceFaultItem[]>(`/device-faults/device/${deviceId}`)
   },
 
+  /**
+   * 接单（V50）：待处理 → 处理中，并把接单人记为处理人 / 维修人。
+   *
+   * 只要求登录，不要求 `device:fault:manage` —— 接单的是一线维修人员，
+   * 而那个权限码按现有角色配置只发给管理员。真正的授权在后端：
+   * 「管理员，或落在『处理流程』通知范围内的人」。
+   */
+  accept(id: number) {
+    return http.put<void>(`/device-faults/${id}/accept`, null)
+  },
+
   /** 登记维修完成（设备 维修中 → 可用） */
   repair(id: number, data: DeviceFaultHandlePayload) {
     return http.put<void>(`/device-faults/${id}/repair`, data)
+  },
+
+  /**
+   * 判定「无法修复」（V50）：维修结论，**设备保持维修中**，等资产管理员决定报废或调拨。
+   *
+   * 与 `scrap` 的区别是本质的：这一条不改变设备状态。
+   * 若这里顺手把设备放回「可用」，等于把一台修不好的设备重新发出去。
+   */
+  markUnrepairable(id: number, data: DeviceFaultHandlePayload) {
+    return http.put<void>(`/device-faults/${id}/unrepairable`, data)
   },
 
   /** 故障标记报废（设备 → 已报废；使用中禁止） */

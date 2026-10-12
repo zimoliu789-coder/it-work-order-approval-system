@@ -40,6 +40,7 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -566,5 +567,47 @@ class DeviceFaultServiceImplTest {
         assertEquals(ORDER_ID, options.get(0).getOrderId(), "第一类来自使用中工单");
         assertNull(options.get(1).getOrderId(), "可用设备走台账直接登记，无 orderId");
         assertEquals(OTHER_DEVICE_ID, options.get(1).getDeviceId());
+    }
+
+    // ------------------------------------------------------------------
+    // 「待我处理」筛选（V50）
+    // ------------------------------------------------------------------
+
+    @SuppressWarnings("unchecked")
+    private String capturedSql(DeviceFaultQuery query) {
+        when(faultMapper.selectPage(any(), any())).thenReturn(new Page<>(1L, 10L));
+        service.page(query);
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<DeviceFault>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(faultMapper).selectPage(any(), captor.capture());
+        return captor.getValue().getSqlSegment();
+    }
+
+    @Test
+    @DisplayName("★ 「待我处理」：限定未完结（待处理 / 处理中）+「没人接单或我接的单」")
+    void page_onlyMine_scopesToOpenAndUnclaimedOrMine() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+        DeviceFaultQuery query = new DeviceFaultQuery();
+        query.setOnlyMine(true);
+
+        String sql = capturedSql(query);
+
+        // 「没人接单」这一半：漏掉它，这个筛选在接单之前永远为空 ——
+        // 而它存在的意义恰恰是让人看到「有什么等着我接」。
+        assertTrue(sql.contains("IS NULL"), "必须包含「未接单」分支，实际 SQL：" + sql);
+        // 「未完结」这一半：状态取值必须有待处理与处理中，不能只判待处理
+        // （只判待处理的话，接单后这单就从自己的待办里消失了）
+        assertTrue(sql.contains("status"), "必须带状态条件，实际 SQL：" + sql);
+    }
+
+    @Test
+    @DisplayName("不勾「待我处理」：查询条件与改造前逐字节一致（零回归）")
+    void page_withoutOnlyMine_keepsOldConditions() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+
+        String sql = capturedSql(new DeviceFaultQuery());
+
+        assertTrue(!sql.contains("IS NULL"),
+                "未勾选时不应出现任何「未接单」条件，实际 SQL：" + sql);
     }
 }

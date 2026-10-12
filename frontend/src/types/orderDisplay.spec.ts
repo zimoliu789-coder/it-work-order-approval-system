@@ -8,7 +8,7 @@ import {
   returnConditionRequiresRemark,
   RETURN_CONDITION_OPTIONS
 } from '@/types/order'
-import { FAULT_STATUS_OPTIONS, faultStatusTagType } from '@/types/device'
+import { FAULT_STATUS_OPTIONS, faultStatusTagType, isOpenFault } from '@/types/device'
 import { messageTagType } from '@/types/message'
 import { ROLE_OPTIONS, roleLabel } from '@/types/user'
 
@@ -144,15 +144,35 @@ describe('延期状态标签色（，）', () => {
   })
 })
 
-describe('故障状态展示（，）', () => {
-  it('维修完成=success、待维修=warning、已报废=danger', () => {
+describe('故障状态展示（，；V50 扩为处理流程五态）', () => {
+  it('各状态配色：已修复=success、待处理=warning、处理中=primary、无法修复=info、已报废=danger', () => {
     expect(faultStatusTagType('REPAIRED')).toBe('success')
     expect(faultStatusTagType('PENDING_REPAIR')).toBe('warning')
+    expect(faultStatusTagType('IN_PROGRESS')).toBe('primary')
+    // 「无法修复」是维修结论（收尾），不是错误也不是报废 —— 因此用中性灰
+    expect(faultStatusTagType('UNREPAIRABLE')).toBe('info')
+    // 「已报废」沿用 V50 之前的危险色，避免既有呈现发生无谓变化
     expect(faultStatusTagType('SCRAPPED')).toBe('danger')
   })
 
-  it('故障状态筛选选项固定为三态', () => {
-    expect(FAULT_STATUS_OPTIONS.map((item) => item.value)).toEqual(['PENDING_REPAIR', 'REPAIRED', 'SCRAPPED'])
+  it('故障状态筛选选项为处理流程五态（顺序 = 推进顺序）', () => {
+    expect(FAULT_STATUS_OPTIONS.map((item) => item.value)).toEqual([
+      'PENDING_REPAIR',
+      'IN_PROGRESS',
+      'REPAIRED',
+      'UNREPAIRABLE',
+      'SCRAPPED'
+    ])
+  })
+
+  it('未完结判据覆盖「待处理」与「处理中」——接单后仍必须能继续操作', () => {
+    // 这是 V50 最容易踩的一处：若按「等于待处理」判，已接单的记录会变得谁也不能再动，
+    // 且提示是「已是『处理中』，不可重复操作」这种看起来很合理、实际把维修人锁死的话。
+    expect(isOpenFault('PENDING_REPAIR')).toBe(true)
+    expect(isOpenFault('IN_PROGRESS')).toBe(true)
+    expect(isOpenFault('REPAIRED')).toBe(false)
+    expect(isOpenFault('UNREPAIRABLE')).toBe(false)
+    expect(isOpenFault('SCRAPPED')).toBe(false)
   })
 
   it('未知状态回落到 info（不抛错）', () => {

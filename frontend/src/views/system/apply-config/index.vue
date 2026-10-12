@@ -9,9 +9,17 @@ import { approvalFlowApi } from '@/api/approvalFlow'
 import ApplyFieldEditor from '@/components/ApplyFieldEditor.vue'
 import CustomFormExportDialog from '@/components/CustomFormExportDialog.vue'
 import LinearFlowEditor from '@/components/LinearFlowEditor.vue'
+import UserSelectDialog from '@/components/UserSelectDialog.vue'
 import { useResponsive } from '@/composables/useResponsive'
 import { useUserStore } from '@/store/user'
-import { applyTypeStatusTagType, type ApplyTypeItem, type BuiltInApplyConfig } from '@/types/applyType'
+import {
+  applyTypeStatusTagType,
+  type ApplyTypeItem,
+  type BuiltInApplyConfig,
+  type BuiltInApplyConfigPayload,
+  type FaultAssigneeTypeCode
+} from '@/types/applyType'
+import type { UserOption } from '@/types/user'
 import {
   fieldTypeMeta,
   type FormField,
@@ -102,7 +110,10 @@ function levelText(item: ApplyTypeItem): string {
     // 内置类型（V48）：报修不产生工单、没有审批环节，如实说明；
     // 借用单未绑自定义流程时走的是「部门流程 → 系统预置三级流程」，不是「没有流程」。
     if (item.typeCode === 'FAULT_REPORT') {
-      return '提交后直接进入维修处理'
+      // V50：报修有了完整的处理链路（通知 → 接单 → 修完登记结果）。
+      // 原先这里写的是「提交后直接进入维修处理」，读起来像是「系统自己会处理」——
+      // 而实际上第一步是有人去接单，接不接取决于「处理流程」通知到了谁。
+      return '提交后进入维修处理流程'
     }
     return item.approvalFlowName ?? '按部门逐级审批'
   }
@@ -424,6 +435,78 @@ const builtInDescription = ref('')
 const builtInFlow = ref<FlowDefinition | null>(null)
 const builtInFlowRef = ref<InstanceType<typeof LinearFlowEditor> | null>(null)
 
+// ---- 处理流程（V50，仅故障报修）：提交后通知谁来修 ----
+//
+// 它与上面的「审批流程」是**并列且互斥**的两块：借用走审批流、报修走处理流。
+// 之所以不复用审批流程编辑器：报修不产生工单，装不进「审批节点 + 快照」那套模型，
+// 需要管理员配的只有「通知给谁」这一件事。
+
+/** 后端下发的处理流程配置（只有报修有） */
+const builtInHandler = computed(() => builtInCfg.value?.handler ?? null)
+const builtInAssigneeType = ref<FaultAssigneeTypeCode>('DEPARTMENT')
+const builtInAssigneeValue = ref('')
+const builtInUserPicked = ref<{ id: number; name: string } | null>(null)
+const builtInUserPickerVisible = ref(false)
+
+/** 当前通知方式的说明（取自后端下发的 typeOptions，不在前端再写一份中文） */
+const builtInTypeDescription = computed(() => {
+  const type = builtInAssigneeType.value
+  return builtInHandler.value?.typeOptions.find((opt) => opt.value === type)?.description ?? ''
+})
+
+/**
+ * 切换通知方式时清空目标值。
+ *
+ * 用 `@change` 而**不是** `watch`：`watch` 在程序化回填（打开弹窗时按配置赋值）时也会触发，
+ * 于是「打开一个已经配好的弹窗」会顺手把回显的选择清空 —— 管理员什么都没改、点保存，
+ * 配置就被静默改成了「未指定」。`@change` 只在用户真的点了单选时触发。
+ */
+function onAssigneeTypeChange(): void {
+  builtInAssigneeValue.value = ''
+  builtInUserPicked.value = null
+}
+
+function handleBuiltInUserPicked(picked: UserOption[]): void {
+  const first = picked[0]
+  builtInUserPicked.value = first ? { id: first.id, name: first.displayName || first.username } : null
+}
+
+/** 提交时用的目标值：空值一律按「未指定」传 null（后端按类型判断是否合法） */
+function currentAssigneeValue(): string | null {
+  if (builtInAssigneeType.value === 'USER') {
+    return builtInUserPicked.value ? String(builtInUserPicked.value.id) : null
+  }
+  return builtInAssigneeValue.value || null
+}
+
+function resetBuiltInHandler(): void {
+  builtInAssigneeType.value = 'DEPARTMENT'
+  builtInAssigneeValue.value = ''
+  builtInUserPicked.value = null
+}
+
+/**
+ * 把接口回来的配置铺进表单。
+ *
+ * 打开弹窗与「保存后原地刷新」两条路径都走它 —— 两份赋值代码迟早会漂移，
+ * 而漂移的表现是「刚保存完看着对、重新打开又不一样」。
+ */
+function applyBuiltInCfg(cfg: BuiltInApplyConfig): void {
+  builtInCfg.value = cfg
+  builtInDescription.value = cfg.description ?? ''
+  // 深拷贝：编辑器会就地改这份定义，直接引用会把「点了取消」也变成「改过了」
+  builtInFlow.value = cfg.flowDefinition
+    ? (JSON.parse(JSON.stringify(cfg.flowDefinition)) as FlowDefinition)
+    : null
+  const handler = cfg.handler ?? null
+  builtInAssigneeType.value = handler?.assigneeType ?? 'DEPARTMENT'
+  builtInAssigneeValue.value = handler?.assigneeValue ?? ''
+  builtInUserPicked.value =
+    handler && handler.assigneeType === 'USER' && handler.assigneeValue
+      ? { id: Number(handler.assigneeValue), name: handler.userDisplayName ?? `用户 #${handler.assigneeValue}` }
+      : null
+}
+
 /** 内置流程的条件字段候选：来自后端的借用域字段目录（与提交时的 schema 同源） */
 const builtInFieldOptions = computed<FlowFieldOption[]>(() =>
   (builtInCfg.value?.fieldSchema?.fields ?? [])
@@ -443,14 +526,11 @@ async function openBuiltInConfig(item: ApplyTypeItem): Promise<void> {
   builtInCfg.value = null
   builtInDescription.value = ''
   builtInFlow.value = null
+  resetBuiltInHandler()
   builtInVisible.value = true
   builtInLoading.value = true
   try {
-    const cfg = await applyTypeApi.builtInConfig(item.id)
-    builtInCfg.value = cfg
-    builtInDescription.value = cfg.description ?? ''
-    // 深拷贝：编辑器会就地改这份定义，直接引用会把「点了取消」也变成「改过了」
-    builtInFlow.value = cfg.flowDefinition ? (JSON.parse(JSON.stringify(cfg.flowDefinition)) as FlowDefinition) : null
+    applyBuiltInCfg(await applyTypeApi.builtInConfig(item.id))
   } catch {
     builtInCfg.value = null
   } finally {
@@ -466,17 +546,31 @@ async function saveBuiltInConfig(): Promise<void> {
   }
   const description = builtInDescription.value.trim() || null
 
-  // 流程不可编辑（故障报修）：只提交说明，流程版本原样带回
+  // 流程不可编辑（故障报修）：提交说明，流程版本原样带回；
+  // 有处理流程的类型再带上「通知给谁」。
   if (!cfg.flowEditable) {
     builtInSaving.value = true
     try {
-      await applyTypeApi.updateBuiltInConfig(item.id, {
+      const payload: BuiltInApplyConfigPayload = {
         description,
         approvalFlowVersionId: cfg.approvalFlowVersionId ?? null
-      })
+      }
+      if (cfg.hasHandler) {
+        // 接口约定「不传 assigneeType = 本次不改处理流程」，而这里明确是要改
+        payload.assigneeType = builtInAssigneeType.value
+        payload.assigneeValue = currentAssigneeValue()
+      }
+      await applyTypeApi.updateBuiltInConfig(item.id, payload)
       ElMessage.success('已保存')
-      builtInVisible.value = false
-      await loadTypes()
+      if (cfg.hasHandler) {
+        // 留在弹窗里并**原地刷新**，而不是保存即关闭：
+        // 这块配置的价值有一半在「当前会通知到几个人」——关掉弹窗等于把刚配的东西立刻藏起来，
+        // 而「配了但会通知到 0 人」正是最该当场看见、当场改掉的情况。
+        applyBuiltInCfg(await applyTypeApi.builtInConfig(item.id))
+      } else {
+        builtInVisible.value = false
+        await loadTypes()
+      }
     } catch {
       // 由请求层统一提示
     } finally {
@@ -802,7 +896,7 @@ onMounted(loadTypes)
             <template #title>
               {{ builtInCfg?.flowBound ? '已启用自定义审批流程' : '当前走默认审批（按部门逐级 / 系统预置三级流程）' }}
             </template>
-            保存后，**之后新提交**的借用单按这里的流程审批；已提交的工单按提交时的快照走，不受影响。
+            保存后，<strong>之后新提交</strong>的借用单按这里的流程审批；已提交的工单按提交时的快照走，不受影响。
           </el-alert>
 
           <h4 class="ts-applycfg__pane-title">审批流程（谁来批）</h4>
@@ -814,8 +908,108 @@ onMounted(loadTypes)
             :readonly="!canManage"
           />
         </template>
+        <!--
+          「处理流程」（V50）：报修不走审批，但有一整条处理链路。
+          改造前这里只有一句「不经过审批，因此没有可配置的审批流程」——
+          一个纯否定式的说明：管理员读完只知道「这儿没东西」，而实际上
+          「提交后通知谁」是必须有人配的一项，不配就没人会去接单。
+        -->
+        <template v-else-if="builtInHandler">
+          <el-alert
+            :type="builtInHandler.resolvedCount > 0 ? 'info' : 'warning'"
+            :closable="false"
+            show-icon
+          >
+            <template #title>处理流程（提交后通知谁来修）</template>
+            报修不经过审批，提交后直接进入维修处理。这里决定提交时报修单<b>通知给谁</b> ——
+            被通知的人可以在「设备故障记录」页接单，修完后登记维修结果。
+          </el-alert>
+
+          <h4 class="ts-applycfg__pane-title">通知给谁</h4>
+          <el-form label-width="96px" :label-position="isMobile ? 'top' : 'right'">
+            <el-form-item label="通知方式">
+              <el-radio-group
+                :model-value="builtInAssigneeType"
+                :disabled="!canManage"
+                @change="onAssigneeTypeChange"
+              >
+                <el-radio-button
+                  v-for="opt in builtInHandler.typeOptions"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </el-radio-button>
+              </el-radio-group>
+              <p v-if="builtInTypeDescription" class="ts-text-hint ts-applycfg__inline-hint">
+                {{ builtInTypeDescription }}
+              </p>
+            </el-form-item>
+
+            <el-form-item v-if="builtInAssigneeType === 'DEPARTMENT'" label="通知部门">
+              <el-select
+                v-model="builtInAssigneeValue"
+                class="ts-applycfg__handler-select"
+                clearable
+                filterable
+                :disabled="!canManage"
+                placeholder="不选 = 用系统里的最终处理部门"
+              >
+                <el-option
+                  v-for="opt in builtInHandler.departmentOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item v-else-if="builtInAssigneeType === 'ROLE'" label="通知角色">
+              <el-select
+                v-model="builtInAssigneeValue"
+                class="ts-applycfg__handler-select"
+                filterable
+                :disabled="!canManage"
+                placeholder="请选择角色"
+              >
+                <el-option
+                  v-for="opt in builtInHandler.roleOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item v-else label="指定人员">
+              <el-input
+                :model-value="builtInUserPicked?.name ?? ''"
+                class="ts-applycfg__handler-select"
+                readonly
+                placeholder="请选择一个人"
+                :disabled="!canManage"
+              >
+                <template #append>
+                  <el-button :disabled="!canManage" @click="builtInUserPickerVisible = true">
+                    选择
+                  </el-button>
+                </template>
+              </el-input>
+            </el-form-item>
+          </el-form>
+
+          <el-alert v-if="builtInHandler.resolvedCount === 0" type="warning" :closable="false" show-icon>
+            <template #title>当前配置会通知到 0 个人</template>
+            报修仍能正常提交，但不会有任何人收到通知，也就没人会去接单 ——
+            请检查上面选中的部门 / 角色目前是否已有在职成员。
+          </el-alert>
+          <p v-else class="ts-text-hint ts-applycfg__inline-hint">
+            当前会通知：{{ builtInHandler.effectiveLabel }}，共
+            {{ builtInHandler.resolvedCount }} 名在职人员。
+          </p>
+        </template>
         <div v-else class="ts-text-hint ts-applycfg__builtin-fixed">
-          该系统内置类型不经过审批，因此没有可配置的审批流程。
+          该系统内置类型不经过审批，也没有需要配置的处理流程。
         </div>
       </div>
 
@@ -826,6 +1020,13 @@ onMounted(loadTypes)
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 「指定人员」用带搜索的人员选择器，而不是把整份名册塞进下拉（规格书按 500 人设计） -->
+    <UserSelectDialog
+      v-model="builtInUserPickerVisible"
+      :multiple="false"
+      @confirm="handleBuiltInUserPicked"
+    />
 
     <CustomFormExportDialog v-model="exportVisible" :apply-type="exportTarget" />
   </div>
@@ -922,6 +1123,21 @@ onMounted(loadTypes)
   padding: 12px 14px;
   border: 1px dashed var(--el-border-color);
   border-radius: 8px;
+}
+
+/* 处理流程（V50）：下拉与单选说明同一宽度，避免每换一次通知方式行宽就跳一下 */
+.ts-applycfg__handler-select {
+  max-width: 420px;
+}
+
+.ts-applycfg__inline-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ts-applycfg__builtin .el-alert + .ts-applycfg__pane-title {
+  margin-top: 16px;
 }
 
 .ts-applycfg__steps {

@@ -45,6 +45,7 @@ import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.mapper.ApplyTypeMapper;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
 import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
+import com.enterprise.ticket.module.device.service.FaultRepairHandlerConfigService;
 import com.enterprise.ticket.module.permission.service.PermissionApplyPolicyService;
 import com.enterprise.ticket.module.permission.support.PermissionApplySchemaSupport;
 import com.enterprise.ticket.module.department.entity.Department;
@@ -139,6 +140,16 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
      * 表现为「页面上看到的分档」与「实际执行的分档」不一致，且不会报错。
      */
     private final SystemConfigService systemConfigService;
+
+    /**
+     * 故障报修「处理流程」的读写入口（V50）。
+     *
+     * <p>为什么是「申请类型服务」去依赖「故障模块的服务」而不是反过来：
+     * 这个配置的**入口**是申请类型页，但它的**事实源**在故障域
+     * （键常量、通知解析器、可选的维修人范围都在那边）。
+     * 这里只做搬运，避免「通知谁」这件事出现第二份口径。
+     */
+    private final FaultRepairHandlerConfigService faultRepairHandlerConfigService;
 
     // ------------------------------------------------------------------
     // 查询
@@ -898,6 +909,7 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         vo.setDescription(type.getDescription());
         vo.setBuiltIn(true);
         vo.setFlowEditable(builtIn.flowEditable());
+        vo.setHasHandler(builtIn.hasHandler());
         vo.setFormNote(builtIn.formEditableNote());
 
         // 已绑自定义流程 ⇒ 给它的定义；未绑定 ⇒ 给该内置类型的**默认流程**。
@@ -925,6 +937,11 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
             // 两处若不同源，管理员配出来的条件会在提交那一刻报「字段不存在」。
             vo.setFieldSchema(BorrowFieldCatalog.schema());
         }
+        // 「处理流程」与「审批流程」并列但互斥地出现：报修走前者、借用走后者。
+        // 走故障域的服务算出来，本模块不碰它的键名与解析口径。
+        if (builtIn.hasHandler()) {
+            vo.setHandler(faultRepairHandlerConfigService.describe());
+        }
         return vo;
     }
 
@@ -942,6 +959,20 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
             // 复用流程模块的公开契约：既确认版本存在，也确认它**已发布**
             // （引用草稿等于引用一份随时会被覆盖的配置 —— 与自定义类型同一条口径）。
             approvalFlowService.requirePublishedDefinition(flowVersionId);
+        }
+
+        // 「处理流程」（V50）：只在请求带了通知方式时写入。
+        // 「没传 = 不改动」是必需语义 —— 同一个接口也服务「借用设备」，
+        // 它的保存请求里永远不会出现这两项，若按「没传 = 清空」处理，
+        // 管理员每改一次借用流程都会顺手把报修的通知配置抹掉。
+        if (StringUtils.hasText(request.getAssigneeType())) {
+            if (!builtIn.hasHandler()) {
+                // 借用了「处理流程」字段但该类型没有处理流程：明确报错。
+                // 静默忽略会让调用方以为配置保存成功，而页面上什么都不会变。
+                throw new BusinessException(ErrorCode.PARAM_INVALID,
+                        "该系统内置类型没有处理流程，无法配置通知对象");
+            }
+            faultRepairHandlerConfigService.save(request.getAssigneeType(), request.getAssigneeValue());
         }
 
         applyTypeMapper.update(null, Wrappers.<ApplyType>lambdaUpdate()

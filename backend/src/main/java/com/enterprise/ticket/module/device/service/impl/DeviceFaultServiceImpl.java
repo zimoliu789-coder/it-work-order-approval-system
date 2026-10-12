@@ -428,10 +428,24 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
             return PageResult.empty(safePage, safeSize);
         }
 
+        // 「待我处理」（V50）：未结束 + 归我管。
+        //
+        // 「归我管」= 我接的单，或**还没人接的单**。后者是关键：维修人的待办列表里
+        // 最主要的就是「还没人认领的新单」——若只算「我接的」，这个筛选在接单之前永远是空的，
+        // 而它存在的意义恰恰是让人看到「有什么等着我接」。
+        //
+        // 已被别人接走的单不出现在我的待办里（在别人手上），这是与「全部未结束」的唯一差别。
+        boolean onlyMine = Boolean.TRUE.equals(query.getOnlyMine());
+        Long me = onlyMine ? requireCurrentUserId() : null;
+
         IPage<DeviceFault> resultPage = faultMapper.selectPage(new Page<>(safePage, safeSize),
                 Wrappers.<DeviceFault>lambdaQuery()
                         .eq(status != null, DeviceFault::getStatus, status)
                         .in(deviceKeyword != null, DeviceFault::getDeviceId, deviceIds)
+                        .in(onlyMine, DeviceFault::getStatus,
+                                FaultStatus.PENDING_REPAIR.name(), FaultStatus.IN_PROGRESS.name())
+                        .and(onlyMine, w -> w.eq(DeviceFault::getHandledBy, me)
+                                .or().isNull(DeviceFault::getHandledBy))
                         .orderByDesc(DeviceFault::getId));
         List<DeviceFault> records = resultPage.getRecords();
         Map<Long, Device> devices = devicesById(records);

@@ -11,6 +11,7 @@ import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowMapper;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
+import com.enterprise.ticket.module.device.dto.vo.FaultRepairHandlerConfigVO;
 import com.enterprise.ticket.module.form.mapper.FormTemplateMapper;
 import com.enterprise.ticket.module.form.mapper.FormTemplateVersionMapper;
 import com.enterprise.ticket.module.form.service.FormTemplateService;
@@ -34,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -90,6 +92,11 @@ class ApplyTypeServiceImplBuiltInTest {
     private PermissionApplyPolicyService permissionApplyPolicyService;
     @Mock
     private SystemConfigService systemConfigService;
+    // V50：「处理流程」的读写入口。不加这个 mock，@InjectMocks 会注入 null，
+    // 于是「打开故障报修的配置面板」这一步直接 NPE —— 而它正是本次新增的读路径。
+    @Mock
+    private com.enterprise.ticket.module.device.service.FaultRepairHandlerConfigService
+            faultRepairHandlerConfigService;
 
     @InjectMocks
     private ApplyTypeServiceImpl service;
@@ -173,9 +180,10 @@ class ApplyTypeServiceImplBuiltInTest {
     }
 
     @Test
-    @DisplayName("故障报修：流程不可编辑、没有默认流程、没有字段目录 —— 如实回答「无审批环节」")
+    @DisplayName("故障报修：流程不可编辑、没有默认流程、没有字段目录 —— 但**有处理流程**（V50）")
     void faultReportHasNoFlow() {
         when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_FAULT_REPORT));
+        when(faultRepairHandlerConfigService.describe()).thenReturn(new FaultRepairHandlerConfigVO());
 
         BuiltInConfigVO vo = service.builtInConfig(BUILT_IN_ID);
 
@@ -184,6 +192,12 @@ class ApplyTypeServiceImplBuiltInTest {
         assertNull(vo.getFlowDefinition());
         assertNull(vo.getFieldSchema());
         assertNotNull(vo.getFormNote(), "必须告诉管理员「为什么这里动不了」");
+        // V50：报修没有审批流，但有一条处理流（通知 → 接单 → 修完）。
+        // 两个标记必须是「能改审批流吗 / 有处理流吗」这两个独立问题的答案，
+        // 页面才能既隐藏审批流编辑器、又渲染出处理流程配置区。
+        assertFalse(vo.isFlowEditable());
+        assertTrue(vo.isHasHandler());
+        assertNotNull(vo.getHandler());
     }
 
     @Test
@@ -271,5 +285,75 @@ class ApplyTypeServiceImplBuiltInTest {
         when(applyTypeMapper.selectOne(any())).thenReturn(null);
 
         assertNull(service.borrowBuiltInFlowVersionId());
+    }
+
+    // ------------------------------------------------------------------
+    // 处理流程接线（V50）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("故障报修：读取配置面板时带上「处理流程」块（原样透传故障域算好的结果）")
+    void faultReportCarriesHandlerBlock() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_FAULT_REPORT));
+        FaultRepairHandlerConfigVO handler = new FaultRepairHandlerConfigVO();
+        handler.setAssigneeType("DEPARTMENT");
+        when(faultRepairHandlerConfigService.describe()).thenReturn(handler);
+
+        BuiltInConfigVO vo = service.builtInConfig(BUILT_IN_ID);
+
+        assertTrue(vo.isHasHandler());
+        assertSame(handler, vo.getHandler(), "申请类型模块只搬运，不重算 —— 否则「通知谁」会有第二份口径");
+    }
+
+    @Test
+    @DisplayName("借用设备：不请求「处理流程」块（它走的是审批流，白算一次故障域的查询没有意义）")
+    void borrowBuiltInHasNoHandlerBlock() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_BORROW));
+        when(systemConfigService.approvalDeviceAmountThreshold()).thenReturn(new BigDecimal("5000"));
+
+        BuiltInConfigVO vo = service.builtInConfig(BUILT_IN_ID);
+
+        assertFalse(vo.isHasHandler());
+        assertNull(vo.getHandler());
+        verify(faultRepairHandlerConfigService, never()).describe();
+    }
+
+    @Test
+    @DisplayName("★ 给借用设备传「处理流程」字段：拒绝 —— 静默忽略会让调用方以为配置保存成功了")
+    void borrowBuiltInRejectsHandlerFields() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_BORROW));
+        BuiltInConfigRequest request = new BuiltInConfigRequest();
+        request.setAssigneeType("DEPARTMENT");
+
+        assertEquals(ErrorCode.PARAM_INVALID,
+                codeOf(() -> service.updateBuiltInConfig(BUILT_IN_ID, request)));
+        verify(faultRepairHandlerConfigService, never()).save(any(), any());
+    }
+
+    @Test
+    @DisplayName("故障报修保存：说明与「通知给谁」一次提交，处理流程委托给故障域的服务")
+    void faultReportSavesHandler() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_FAULT_REPORT));
+        BuiltInConfigRequest request = new BuiltInConfigRequest();
+        request.setDescription("请先确认电源已接通");
+        request.setAssigneeType("ROLE");
+        request.setAssigneeValue("admin");
+
+        service.updateBuiltInConfig(BUILT_IN_ID, request);
+
+        verify(faultRepairHandlerConfigService).save("ROLE", "admin");
+        verify(applyTypeMapper).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 未传通知方式 = 本次不改动处理流程（借用设备的保存请求永远不带这两项，不能顺手把报修配置抹掉）")
+    void handlerUntouchedWhenAbsent() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_FAULT_REPORT));
+        BuiltInConfigRequest request = new BuiltInConfigRequest();
+        request.setDescription("只改说明");
+
+        service.updateBuiltInConfig(BUILT_IN_ID, request);
+
+        verify(faultRepairHandlerConfigService, never()).save(any(), any());
     }
 }

@@ -101,6 +101,16 @@ export interface BuiltInApplyConfig {
   builtIn: boolean
   /** 审批流程是否可编辑；故障报修为 false（它不产生工单，域模型里没有审批环节） */
   flowEditable: boolean
+  /**
+   * 是否有「处理流程」（V50）：报修为 true。
+   *
+   * 与 `flowEditable` 并列而不是互相推导 —— 它们回答两个问题：
+   * 「能改审批流吗」与「有处理流吗」。故障报修恰好是 `false / true` 这个组合，
+   * 页面必须同时知道这两件事，才能既隐藏审批流编辑器、又渲染出处理流程配置区。
+   */
+  hasHandler: boolean
+  /** 处理流程配置（只有 `hasHandler` 为 true 时下发，其余为 null） */
+  handler?: BuiltInHandlerConfig | null
   /** 「为什么表单不可改 / 流程不可改」的一句话说明，直接展示给管理员 */
   formNote?: string | null
   /** 是否已绑定自定义流程；false 时 flowDefinition 是该内置类型的**默认流程** */
@@ -116,10 +126,57 @@ export interface BuiltInApplyConfig {
   fieldSchema?: FormSchema | null
 }
 
-/** 保存内置类型配置：说明 + 待绑定的已发布流程版本（null = 解绑，回到默认审批方式） */
+/**
+ * 故障报修「处理流程」配置（V50）—— 与后端 `FaultRepairHandlerConfigVO` 逐字对应。
+ *
+ * 三个下拉的候选都由后端算好下发（部门 / 角色），页面不再自己去拉 ——
+ * 「部门下拉里该出现哪些部门」这种口径散到前端，迟早和员工管理页对不上。
+ *
+ * 注意**没有人员候选**：「指定人员」这一档刻意不下发整份名册（本系统按规格书要支撑 500 人），
+ * 页面改用带搜索与分页的 `UserSelectDialog`，这里只回传当前选中人的姓名供回显。
+ */
+export interface BuiltInHandlerConfig {
+  /** 当前通知方式：DEPARTMENT / ROLE / USER */
+  assigneeType: FaultAssigneeTypeCode
+  /** 当前**配置**的目标值原样（按部门且未指定时为空串）—— 回显用 */
+  assigneeValue: string
+  /** 实际生效的目标值（按部门未指定时 = 最终处理部门的 id） */
+  effectiveValue?: string | null
+  /** 实际生效目标的显示名 */
+  effectiveLabel?: string | null
+  /** 生效目标是否来自「默认」（未指定 → 跟随最终处理部门） */
+  usingDefault: boolean
+  /** 按当前配置**实际会通知到的人数**；为 0 说明这条配置等于没人负责 */
+  resolvedCount: number
+  /** 「指定人员」档位下当前选中人的姓名 */
+  userDisplayName?: string | null
+  typeOptions: BuiltInHandlerOption[]
+  departmentOptions: BuiltInHandlerOption[]
+  roleOptions: BuiltInHandlerOption[]
+}
+
+/** 处理流程的下拉项 */
+export interface BuiltInHandlerOption {
+  value: string
+  label: string
+  /** 一句解释（通知方式档位用；部门 / 角色为 null） */
+  description?: string | null
+}
+
+/** 报修通知方式：按部门 / 按角色 / 指定人员 */
+export type FaultAssigneeTypeCode = 'DEPARTMENT' | 'ROLE' | 'USER'
+
+/** 保存内置类型配置：说明 + 待绑定的已发布流程版本 + 报修处理流程（V50） */
 export interface BuiltInApplyConfigPayload {
   description?: string | null
   approvalFlowVersionId?: number | null
+  /**
+   * 报修通知方式（V50）。**不传 = 本次不改动处理流程** ——
+   * 同一个接口也服务「借用设备」，它的保存请求里永远不会出现这两项。
+   */
+  assigneeType?: FaultAssigneeTypeCode | null
+  /** 报修通知目标值：部门 id / 角色码 / 用户 id（含义随 `assigneeType` 变） */
+  assigneeValue?: string | null
 }
 
 /** 提交页卡片（极轻，仅展示所需字段） */

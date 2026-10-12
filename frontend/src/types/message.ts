@@ -51,6 +51,11 @@ export type MessageTypeCode =
   | 'HA_SWITCHOVER'
   //  新增（与后端 MessageType.EXCEPTION_ALERT 对应）：未预期异常告警，接收人为超管
   | 'EXCEPTION_ALERT'
+  // V50 新增（与后端 MessageType.FAULT_REPAIR_* 对应）：故障报修处理流程
+  // —— 这条链路上没有工单参与，因此不能沿用「落我的工单」那套默认跳转
+  | 'FAULT_REPAIR_TODO'
+  | 'FAULT_REPAIR_ACCEPTED'
+  | 'FAULT_REPAIR_HANDLED'
   //  新增（与后端 MessageType.SECURITY_ALERT 对应）：账号锁定 / IP 封禁 / 提权尝试
   | 'SECURITY_ALERT'
 
@@ -213,6 +218,14 @@ export function messageTargetRoute(type?: string | null): string {
     // 密码变更（新建账号 / 管理员重置密码）与工单无关，落「个人中心」
     case 'PASSWORD_RESET':
       return '/profile'
+    // 报修待处理（V50）：接收人 = 「处理流程」里配的维修人，落**设备故障记录页** ——
+    // 那里就是接单 / 修完登记的地方。若不显式映射，它会落到默认的「我的工单」：
+    // 一个维修人在那里看到的是一堆与自己无关的借用单，等于通知把人带到了错的地方。
+    //
+    // 另外两个（已接单 / 已处理）的接收人是**报修人**，保持默认落「我的工单」：
+    // 工单内上报的报修有对应工单可回溯；台账登记的那种报修人本身就是管理员。
+    case 'FAULT_REPAIR_TODO':
+      return '/asset/fault'
     // 其余（审批结果 / 归还完成 / 到期预警 / 催还提醒…）：当事人自己名下的工单在「我的工单」
     default:
       return '/order/mine'
@@ -257,7 +270,13 @@ export const MESSAGE_TYPE_OPTIONS: ReadonlyArray<{ value: MessageTypeCode; label
   { value: 'HA_SWITCHOVER', label: '主备切换' },
   { value: 'EXCEPTION_ALERT', label: '系统异常告警' },
   { value: 'SECURITY_ALERT', label: '安全事件告警' },
-  { value: 'PASSWORD_RESET', label: '密码变更' }
+  { value: 'PASSWORD_RESET', label: '密码变更' },
+  // V50：故障报修处理流程。虽然消息类型的标签在运行时由
+  // `GET /api/meta/message-types` 覆盖（那里才是权威），但兜底表必须同步补齐 ——
+  // 它正是「元数据接口不可用时界面照常渲染」所依赖的那一份。
+  { value: 'FAULT_REPAIR_TODO', label: '报修待处理' },
+  { value: 'FAULT_REPAIR_ACCEPTED', label: '报修已接单' },
+  { value: 'FAULT_REPAIR_HANDLED', label: '报修已处理' }
 ]
 
 const MESSAGE_TYPE_LABELS: Record<string, string> = Object.fromEntries(
