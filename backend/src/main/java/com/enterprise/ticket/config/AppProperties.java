@@ -405,6 +405,28 @@ public class AppProperties {
 
         /** 升级记录列表默认返回条数上限 */
         private int historyLimit = 50;
+
+        /**
+         * 运维代理（ops-agent）共享目录（V49）。
+         *
+         * <p>后端把升级请求写成 {@code <ops-dir>/requests/<taskNo>.json}，
+         * agent 轮询后执行 {@code docker compose pull && up -d} 并写回心跳。
+         * 容器化部署下它应当指向一个<b>同时挂进 agent 容器</b>的宿主目录（如 {@code /data/ops}）。
+         *
+         * <p>留空表示「不使用运维代理」：此时「应用」按钮退化为人工执行
+         * （已配 {@code apply-command} 则走外部命令，否则提示由运维手动应用）。
+         * 留空不报错是刻意的 —— 绝大多数单机部署根本不需要在线升级。
+         */
+        private String opsDir = "./data/ops";
+
+        /**
+         * 运维代理心跳超时（秒）。超过这个时间没更新即视为「代理未就绪」。
+         *
+         * <p>判据刻意是心跳<b>新鲜度</b>而不是「文件存在」：一个已经退出、
+         * 却留下心跳文件的容器会让页面显示「就绪」，管理员点下「应用」之后什么都不会发生 ——
+         * 静默失败是最坏的失败形态。默认 30 秒（agent 每 5 秒写一次，允许丢几拍）。
+         */
+        private int agentHeartbeatTimeoutSeconds = 30;
     }
 
     /**

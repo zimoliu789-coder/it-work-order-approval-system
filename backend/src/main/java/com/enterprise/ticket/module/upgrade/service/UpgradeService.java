@@ -11,7 +11,11 @@ import com.enterprise.ticket.module.upgrade.entity.UpgradeTask;
 import com.enterprise.ticket.module.upgrade.mapper.UpgradeTaskMapper;
 import com.enterprise.ticket.module.upgrade.support.UpgradeApplier;
 import com.enterprise.ticket.module.upgrade.support.UpgradePackageValidator;
+import com.enterprise.ticket.module.upgrade.support.OpsAgentBridge;
+import com.enterprise.ticket.module.upgrade.support.UpgradeRecoveryRunner;
+import com.enterprise.ticket.module.upgrade.support.UpgradeSettings;
 import com.enterprise.ticket.module.upgrade.support.UpgradeStorage;
+import com.enterprise.ticket.module.system.service.SystemConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -65,6 +69,25 @@ public class UpgradeService {
     private final UpgradePackageValidator validator;
     private final UpgradeApplier applier;
     private final UpgradeTaskMapper upgradeTaskMapper;
+    /**
+     * 升级总开关落库（V49）。
+     *
+     * <p>改造前它读环境变量 {@code UPGRADE_ENABLED} —— 每次开关都要 SSH 改 .env 再重建容器；
+     * 改错的表现为「功能用不了」，排查时还得回头确认 .env 到底有没有生效。
+     * 现在与短信 / 邮箱 / 备份开关同一套机制：页面上点一下即刻生效。
+     */
+    private final SystemConfigService systemConfigService;
+    /** 运维代理通道：能自动执行「pull + up -d」的只有它（后端不能重建自己） */
+    private final OpsAgentBridge opsAgentBridge;
+    /**
+     * 启动对账器。
+     *
+     * <p>它的本职是「启动时读回执」，这里额外借它做一次**惰性对账**：
+     * agent 执行完不一定立刻触发后端重启（例如镜像已经是新的、容器未被重建），
+     * 此时任务会一直停在「应用中」，管理员只能靠 30 分钟超时看到失败。
+     * 打开升级页时顺手对一次账，页面就不会长期显示一个已经结束的任务。
+     */
+    private final UpgradeRecoveryRunner recoveryRunner;
 
     private static final DateTimeFormatter TASK_NO_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
@@ -72,13 +95,24 @@ public class UpgradeService {
     // 查询
     // ==================================================================
 
-    /** 能力总览：开关状态、当前版本、是否配置了外部应用命令、进行中的任务 */
+    /** 能力总览：开关状态、当前版本、执行方是否就绪、进行中的任务 */
     public UpgradeOverviewVO overview() {
         AppProperties.Upgrade config = storage.config();
+        // 惰性对账：agent 执行完不一定触发后端重启（镜像已是新的、容器未被重建），
+        // 不对账的话任务会一直停在「应用中」直到 30 分钟超时
+        settleQuietly();
         UpgradeTask active = upgradeTaskMapper.selectActive();
+        boolean envEnabled = config.isEnabled();
+        boolean dbEnabled = systemConfigService.getBoolean(
+                UpgradeSettings.KEY_ENABLED, UpgradeSettings.DEFAULT_ENABLED);
         return new UpgradeOverviewVO(
-                config.isEnabled(),
+                dbEnabled || envEnabled,
+                // 环境变量把功能钉在「开」上时，页面的开关关不掉它 —— 必须如实告知，
+                // 否则管理员会以为是按钮坏了（这正是「配置分散在两处」的代价）
+                envEnabled,
                 storage.readCurrentVersion().orElse(null),
+                opsAgentBridge.agentReady(),
+                opsAgentBridge.agentVersion(),
                 applier.isConfigured(),
                 config.isRollbackEnabled(),
                 config.getPackageMaxSizeMb(),
@@ -218,10 +252,19 @@ public class UpgradeService {
         requireEnabled();
         UpgradeTask task = requireTask(taskNo);
 
+        // 上传包这条路径只服务「非镜像化部署」（systemd / 手工部署）。
+        //
+        // ⚠️ Docker 部署下它有**语义冲突**：容器跑的是镜像，上传的 jar/dist 落在宿主目录里
+        // 根本不会被加载 —— 让 agent 去 pull 一份新镜像，也跟这个包毫无关系。
+        // 因此这里刻意**不**在 agent 就绪时改走 agent：那会让管理员以为「我上传的包生效了」。
+        // Docker 的升级入口是「一键在线升级（拉取最新镜像并重建）」，它不产生上传包任务。
         if (!applier.isConfigured()) {
-            throw new BusinessException(ErrorCode.UPGRADE_APPLY_COMMAND_FAILED,
-                    "未配置外部应用命令（app.upgrade.apply-command），无法在线应用；"
-                            + "请配置编排脚本，或由运维手动应用 staging 目录中的产物");
+            String hint = opsAgentBridge.agentReady()
+                    ? "当前是 Docker 部署：容器跑的是镜像，上传的升级包不会被加载。"
+                            + "请改用「一键在线升级」（拉取最新镜像并重建容器）。"
+                    : "未配置外部应用命令（app.upgrade.apply-command），无法应用上传的升级包；"
+                            + "请配置编排脚本，或由运维手动应用 staging 目录中的产物。";
+            throw new BusinessException(ErrorCode.UPGRADE_APPLY_UNAVAILABLE, hint);
         }
 
         int updated = upgradeTaskMapper.markApplying(task.getId(), "已发起外部应用命令，等待其回执…");
@@ -319,8 +362,44 @@ public class UpgradeService {
     // 内部
     // ==================================================================
 
+    // ------------------------------------------------------------------
+    // 开关（V49：落库，页面上可直接改）
+    // ------------------------------------------------------------------
+
+    /**
+     * 在线升级是否可用。
+     *
+     * <p>取值是「数据库开关 <b>或</b> 环境变量」而不是只读其一，理由有两条：
+     * <ol>
+     *   <li><b>不让既有部署静默失去能力</b> —— 已经配了 {@code UPGRADE_ENABLED=true} 的环境
+     *       升级到本版后功能照常，不会变成「昨天还能用、今天按钮点不动」；</li>
+     *   <li><b>页面上能真实生效</b> —— 只要按新文档把 .env 里那一行去掉，开关就完全由页面控制。
+     *       若环境变量把功能钉在「开」上，概览接口会用 {@code envForced} 如实告知，页面据此禁用开关。</li>
+     * </ol>
+     */
+    public boolean enabled() {
+        return systemConfigService.getBoolean(UpgradeSettings.KEY_ENABLED, UpgradeSettings.DEFAULT_ENABLED)
+                || storage.config().isEnabled();
+    }
+
+    /** 页面上的「启用在线升级」开关 */
+    public void setEnabled(boolean enabled) {
+        systemConfigService.updateValue(UpgradeSettings.KEY_ENABLED, enabled ? "1" : "0");
+        log.warn("[升级] 在线升级开关被 {} 设置为 {}", SecurityUtils.getCurrentUsername(), enabled ? "开启" : "关闭");
+    }
+
+    /** 惰性对账：打开升级页时顺手把已到回执的任务收掉（失败不影响概览返回） */
+    private void settleQuietly() {
+        try {
+            recoveryRunner.reconcile(LocalDateTime.now());
+        } catch (RuntimeException e) {
+            // 对账是「顺手做的事」，它失败不该让整个升级页打不开
+            log.warn("[升级] 惰性对账失败（忽略）：{}", e.getMessage());
+        }
+    }
+
     private void requireEnabled() {
-        if (!storage.config().isEnabled()) {
+        if (!enabled()) {
             throw BusinessException.of(ErrorCode.UPGRADE_DISABLED);
         }
     }

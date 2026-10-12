@@ -298,6 +298,14 @@ app:
     # 「当前生效产物」目录 —— 备份的来源。容器化部署下应指向一个同时挂进容器的宿主目录。
     # 首次部署时它不存在是正常的（没有上一版可备份），此时备份步骤跳过并记提示。
     current-artifact-dir: ${UPGRADE_CURRENT_ARTIFACT_DIR:./data/upgrade/current}
+    # 运维代理（ops-agent）共享目录（V49）：升级请求写成 <ops-dir>/requests/<taskNo>.json，
+    # agent 轮询后执行 docker compose pull + up -d，并写回心跳。
+    # 容器化部署下，它应当指向一个**同时挂进 agent 容器**的宿主目录（compose 里已配为 /data/ops）。
+    # 留空 = 不使用运维代理（升级需要人工执行），不报错。
+    ops-dir: ${UPGRADE_OPS_DIR:./data/ops}
+    # 心跳超时（秒）。超过它没更新即视为代理未就绪 —— 判据是新鲜度而不是「文件存在」，
+    # 否则一个已退出的容器会让页面显示「就绪」，而点下应用什么都不会发生。
+    agent-heartbeat-timeout-seconds: ${UPGRADE_AGENT_HEARTBEAT_TIMEOUT_SECONDS:30}
     package-max-size-mb: ${UPGRADE_PACKAGE_MAX_SIZE_MB:300}
     # 解压后总大小上限：防 zip 炸弹（1MB 的包可以解出几十 GB，只限压缩包大小挡不住）
     extract-max-size-mb: ${UPGRADE_EXTRACT_MAX_SIZE_MB:800}

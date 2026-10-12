@@ -364,6 +364,8 @@ public enum ErrorCode {
     APPLY_TYPE_CODE_INVALID("APPLY_TYPE_CODE_INVALID", "类型编码不合法（字母开头，仅字母/数字/下划线，2-20 位）", 400),
     APPLY_TYPE_PREFIX_INVALID("APPLY_TYPE_PREFIX_INVALID", "工单编号前缀不合法（字母开头，2-10 位字母/数字）", 400),
     APPLY_TYPE_HAS_ORDER("APPLY_TYPE_HAS_ORDER", "该申请类型已被工单使用，只能停用不能删除", 400),
+    UPGRADE_APPLY_UNAVAILABLE("UPGRADE_APPLY_UNAVAILABLE",
+            "当前没有可用的升级执行方（运维代理未就绪，且未配置外部应用命令）", 400),
     APPLY_TYPE_BUILT_IN("APPLY_TYPE_BUILT_IN", "系统内置申请类型不可删除，只能停用", 400),
     APPLY_TYPE_BUILT_IN_FLOW_FIXED("APPLY_TYPE_BUILT_IN_FLOW_FIXED", "该系统内置类型不经过审批，不支持配置审批流程", 400),
     APPLY_TYPE_DISABLED("APPLY_TYPE_DISABLED", "该申请类型已停用，无法提交", 400),

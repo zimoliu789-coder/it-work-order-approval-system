@@ -7,7 +7,10 @@ import com.enterprise.ticket.config.AppProperties;
 import com.enterprise.ticket.module.upgrade.dto.vo.UpgradeTaskVO;
 import com.enterprise.ticket.module.upgrade.entity.UpgradeTask;
 import com.enterprise.ticket.module.upgrade.mapper.UpgradeTaskMapper;
+import com.enterprise.ticket.module.upgrade.support.OpsAgentBridge;
 import com.enterprise.ticket.module.upgrade.support.UpgradeApplier;
+import com.enterprise.ticket.module.upgrade.support.UpgradeRecoveryRunner;
+import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.upgrade.support.UpgradePackageValidator;
 import com.enterprise.ticket.module.upgrade.support.UpgradeStorage;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -67,6 +70,9 @@ class UpgradeServiceTest {
     private UpgradeApplier applier;
     private UpgradeTaskMapper mapper;
     private UpgradeService service;
+    private SystemConfigService systemConfigService;
+    private OpsAgentBridge opsAgentBridge;
+    private UpgradeRecoveryRunner recoveryRunner;
 
     /** mapper.selectOne 的返回值（模拟库里那一行） */
     private UpgradeTask stored;
@@ -85,8 +91,15 @@ class UpgradeServiceTest {
         storage = new UpgradeStorage(properties, objectMapper);
         applier = Mockito.mock(UpgradeApplier.class);
         mapper = Mockito.mock(UpgradeTaskMapper.class);
+        // V49：开关改为读 system_config；apply 还要问「运维代理是否就绪」。
+        // 三个 mock 的默认行为（getBoolean→false / agentReady→false / reconcile→0）
+        // 恰好等于「数据库开关关闭、没有 agent」，与下面各用例显式设置的场景互不干扰。
+        systemConfigService = Mockito.mock(SystemConfigService.class);
+        opsAgentBridge = Mockito.mock(OpsAgentBridge.class);
+        recoveryRunner = Mockito.mock(UpgradeRecoveryRunner.class);
         service = new UpgradeService(properties, storage,
-                new UpgradePackageValidator(properties, storage, objectMapper), applier, mapper);
+                new UpgradePackageValidator(properties, storage, objectMapper), applier, mapper,
+                systemConfigService, opsAgentBridge, recoveryRunner);
     }
 
     // ==================================================================
@@ -197,8 +210,29 @@ class UpgradeServiceTest {
         stubReadyTask("t-1", null);
         when(applier.isConfigured()).thenReturn(false);
 
-        assertEquals(ErrorCode.UPGRADE_APPLY_COMMAND_FAILED,
+        assertEquals(ErrorCode.UPGRADE_APPLY_UNAVAILABLE,
                 errorOf(() -> service.apply("t-1")));
+        verify(mapper, never()).markApplying(any(), anyString());
+    }
+
+    /**
+     * V49 新增：Docker 部署下「上传包」这条路径必须被明确拒绝，并指向正确的入口。
+     *
+     * <p>为什么这条断言重要：容器跑的是镜像，上传的 jar/dist 落在宿主目录里根本不会被加载。
+     * 如果这里放行（例如见 agent 就绪就顺手让它 pull），管理员会以为「我上传的包生效了」——
+     * 一个不会报错、也无从发现的错案。因此宁可拒绝 + 说清原因。
+     */
+    @Test
+    @DisplayName("Docker 部署（运维代理就绪）+ 上传包任务：拒绝，并指明应改用一键在线升级")
+    void apply_uploadedPackageRejectedOnDockerDeployment() {
+        stubReadyTask("t-3", null);
+        when(applier.isConfigured()).thenReturn(false);
+        when(opsAgentBridge.agentReady()).thenReturn(true);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.apply("t-3"));
+        assertEquals(ErrorCode.UPGRADE_APPLY_UNAVAILABLE, ex.getErrorCode());
+        assertTrue(ex.getMessage().contains("一键在线升级"),
+                "必须告诉管理员正确入口，否则他只会以为按钮坏了：" + ex.getMessage());
         verify(mapper, never()).markApplying(any(), anyString());
     }
 

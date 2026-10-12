@@ -3,10 +3,12 @@ package com.enterprise.ticket.module.upgrade.controller;
 import com.enterprise.ticket.common.api.ApiResponse;
 import com.enterprise.ticket.common.log.AuditLog;
 import com.enterprise.ticket.common.log.RiskLevel;
+import com.enterprise.ticket.module.upgrade.dto.UpgradeToggleRequest;
 import com.enterprise.ticket.module.upgrade.dto.vo.UpgradeOverviewVO;
 import com.enterprise.ticket.module.upgrade.dto.vo.UpgradeTaskVO;
 import com.enterprise.ticket.module.upgrade.service.UpgradeService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -14,6 +16,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -52,11 +56,29 @@ public class UpgradeController {
 
     private final UpgradeService upgradeService;
 
-    /** 能力总览：开关 / 当前版本 / 是否有活跃任务 */
+    /** 能力总览：开关 / 当前版本 / 执行方是否就绪 / 是否有活跃任务 */
     @GetMapping("/overview")
     @PreAuthorize("@perm.has('system:upgrade:view')")
     public ApiResponse<UpgradeOverviewVO> overview() {
         return ApiResponse.success(upgradeService.overview());
+    }
+
+    /**
+     * 启用 / 关闭在线升级（V49）。
+     *
+     * <p>这是「不用改 .env」的落点：开关落在 {@code system_config}，点一下即生效。
+     * 仅超管可改 —— 在线升级能替换服务器上的可执行文件，等价于代码执行能力。
+     *
+     * <p>审计等级 HIGH：开或关改变的都是「这个环境允不允许在线替换产物」，
+     * 属于事后必须能倒查的配置变更。
+     */
+    @PutMapping("/overview/enabled")
+    @PreAuthorize("@perm.has('system:upgrade:manage')")
+    @AuditLog(module = "SYSTEM", action = "UPGRADE_TOGGLE",
+            description = "启用 / 关闭在线升级", risk = RiskLevel.HIGH)
+    public ApiResponse<Void> setEnabled(@Valid @RequestBody UpgradeToggleRequest request) {
+        upgradeService.setEnabled(Boolean.TRUE.equals(request.getEnabled()));
+        return ApiResponse.success();
     }
 
     /** 升级历史（倒序） */
