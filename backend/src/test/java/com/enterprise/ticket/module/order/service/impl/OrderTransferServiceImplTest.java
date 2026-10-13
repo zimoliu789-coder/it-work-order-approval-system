@@ -6,8 +6,7 @@ import com.enterprise.ticket.common.constant.OrderStatus;
 import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.TransferType;
 import com.enterprise.ticket.common.exception.BusinessException;
-import com.enterprise.ticket.module.department.entity.UserDepartment;
-import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
+import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.message.entity.Message;
 import com.enterprise.ticket.module.message.mapper.MessageMapper;
 import com.enterprise.ticket.module.message.service.MessageService;
@@ -59,6 +58,12 @@ import static org.mockito.Mockito.when;
  *   <li><b>并发边界</b>：条件 UPDATE 命中 0 行抛 TRANSFER_CONFLICT，绝不写入「历史与实际不符」的记录。</li>
  * </ul>
  * <p>另覆盖离职自动转交的「负载最少优先」策略（含 0 单候选人必须被优先选中的回归）。
+ *
+ * <p><b>成员口径（2026-10-13 迁移）</b>：生产侧「部门内可用成员」已收敛到
+ * {@link DepartmentService#activeMemberIdsOf(Long)} 这一个实现（主部门 ∪ 兼职 + 在职过滤）。
+ * 本测试相应地只 Mock 该接口，**不再碰 {@code UserDepartmentMapper}** ——
+ * 那一层已被生产代码彻底弃用，若继续按它打桩，桩会静默落空、部门成员恒为空，
+ * 正是此前 6 条用例变红的根因。
  */
 @ExtendWith(MockitoExtension.class)
 class OrderTransferServiceImplTest {
@@ -74,7 +79,7 @@ class OrderTransferServiceImplTest {
     @BeforeAll
     static void initMyBatisLambdaCache() {
         MyBatisLambdaCache.init(Order.class, OrderHandlerTransfer.class, OrderApprovalNode.class,
-                UserDepartment.class, Message.class, User.class);
+                Message.class, User.class);
     }
 
     @Mock
@@ -84,7 +89,7 @@ class OrderTransferServiceImplTest {
     @Mock
     private OrderApprovalNodeMapper orderNodeMapper;
     @Mock
-    private UserDepartmentMapper userDepartmentMapper;
+    private DepartmentService departmentService;
     @Mock
     private UserMapper userMapper;
     @Mock
@@ -146,14 +151,6 @@ class OrderTransferServiceImplTest {
         return user;
     }
 
-    private UserDepartment member(Long departmentId, Long userId) {
-        UserDepartment member = new UserDepartment();
-        member.setId(userId);
-        member.setDepartmentId(departmentId);
-        member.setUserId(userId);
-        return member;
-    }
-
     private OrderHandlerTransfer transferRecord(Long orderId) {
         OrderHandlerTransfer record = new OrderHandlerTransfer();
         record.setOrderId(orderId);
@@ -180,8 +177,7 @@ class OrderTransferServiceImplTest {
         when(userMapper.selectBatchIds(any())).thenReturn(List.of(
                 user(HANDLER_ID, true, false), user(NEW_HANDLER_ID, true, false)));
         if (RoleCode.USER.equals(role)) {
-            when(userDepartmentMapper.selectList(any())).thenReturn(List.of(
-                    member(GROUP_ID, HANDLER_ID), member(GROUP_ID, NEW_HANDLER_ID)));
+            when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(HANDLER_ID, NEW_HANDLER_ID));
         }
     }
 
@@ -245,8 +241,7 @@ class OrderTransferServiceImplTest {
         loginAs(HANDLER_ID, RoleCode.USER);
         when(orderMapper.selectById(ORDER_ID)).thenReturn(order(OrderStatus.BORROWED.name(), HANDLER_ID));
         when(userMapper.selectById(NEW_HANDLER_ID)).thenReturn(user(NEW_HANDLER_ID, true, false));
-        when(userDepartmentMapper.selectList(any())).thenReturn(List.of(member(GROUP_ID, HANDLER_ID)));
-        when(userMapper.selectBatchIds(any())).thenReturn(List.of(user(HANDLER_ID, true, false)));
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(HANDLER_ID));
 
         assertEquals(ErrorCode.TRANSFER_TARGET_NOT_IN_GROUP,
                 errorCodeOf(() -> service.transfer(ORDER_ID, transferRequest(NEW_HANDLER_ID))));
@@ -292,10 +287,7 @@ class OrderTransferServiceImplTest {
         loginAs(HANDLER_ID, RoleCode.USER);
         when(orderMapper.selectById(ORDER_ID)).thenReturn(order(OrderStatus.BORROWED.name(), HANDLER_ID));
         when(userMapper.selectById(NEW_HANDLER_ID)).thenReturn(user(NEW_HANDLER_ID, true, false));
-        when(userDepartmentMapper.selectList(any())).thenReturn(List.of(
-                member(GROUP_ID, HANDLER_ID), member(GROUP_ID, NEW_HANDLER_ID)));
-        when(userMapper.selectBatchIds(any())).thenReturn(List.of(
-                user(HANDLER_ID, true, false), user(NEW_HANDLER_ID, true, false)));
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(HANDLER_ID, NEW_HANDLER_ID));
         when(orderMapper.update(any(), any())).thenReturn(0);
 
         assertEquals(ErrorCode.TRANSFER_CONFLICT,
@@ -315,7 +307,7 @@ class OrderTransferServiceImplTest {
 
         verify(transferMapper).insert(any());
         // 跨组可行性由「根本不查小组」证明
-        verify(userDepartmentMapper, never()).selectList(any());
+        verify(departmentService, never()).activeMemberIdsOf(any());
     }
 
     // ------------------------------------------------------------------
@@ -327,8 +319,8 @@ class OrderTransferServiceImplTest {
     void candidates_excludesSelfAndApplicant() {
         loginAs(HANDLER_ID, RoleCode.USER);
         when(orderMapper.selectById(ORDER_ID)).thenReturn(order(OrderStatus.BORROWED.name(), HANDLER_ID));
-        when(userDepartmentMapper.selectList(any())).thenReturn(List.of(
-                member(GROUP_ID, HANDLER_ID), member(GROUP_ID, NEW_HANDLER_ID), member(GROUP_ID, APPLICANT_ID)));
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(
+                HANDLER_ID, NEW_HANDLER_ID, APPLICANT_ID));
         when(userMapper.selectBatchIds(any())).thenReturn(List.of(
                 user(HANDLER_ID, true, false), user(NEW_HANDLER_ID, true, false), user(APPLICANT_ID, true, false)));
         when(orderMapper.selectList(any())).thenReturn(List.of());
@@ -354,11 +346,9 @@ class OrderTransferServiceImplTest {
         when(orderMapper.selectList(any()))
                 .thenReturn(List.of(order(OrderStatus.BORROWED.name(), leavingId)))
                 .thenReturn(List.of(loadOwner(busyId)));
-        when(userDepartmentMapper.selectList(any())).thenReturn(List.of(
-                member(GROUP_ID, leavingId), member(GROUP_ID, idleId), member(GROUP_ID, busyId)));
-        // 离职账号此时已被禁用，故 activeHandlerIds 只留 idleId / busyId
-        when(userMapper.selectBatchIds(any())).thenReturn(List.of(
-                user(leavingId, false, false), user(idleId, true, false), user(busyId, true, false)));
+        // 在职过滤已收敛到 DepartmentService#activeMemberIdsOf；此处 mock 的是它的**产出**，
+        // 即「部门内启用且未离职的成员」—— 离职的 leavingId 不在其中
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(idleId, busyId));
         when(orderMapper.update(any(), any())).thenReturn(1);
 
         OrderTransferService.AutoTransferResult result = service.transferOnDimission(leavingId, "张伟");
@@ -379,8 +369,9 @@ class OrderTransferServiceImplTest {
         Long leavingId = 8L;
         when(orderMapper.selectList(any()))
                 .thenReturn(List.of(order(OrderStatus.BORROWED.name(), leavingId)));
-        when(userDepartmentMapper.selectList(any())).thenReturn(List.of(member(GROUP_ID, leavingId)));
-        when(userMapper.selectBatchIds(any())).thenReturn(List.of(user(leavingId, false, false)));
+        // 组内唯一成员（leavingId）已离职 ⇒ activeMemberIdsOf 在职过滤后为空，
+        // 于是候选池为空 → 不转交、计入 skipped
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of());
 
         OrderTransferService.AutoTransferResult result = service.transferOnDimission(leavingId, "张伟");
 

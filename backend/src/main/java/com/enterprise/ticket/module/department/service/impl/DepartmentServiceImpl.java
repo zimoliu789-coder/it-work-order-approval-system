@@ -226,8 +226,15 @@ public class DepartmentServiceImpl implements DepartmentService {
                 .toList();
     }
 
-    /** 某部门的**全部**成员 user_id（主部门 ∪ 兼职），顺序稳定 */
-    public List<Long> memberIdsOf(Long departmentId) {
+    /**
+     * 某部门的**全部**成员 user_id（主部门 ∪ 兼职），顺序稳定。
+     *
+     * <p><b>刻意保持 private</b>：它返回的是「未过滤在职状态」的原始集合，不是对外口径。
+     * 外部一律走 {@link #activeMemberIdsOf(Long)}（在职可用）。若把它放成 public、
+     * 又不进接口，就容易被误当成「对外成员口径」直接调用 —— 这正是本次
+     * 「第 5 份口径」病根的温床。仅本类内部 {@code activeMemberIdsOf / membersOf / delete 校验} 三处使用。
+     */
+    private List<Long> memberIdsOf(Long departmentId) {
         if (departmentId == null) {
             return List.of();
         }

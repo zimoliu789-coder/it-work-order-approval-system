@@ -655,8 +655,9 @@ class DepartmentServiceImplTest {
         when(departmentMapper.selectOne(any())).thenReturn(itOps);
         when(userMapper.selectList(any())).thenReturn(List.of(user(4, 20L, true, false), user(6, 20L, false, false)));
         when(userDepartmentMapper.selectList(any())).thenReturn(List.of());
-        when(userMapper.selectById(4L)).thenReturn(user(4, 20L, true, false));
-        when(userMapper.selectById(6L)).thenReturn(user(6, 20L, false, false));
+        // 在职过滤走 usersByIds() → selectBatchIds（不是逐个 selectById）
+        when(userMapper.selectBatchIds(any())).thenReturn(
+                List.of(user(4, 20L, true, false), user(6, 20L, false, false)));
 
         assertEquals(List.of(4L), service.handlerDepartmentMemberIds());
     }
