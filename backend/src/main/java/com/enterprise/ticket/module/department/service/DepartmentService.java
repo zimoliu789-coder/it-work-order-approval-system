@@ -68,6 +68,29 @@ public interface DepartmentService {
     List<Long> handlerDepartmentMemberIds();
 
     /**
+     * 某部门的**在职**成员 user_id —— 「谁能当执行人 / 谁能接单」的**唯一出处**。
+     *
+     * <h2>口径（三者缺一不可）</h2>
+     * <ol>
+     *   <li>{@code employee.department_id}（主部门）<b>∪</b> {@code user_department}（兼职）的**并集**；</li>
+     *   <li>账号 {@code enabled = 1}；</li>
+     *   <li>未离职（{@code is_dimission = 0}）。</li>
+     * </ol>
+     *
+     * <h2>为什么必须是并集（这不是可选优化，是正确性）</h2>
+     * <p>运行期「某人的主部门」只写在 {@code employee.department_id}，而
+     * {@code user_department} 只存**额外兼职**——生产代码里除了演示数据初始化器，
+     * <b>没有任何写入点</b>（V31 只回填了历史 {@code handler_group_member} 那批人）。
+     * 因此只查 {@code user_department} 的实现在一次真实部署上会**恒返回空列表**：
+     * 管理员把员工主部门设成 IT运维组后，他既接不到单、也进不了候选人池，
+     * 而且**不报错**（空列表被上层当作「暂无可用成员」或「无权限」）。
+     *
+     * <p>反过来只查主部门也不行：IT运维组的成员常由兼职承担，
+     * 会在「组织与人员」页显示 0 人。
+     */
+    List<Long> activeMemberIdsOf(Long departmentId);
+
+    /**
      * 把某部门**未手工覆盖**的成员的直属主管同步为当前部门主管。
      *
      * <p>需求文档：「部门主管变更时，该部门所有没有手动覆盖过的成员，直属主管自动更新成新主管」。

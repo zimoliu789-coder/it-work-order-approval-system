@@ -6,9 +6,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.module.department.entity.DepartmentManager;
-import com.enterprise.ticket.module.department.entity.UserDepartment;
 import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
-import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
@@ -50,7 +48,6 @@ public class ApproverRuleResolver {
 
     private final UserMapper userMapper;
     private final DepartmentManagerMapper departmentManagerMapper;
-    private final UserDepartmentMapper userDepartmentMapper;
     private final DepartmentService departmentService;
 
     /**
@@ -368,17 +365,15 @@ public class ApproverRuleResolver {
      * 最终处理部门（IT运维组）的成员。
      *
      * <p>参数名仍是 {@code handlerGroupId}（规则 JSON 里就叫这个，改名要动存量流程定义），
-     * 但语义已经是**部门 id** —— 指向 {@code user_department} 里挂在该部门下的人。
+     * 但语义已经是**部门 id**。
+     *
+     * <p>口径**必须**走 {@link DepartmentService#activeMemberIdsOf(Long)}
+     * （主部门 ∪ 兼职 + 在职过滤）：本类原先在 {@link #resolveFinalHandlerCandidates}
+     * 用 {@code handlerDepartmentMemberIds()}、在这里又自己查一遍 {@code user_department}，
+     * 同一个类里两套口径 —— 后者在真实部署上恒为空，会让「最终处理人」节点解析出零候选人。
      */
     private List<Long> handlerDepartmentMembers(Long handlerGroupId) {
-        if (handlerGroupId == null) {
-            return List.of();
-        }
-        return userDepartmentMapper.selectList(Wrappers.<UserDepartment>lambdaQuery()
-                        .eq(UserDepartment::getDepartmentId, handlerGroupId)).stream()
-                .map(UserDepartment::getUserId)
-                .filter(Objects::nonNull)
-                .toList();
+        return departmentService.activeMemberIdsOf(handlerGroupId);
     }
 
     /**

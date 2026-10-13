@@ -36,10 +36,8 @@ import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.department.entity.Department;
-import com.enterprise.ticket.module.department.entity.UserDepartment;
 import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
-import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.entity.DeviceCategory;
@@ -170,7 +168,6 @@ public class OrderServiceImpl implements OrderService {
     private final DeviceMapper deviceMapper;
     private final DepartmentMapper departmentMapper;
     private final DepartmentManagerMapper departmentManagerMapper;
-    private final UserDepartmentMapper userDepartmentMapper;
     private final UserMapper userMapper;
     private final SystemConfigService systemConfigService;
 
@@ -2522,25 +2519,17 @@ public class OrderServiceImpl implements OrderService {
                 .set(Device::getLockToken, null));
     }
 
-    /** 最终处理部门内「启用且在职」的成员 user_id；无可用成员返回空列表 */
+    /**
+     * 最终处理部门内「启用且在职」的成员 user_id；无可用成员返回空列表。
+     *
+     * <p>口径**已经收敛到** {@link DepartmentService#activeMemberIdsOf(Long)}：
+     * 主部门 {@code employee.department_id} ∪ 兼职 {@code user_department}。
+     * 这里原先自己写了一份「只查 user_department」的版本 —— 那份在真实部署上恒为空
+     * （运行期没有任何代码往 user_department 写兼职关系），表现为提交借用单时
+     * 直接报「最终处理部门暂无在职可用成员」，而管理员在部门页明明看得到成员。
+     */
     private List<Long> activeHandlerIds(Long handlerGroupId) {
-        if (handlerGroupId == null) {
-            return List.of();
-        }
-        List<UserDepartment> members = userDepartmentMapper.selectList(
-                Wrappers.<UserDepartment>lambdaQuery().eq(UserDepartment::getDepartmentId, handlerGroupId));
-        if (members.isEmpty()) {
-            return List.of();
-        }
-        Set<Long> memberIds = members.stream().map(UserDepartment::getUserId)
-                .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
-        if (memberIds.isEmpty()) {
-            return List.of();
-        }
-        return userMapper.selectBatchIds(memberIds).stream()
-                .filter(user -> Boolean.TRUE.equals(user.getEnabled()) && !Boolean.TRUE.equals(user.getDimission()))
-                .map(User::getId)
-                .toList();
+        return departmentService.activeMemberIdsOf(handlerGroupId);
     }
 
     /** super_admin 兜底账号；系统必须至少存在一个超管，否则审批无法兜底 */

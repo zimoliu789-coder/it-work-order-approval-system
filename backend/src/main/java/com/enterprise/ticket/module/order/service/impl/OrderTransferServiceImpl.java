@@ -8,8 +8,7 @@ import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.TransferType;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.util.SecurityUtils;
-import com.enterprise.ticket.module.department.entity.UserDepartment;
-import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
+import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.message.entity.Message;
 import com.enterprise.ticket.module.message.mapper.MessageMapper;
 import com.enterprise.ticket.module.message.service.MessageService;
@@ -52,8 +51,10 @@ import java.util.stream.Collectors;
  * 归还确认权限、我的待处理列表全部以 {@code actual_final_handler_id} 为查询键，
  * 因此只改这一个字段就自然生效，无需在别处做同步 —— 这也是需求方「orders 表不加字段」的前提。
  *
- * <p><b>跨模块依赖</b>：按项目约定只依赖其它模块的 Mapper（{@code UserDepartmentMapper} /
- * {@code MessageMapper}），不依赖其 Service，避免 Service 级循环依赖。
+ * <p><b>跨模块依赖</b>：单表数据（消息）走 {@code MessageMapper}；
+ * 需要「部门成员」这类**有业务口径**的数据时走 {@code DepartmentService}，
+ * 而不是自己去查 {@code user_department} —— 成员判定（主部门 ∪ 兼职 + 在职）
+ * 只允许有一个实现，否则又会出现「组织页显示 3 人、转交候选人 0 人」的错位。
  */
 @Slf4j
 @Service
@@ -75,7 +76,8 @@ public class OrderTransferServiceImpl implements OrderTransferService {
     private final OrderMapper orderMapper;
     private final OrderHandlerTransferMapper transferMapper;
     private final OrderApprovalNodeMapper orderNodeMapper;
-    private final UserDepartmentMapper userDepartmentMapper;
+    /** 成员口径的唯一出处（主部门 ∪ 兼职）；不要在本类再写一份查询 */
+    private final DepartmentService departmentService;
     private final UserMapper userMapper;
     private final MessageMapper messageMapper;
     private final MessageService messageService;
@@ -420,23 +422,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
 
     /** 最终处理部门内「启用且在职」的成员 user_id；无可用成员返回空列表 */
     private List<Long> activeHandlerIds(Long handlerGroupId) {
-        if (handlerGroupId == null) {
-            return List.of();
-        }
-        List<UserDepartment> members = userDepartmentMapper.selectList(
-                Wrappers.<UserDepartment>lambdaQuery().eq(UserDepartment::getDepartmentId, handlerGroupId));
-        if (members.isEmpty()) {
-            return List.of();
-        }
-        Set<Long> memberIds = members.stream().map(UserDepartment::getUserId)
-                .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
-        if (memberIds.isEmpty()) {
-            return List.of();
-        }
-        return userMapper.selectBatchIds(memberIds).stream()
-                .filter(user -> Boolean.TRUE.equals(user.getEnabled()) && !Boolean.TRUE.equals(user.getDimission()))
-                .map(User::getId)
-                .toList();
+        return departmentService.activeMemberIdsOf(handlerGroupId);
     }
 
     /** 一批员工名下的在办工单数（待交付 / 使用中 / 待收回），用于「负载最少优先」 */

@@ -192,13 +192,22 @@ public class DepartmentServiceImpl implements DepartmentService {
         if (handlerId == null) {
             return List.of();
         }
-        return memberIdsOf(handlerId).stream()
-                .map(userId -> userMapper.selectById(userId))
-                .filter(user -> user != null
-                        && Boolean.TRUE.equals(user.getEnabled())
-                        && !Boolean.TRUE.equals(user.getDimission()))
-                .map(User::getId)
-                .toList();
+        return activeMemberIdsOf(handlerId);
+    }
+
+    /**
+     * 某部门的**在职**成员 user_id（主部门 ∪ 兼职，再过滤在职可用）。
+     *
+     * <p>这是「谁能当执行人 / 谁能接单」的**唯一实现**。原先
+     * {@code OrderServiceImpl} / {@code OrderTransferServiceImpl} /
+     * {@code ApproverRuleResolver} / {@code FaultRepairAssigneeResolver}
+     * 各自写了一份「只查 {@code user_department}」的版本 —— 那份在真实部署上恒为空，
+     * 因为运行期没有任何代码往 {@code user_department} 写兼职关系。
+     * 成员口径收在这里之后，将来改判定规则（比如排除试用期）只需要动这一个方法。
+     */
+    @Override
+    public List<Long> activeMemberIdsOf(Long departmentId) {
+        return activeMemberIds(memberIdsOf(departmentId));
     }
 
     @Override
@@ -235,17 +244,48 @@ public class DepartmentServiceImpl implements DepartmentService {
         return new ArrayList<>(ids);
     }
 
+    /**
+     * 从候选 id 里筛出**在职可用**的（{@code enabled = 1 且 is_dimission = 0}），保持入参顺序。
+     *
+     * <p>订单侧原先各自写的实现里有的是逐个 {@code selectById}（N+1），这里统一成一次批量查。
+     */
+    private List<Long> activeMemberIds(List<Long> candidateIds) {
+        if (candidateIds == null || candidateIds.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, User> users = usersByIds(candidateIds);
+        return candidateIds.stream()
+                .map(users::get)
+                .filter(Objects::nonNull)
+                .filter(user -> Boolean.TRUE.equals(user.getEnabled()) && !Boolean.TRUE.equals(user.getDimission()))
+                .map(User::getId)
+                .distinct()
+                .toList();
+    }
+
+    /** 批量取用户，按 id 建索引；查不到的人不会出现在结果里 */
+    private Map<Long, User> usersByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
+        return userMapper.selectBatchIds(ids).stream()
+                .filter(Objects::nonNull)
+                .filter(user -> user.getId() != null)
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a, LinkedHashMap::new));
+    }
+
     @Override
     public List<UserOptionVO> membersOf(Long departmentId) {
         List<Long> ids = memberIdsOf(departmentId);
         if (ids.isEmpty()) {
             return List.of();
         }
-        List<User> users = userMapper.selectBatchIds(ids);
+        // 复用同一批用户，避免第二次查询与 activeMemberIds 的口径漂移
+        Map<Long, User> users = usersByIds(ids);
         Map<Long, String> deptNames = departmentMapper.selectList(Wrappers.<Department>lambdaQuery()
                         .select(Department::getId, Department::getDeptName)).stream()
                 .collect(Collectors.toMap(Department::getId, Department::getDeptName, (a, b) -> a));
-        return users.stream()
+        return new ArrayList<>(users.values()).stream()
                 .sorted((a, b) -> Long.compare(a.getId() == null ? 0 : a.getId(),
                         b.getId() == null ? 0 : b.getId()))
                 .map(user -> UserOptionVO.of(user, deptNames.get(user.getDepartmentId())))

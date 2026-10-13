@@ -2,9 +2,8 @@ package com.enterprise.ticket.module.device.support;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.enterprise.ticket.module.department.entity.Department;
-import com.enterprise.ticket.module.department.entity.UserDepartment;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
-import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
+import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
@@ -31,11 +30,19 @@ import java.util.Set;
  * 而它表现为「点了接单说无权限」，最容易被当成权限配置问题去排查，
  * 真正的根因却在两个方法的口径不一致。
  *
- * <h2>为什么不按「主部门 department_id」查成员</h2>
- * <p>员工的主部门列（{@code employee.department_id}）只记录**归属**，
- * 而系统的成员关系以 {@code user_department} 为准（借用单的执行人池也是这么取的）。
- * 只查主部门列会漏掉兼职成员 —— 而 IT 运维组恰恰经常由兼职承担。
- * 漏掉的表现是「通知发出去了，但组里的老王没收到」，且不会报错。
+ * <h2>成员口径：唯一出处是 {@link DepartmentService#activeMemberIdsOf(Long)}</h2>
+ * <p>本类**不自己查成员表**，一律委托 {@code DepartmentService#activeMemberIdsOf}：
+ * 主部门 {@code employee.department_id} <b>∪</b> 兼职 {@code user_department} 的并集，
+ * 再过滤「账号启用 + 未离职」。
+ *
+ * <p><b>为什么不能只查 {@code user_department}（本类曾经就这么写）</b>：
+ * 那张表在运行期**没有任何写入点** —— 生产代码里只有 {@code DemoDataInitializer}
+ * 会往里面塞演示数据，真实部署下它恒为空。于是「按部门取成员」会**恒返回空列表且不报错**，
+ * 表现为报修通知发不出去、非管理员接不了单（管理员因为走 {@code isAdminOrAbove()}
+ * 短路所以测不出来）。
+ *
+ * <p><b>为什么也不能只查 {@code employee.department_id}</b>：那会漏掉兼职成员 ——
+ * IT 运维组恰恰经常由兼职承担。所以必须是**并集**，两个来源缺一不可。
  */
 @Slf4j
 @Component
@@ -46,8 +53,9 @@ public class FaultRepairAssigneeResolver {
     private static final int HANDLER_GROUP = 1;
 
     private final SystemConfigService systemConfigService;
+    /** 成员口径的唯一出处（主部门 ∪ 兼职 + 在职）；不要在本类再写一份查询 */
+    private final DepartmentService departmentService;
     private final DepartmentMapper departmentMapper;
-    private final UserDepartmentMapper userDepartmentMapper;
     private final UserMapper userMapper;
 
     // ------------------------------------------------------------------
@@ -130,19 +138,16 @@ public class FaultRepairAssigneeResolver {
         }
     }
 
+    /**
+     * 某部门的在职成员 —— 走 {@link DepartmentService#activeMemberIdsOf(Long)}。
+     *
+     * <p>本类原先自己查 {@code user_department} 单表：那是「额外兼职」表，
+     * 运行期没有任何代码往里写，真实部署下恒为空 ⇒ 报修「通知谁」永远通知不到人、
+     * 「谁能接单」永远没人有资格接。而成员口径的正确实现在部门服务里，
+     * 与「组织与人员」页看到的成员完全同源。
+     */
     private List<Long> departmentMembers(Long departmentId) {
-        if (departmentId == null) {
-            return List.of();
-        }
-        List<UserDepartment> members = userDepartmentMapper.selectList(
-                Wrappers.<UserDepartment>lambdaQuery().eq(UserDepartment::getDepartmentId, departmentId));
-        Set<Long> ids = new LinkedHashSet<>();
-        for (UserDepartment member : members) {
-            if (member.getUserId() != null) {
-                ids.add(member.getUserId());
-            }
-        }
-        return filterActive(ids);
+        return departmentService.activeMemberIdsOf(departmentId);
     }
 
     private List<Long> activeUsersByRole(String roleCode) {
