@@ -1,25 +1,27 @@
 import { http } from '@/api/request'
-import type { UpgradeOverview, UpgradeTaskItem } from '@/types/upgrade'
+import type { UpgradeMode, UpgradeOverview, UpgradeTaskItem } from '@/types/upgrade'
 
 /**
  * 在线升级接口
  *
- * 三个写操作（上传 / 应用 / 回滚）都只有超管有权限码，且后端另有
- * `app.upgrade.enabled` 总开关（生产默认关闭）—— 两层都过才能真正执行。
+ * 三个写操作（上传 / 应用 / 回滚）都只有超管有权限码，且<b>各入口另有自己的开关</b>
+ * （`upgrade_online_enabled` / `upgrade_package_enabled`，生产默认关闭）——
+ * 两层都过才能真正执行。
  */
 export const upgradeApi = {
-  /** 能力总览：开关 / 当前版本 / 是否配置外部应用命令 / 进行中的任务 */
+  /** 能力总览：两个入口开关 / 当前版本 / 是否配置外部应用命令 / 进行中的任务 */
   overview() {
     return http.get<UpgradeOverview>('/system/upgrade/overview')
   },
 
   /**
-   * 启用 / 关闭在线升级。
+   * 启用 / 关闭**指定入口**的开关。
    *
    * 开关落在 system_config，改完即生效 —— 这就是「不用去改 .env」的落点。
+   * `mode` 必传：两个入口各有独立开关，服务端拒绝缺省值（不静默改错那一个）。
    */
-  setEnabled(enabled: boolean) {
-    return http.put<void>('/system/upgrade/overview/enabled', { enabled })
+  setEnabled(mode: UpgradeMode, enabled: boolean) {
+    return http.put<void>('/system/upgrade/overview/enabled', { mode, enabled })
   },
 
   /**

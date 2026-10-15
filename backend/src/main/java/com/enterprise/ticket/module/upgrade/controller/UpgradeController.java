@@ -64,20 +64,23 @@ public class UpgradeController {
     }
 
     /**
-     * 启用 / 关闭在线升级（V49）。
+     * 启用 / 关闭某个升级入口（V49 引入，V51 拆为两个开关）。
      *
      * <p>这是「不用改 .env」的落点：开关落在 {@code system_config}，点一下即生效。
-     * 仅超管可改 —— 在线升级能替换服务器上的可执行文件，等价于代码执行能力。
+     * 仅超管可改 —— 升级能替换服务器上的可执行文件，等价于代码执行能力。
      *
-     * <p>审计等级 HIGH：开或关改变的都是「这个环境允不允许在线替换产物」，
+     * <p>V51 起用 {@code mode} 指明改哪一个入口（{@code ONLINE} / {@code PACKAGE}）。
+     * 两个入口各有独立开关，互不影响：可以把其中一个打开、另一个保持关闭。
+     *
+     * <p>审计等级 HIGH：开或关改变的都是「这个环境允不允许以某种方式替换产物」，
      * 属于事后必须能倒查的配置变更。
      */
     @PutMapping("/overview/enabled")
     @PreAuthorize("@perm.has('system:upgrade:manage')")
     @AuditLog(module = "SYSTEM", action = "UPGRADE_TOGGLE",
-            description = "启用 / 关闭在线升级", risk = RiskLevel.HIGH)
+            description = "启用 / 关闭升级入口", risk = RiskLevel.HIGH)
     public ApiResponse<Void> setEnabled(@Valid @RequestBody UpgradeToggleRequest request) {
-        upgradeService.setEnabled(Boolean.TRUE.equals(request.getEnabled()));
+        upgradeService.setEnabled(request.getMode(), Boolean.TRUE.equals(request.getEnabled()));
         return ApiResponse.success();
     }
 
@@ -98,10 +101,13 @@ public class UpgradeController {
     /**
      * 一键在线升级（V49）：拉取最新镜像并重建容器。
      *
-     * <p>这是 Docker 部署下<b>唯一</b>的升级入口 —— 容器跑的是镜像，
-     * 上传的 jar/dist 落在宿主目录里不会被加载，因此两条路径不并列提供。
-     * 执行者是运维代理（ops-agent），后端只负责下发请求并记录任务：
-     * 后端不能重建自己。
+     * <p>这是 Docker 部署下<b>真正有效</b>的升级入口 —— 容器跑的是镜像，
+     * 上传的 jar/dist 落在宿主目录里不会被加载。
+     *
+     * <p>V51 起两个入口在页面上<b>同时可见</b>（各带独立开关，需求方 2026-10-13 明确），
+     * 但「可见」不等于「都有效」：本接口另需运维代理就绪，未就绪会明确报
+     * {@code UPGRADE_APPLY_UNAVAILABLE} 而不是静默失败。
+     * 执行者是运维代理（ops-agent），后端只负责下发请求并记录任务：后端不能重建自己。
      */
     @PostMapping("/online")
     @PreAuthorize("@perm.has('system:upgrade:manage')")
@@ -114,7 +120,10 @@ public class UpgradeController {
     /**
      * 上传升级包（校验 → 备份 → 落盘 → 待应用）。
      *
-     * <p>只服务非容器化部署（宿主直接跑 jar）。Docker 部署请用 {@code POST /online}。
+     * <p>只服务非容器化部署（宿主直接跑 jar）。Docker 部署请用 {@code POST /online}
+     * ——容器跑的是镜像，上传的 jar/dist 落在宿主目录里不会被加载。
+     * （V51 起本入口在页面上始终可见，是否可用由它<b>自己的</b>开关决定，
+     * 不再看运维代理的心跳 —— 管理员要的就是能同框验证两条路。）
      *
      * <p>测试路径：{@code POST /api/system/upgrade/package?fileName=ticket-1.1.0.zip}
      * （{@code Content-Type: application/octet-stream}，body 为包内容）

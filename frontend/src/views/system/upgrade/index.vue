@@ -11,6 +11,7 @@ import {
   shortSha,
   upgradeHint,
   upgradeTagType,
+  type UpgradeMode,
   type UpgradeOverview,
   type UpgradeTaskItem
 } from '@/types/upgrade'
@@ -21,15 +22,23 @@ import {
  * <h2>页面要回答的三个问题</h2>
  * <p>升级页的使用者往往是把系统交付给业务方的人，他在打开这个页面的那一刻最想知道的是：
  * <ol>
- *   <li><b>这个环境能不能在线升级？</b> —— 因此第一块就是能力总览：总开关、
- *       是否配置了外部应用命令、当前版本。生产默认关闭总开关，
- *       若只挂权限码而不显示开关状态，超管会看到一个「能点、点了报错」的界面，
- *       他只会以为系统坏了；</li>
+ *   <li><b>这个环境能不能在线升级？</b> —— 因此第一块就是能力总览：两个入口的开关、
+ *       当前版本、运维代理是否就绪。生产默认关闭，若只挂权限码而不显示开关状态，
+ *       超管会看到一个「能点、点了报错」的界面，他只会以为系统坏了；</li>
  *   <li><b>现在跑到哪一步了？</b> —— 步骤条 + 进度条 + 一句话提示
  *       （「现在该做什么」比「现在是什么状态」有用得多，见 `upgradeHint`）；</li>
  *   <li><b>出问题怎么退回去？</b> —— 回滚按钮与它生效的前提
  *       （回滚还原的是磁盘文件，仍需重启才生效；且首次部署没有备份可回滚）。</li>
  * </ol>
+ *
+ * <h2>为什么两个入口常显、且各有独立开关（V51）</h2>
+ * <p>V49 时页面按「运维代理是否就绪」二选一显示入口。需求方 2026-10-13 改为
+ * <b>两个入口都常显、各自独立开关、默认都关闭</b>，理由有二：
+ * ① 二选一让两条路径<b>无法同框验证</b>（想验上传链路只能先把 agent 停掉）；
+ * ②「就绪」是运行时状态，入口会随时间跳变，管理员难以预期。
+ *
+ * <p>「Docker 部署下上传包无效」这件事因此不再靠<b>隐藏入口</b>规避，而是靠
+ * ① 卡片内的文字说明 + ② 执行时的显式拦截（点了会明确报错，不会静默）。</p>
  *
  * <h2>为什么上传与「应用」是两个按钮</h2>
  * <p>真实运维里这两件事的时机完全不同：上传包不碰运行中的系统（白天也能做），
@@ -41,7 +50,7 @@ import {
  * 用一个常驻的定时器「反正也便宜」是不对的：升级页打开着不动是常态，
  * 而稳态下每 4 秒一次请求会持续占用连接与后端线程，也让审计日志被无意义请求填满。
  */
-const { isMobile } = useResponsive()
+const { isMobile, isCompact } = useResponsive()
 
 const loading = ref(false)
 const overview = ref<UpgradeOverview | null>(null)
@@ -58,12 +67,18 @@ const rollingBack = ref(false)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-const enabled = computed(() => overview.value?.enabled === true)
+/** 「一键在线升级」入口是否已启用（自己的开关，与环境变量取或） */
+const onlineEnabled = computed(() => overview.value?.onlineEnabled === true)
+/** 「上传升级包」入口是否已启用（自己的开关，与环境变量取或） */
+const packageEnabled = computed(() => overview.value?.packageEnabled === true)
+/** 两个入口都没开 —— 用于顶部给出「去哪里打开」的整体提示 */
+const noneEnabled = computed(() => !onlineEnabled.value && !packageEnabled.value)
+
 const applyConfigured = computed(() => overview.value?.applyCommandConfigured === true)
 
 /** 「待应用」且已配置外部命令 —— 这是唯一应该高亮主按钮的状态 */
 const canApply = computed(
-  () => enabled.value && applyConfigured.value && currentTask.value?.status === 'READY_TO_APPLY'
+  () => packageEnabled.value && applyConfigured.value && currentTask.value?.status === 'READY_TO_APPLY'
 )
 
 const maxSizeMb = computed(() => overview.value?.packageMaxSizeMb ?? 300)
@@ -305,38 +320,53 @@ onUnmounted(() => {
 const activeStatuses = UPGRADE_ACTIVE_STATUSES
 
 // ---------------------------------------------------------------------
-// V49：开关与「按部署形态二选一」的升级入口
+// V51：两个入口常显，各带自己的开关
 // ---------------------------------------------------------------------
 
 /** 环境变量把功能钉在「开」上时，页面开关关不掉 —— 必须置灰并说明，否则像按钮坏了 */
 const envForced = computed(() => overview.value?.envForced === true)
 
-/**
- * 运维代理是否就绪 —— 它决定显示哪一个升级入口。
- *
- * 两者**刻意不并列**：Docker 部署下「上传升级包」是无效动作（容器跑的是镜像，
- * 上传的 jar/dist 落在宿主目录里不会被加载）。把无效入口一并摆出来，
- * 管理员一定会去点错的那个，而且点完不会报错 —— 最难发现的一类问题。
- */
+/** 运维代理是否就绪 —— 只用于在线升级卡片内的提示与按钮可用性（V51 起不再决定显示哪个入口） */
 const agentReady = computed(() => overview.value?.agentReady === true)
 
-const togglingEnabled = ref(false)
+/** 两个开关各自的提交中状态（分开，避免拨一个时另一个也在转圈） */
+const togglingOnline = ref(false)
+const togglingPackage = ref(false)
 const onlineStarting = ref(false)
 
-async function toggleEnabled(value: string | number | boolean): Promise<void> {
-  const next = value === true
-  togglingEnabled.value = true
+/**
+ * 切换某个入口的开关。
+ *
+ * `mode` 必传：后端按它决定改哪一行 system_config，**不会**用缺省值兜底 ——
+ * 传错等于改错另一个开关，而页面上只会看到「怎么那个也变了」。
+ */
+async function toggleEntry(mode: UpgradeMode, next: boolean): Promise<void> {
+  const busy = mode === 'ONLINE' ? togglingOnline : togglingPackage
+  busy.value = true
   try {
-    await upgradeApi.setEnabled(next)
+    await upgradeApi.setEnabled(mode, next)
+    const label = mode === 'ONLINE' ? '一键在线升级' : '上传升级包'
     // 提示语里点明「改了立刻生效」：过去这一步要 SSH 改 .env 再重建容器，
     // 管理员的第一反应往往是「我是不是还得重启一下」
-    ElMessage.success(next ? '已启用在线升级（立刻生效，无需重启）' : '已关闭在线升级')
+    ElMessage.success(next ? `已启用「${label}」（立刻生效，无需重启）` : `已关闭「${label}」`)
   } catch {
     // 由请求层统一提示
   } finally {
-    togglingEnabled.value = false
+    busy.value = false
     await refreshAll()
   }
+}
+
+/**
+ * el-switch 的 change 事件给的是 `string | number | boolean`，
+ * 这里显式收敛成布尔再交给 `toggleEntry`（否则模板里的类型断言会很难读）。
+ */
+function onOnlineSwitch(value: string | number | boolean): void {
+  void toggleEntry('ONLINE', value === true)
+}
+
+function onPackageSwitch(value: string | number | boolean): void {
+  void toggleEntry('PACKAGE', value === true)
 }
 
 async function startOnlineUpgrade(): Promise<void> {
@@ -365,21 +395,21 @@ async function startOnlineUpgrade(): Promise<void> {
 <template>
   <div v-loading="loading" class="upgrade-page">
     <el-alert
-      v-if="overview && !enabled"
+      v-if="overview && noneEnabled"
       class="upgrade-page__notice"
       type="warning"
       show-icon
       :closable="false"
-      title="在线升级功能未启用"
+      title="两个升级入口都未启用"
     >
       <template #default>
         <div>
-          本环境尚未开启在线升级。升级接口能替换服务器上的可执行文件，
-          等价于代码执行能力，因此<b>默认关闭、需要你显式打开</b>。
+          升级接口能替换服务器上的可执行文件，等价于代码执行能力，因此<b>默认关闭</b>。
+          本环境目前两个入口都处于关闭状态。
         </div>
         <div class="upgrade-page__notice-tip">
-          打开方式：把下面「能力总览」里的「启用在线升级」开关拨开即可，
-          开关存在数据库里、改完立刻生效 —— <b>不需要去改 .env，也不需要重建容器</b>。
+          打开方式：把下面两张卡片右上角的开关拨开即可，开关存在数据库里、改完立刻生效 ——
+          <b>不需要去改 .env，也不需要重建容器</b>。两个开关互相独立，可以只开其中一个。
         </div>
       </template>
     </el-alert>
@@ -395,23 +425,25 @@ async function startOnlineUpgrade(): Promise<void> {
         <el-descriptions-item label="当前版本">
           {{ overview?.currentVersion || '（未知，首次部署）' }}
         </el-descriptions-item>
-        <el-descriptions-item label="启用在线升级">
-          <el-switch
-            :model-value="enabled"
-            :loading="togglingEnabled"
-            :disabled="envForced || togglingEnabled"
-            @change="toggleEnabled"
-          />
+        <el-descriptions-item label="升级入口">
+          <div class="upgrade-page__entries">
+            <el-tag :type="onlineEnabled ? 'success' : 'info'" size="small">
+              一键在线升级：{{ onlineEnabled ? '已启用' : '已关闭' }}
+            </el-tag>
+            <el-tag :type="packageEnabled ? 'success' : 'info'" size="small">
+              上传升级包：{{ packageEnabled ? '已启用' : '已关闭' }}
+            </el-tag>
+          </div>
           <span v-if="envForced" class="upgrade-page__muted">
             （由部署配置强制开启，此处关不掉）
           </span>
         </el-descriptions-item>
-        <el-descriptions-item label="升级方式">
+        <el-descriptions-item label="运维代理">
           <el-tag :type="agentReady ? 'success' : 'info'" size="small">
-            {{ agentReady ? '一键在线升级' : '上传升级包' }}
+            {{ agentReady ? '就绪' : '未就绪' }}
           </el-tag>
           <span v-if="agentReady && overview?.agentVersion" class="upgrade-page__muted">
-            （运维代理 v{{ overview.agentVersion }}）
+            （v{{ overview.agentVersion }}）
           </span>
         </el-descriptions-item>
         <el-descriptions-item label="回滚">
@@ -422,20 +454,45 @@ async function startOnlineUpgrade(): Promise<void> {
       </el-descriptions>
     </el-card>
 
-    <el-card v-if="agentReady" class="upgrade-page__card" shadow="never">
+    <el-card class="upgrade-page__card" shadow="never">
       <template #header>
         <div class="upgrade-page__card-head">
           <span>一键在线升级</span>
-          <span class="upgrade-page__muted">拉取最新镜像并重建后端与前端容器</span>
+          <div class="upgrade-page__switch">
+            <span class="upgrade-page__muted">启用</span>
+            <el-switch
+              :model-value="onlineEnabled"
+              :loading="togglingOnline"
+              :disabled="envForced || togglingOnline"
+              @change="onOnlineSwitch"
+            />
+          </div>
         </div>
       </template>
 
       <p class="upgrade-page__muted">
-        当前是 Docker 部署：容器跑的是镜像，所以升级的动作是「拉取最新镜像 → 重建容器」。
-        系统会把请求交给运维代理（ops-agent）执行，不需要你 SSH 上去敲命令。
+        拉取最新镜像并重建后端与前端容器。系统会把请求交给运维代理（ops-agent）执行，
+        不需要你 SSH 上去敲命令。
       </p>
 
       <el-alert
+        v-if="!onlineEnabled"
+        class="upgrade-page__hint"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="本入口未启用：把卡片右上角的开关拨开即可（改完立刻生效）。"
+      />
+      <el-alert
+        v-else-if="!agentReady"
+        class="upgrade-page__hint"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="运维代理未就绪：一键升级需要它执行「拉镜像 + 重建容器」。请确认 ops-agent 容器正在运行。"
+      />
+      <el-alert
+        v-else
         class="upgrade-page__hint"
         type="info"
         :closable="false"
@@ -447,7 +504,7 @@ async function startOnlineUpgrade(): Promise<void> {
         <el-button
           type="primary"
           :icon="Refresh"
-          :disabled="!enabled"
+          :disabled="!onlineEnabled || !agentReady"
           :loading="onlineStarting"
           @click="startOnlineUpgrade"
         >
@@ -456,16 +513,45 @@ async function startOnlineUpgrade(): Promise<void> {
       </div>
     </el-card>
 
-    <el-card v-else class="upgrade-page__card" shadow="never">
+    <el-card class="upgrade-page__card" shadow="never">
       <template #header>
         <div class="upgrade-page__card-head">
           <span>上传升级包</span>
-          <span class="upgrade-page__muted">
-            非 Docker 部署专用；包内需含 manifest.json、backend.jar 与
-            frontend/dist/**，上限 {{ maxSizeMb }}MB
-          </span>
+          <div class="upgrade-page__switch">
+            <span class="upgrade-page__muted">启用</span>
+            <el-switch
+              :model-value="packageEnabled"
+              :loading="togglingPackage"
+              :disabled="envForced || togglingPackage"
+              @change="onPackageSwitch"
+            />
+          </div>
         </div>
       </template>
+
+      <p class="upgrade-page__muted">
+        包内需含 manifest.json、backend.jar 与 frontend/dist/**，上限 {{ maxSizeMb }}MB。
+        <b>只服务非容器化部署</b>：容器跑的是镜像，上传的 jar / dist 落在宿主目录里不会被加载 ——
+        Docker 部署请用上面的「一键在线升级」。
+      </p>
+
+      <el-alert
+        v-if="agentReady"
+        class="upgrade-page__hint"
+        type="info"
+        :closable="false"
+        show-icon
+        title="检测到运维代理正在运行，说明本环境很可能是 Docker 部署：此时上传的升级包不会被加载，请优先用「一键在线升级」。"
+      />
+
+      <el-alert
+        v-if="!packageEnabled"
+        class="upgrade-page__hint"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="本入口未启用：把卡片右上角的开关拨开即可（改完立刻生效）。"
+      />
 
       <el-upload
         drag
@@ -473,7 +559,7 @@ async function startOnlineUpgrade(): Promise<void> {
         :limit="1"
         :show-file-list="false"
         accept=".zip"
-        :disabled="!enabled || uploading"
+        :disabled="!packageEnabled || uploading"
         :on-change="onFileChange"
         :on-remove="onFileRemove"
       >
@@ -505,7 +591,7 @@ async function startOnlineUpgrade(): Promise<void> {
         <el-button
           type="primary"
           :icon="Upload"
-          :disabled="!enabled || !pendingFile"
+          :disabled="!packageEnabled || !pendingFile"
           :loading="uploading"
           @click="submitUpload"
         >
@@ -608,6 +694,7 @@ async function startOnlineUpgrade(): Promise<void> {
       </template>
 
       <el-table
+        v-if="!isCompact"
         :data="tasks"
         size="small"
         row-key="taskNo"
@@ -645,6 +732,42 @@ async function startOnlineUpgrade(): Promise<void> {
           </template>
         </el-table-column>
       </el-table>
+
+      <!--
+        紧凑档降级为卡片（≤1023px，内屏 / 手机）。
+        本表 7 列，在 840px 内屏上平均列宽不足 92px —— 表格已不可读，
+        与 TablePage 各页在 ≤767px 的降级是同一处置，只是本页列更宽、阈值提前到 1023。
+      -->
+      <div v-else class="upgrade-page__history-cards">
+        <div
+          v-for="row in tasks"
+          :key="row.taskNo"
+          class="upgrade-page__history-card"
+          @click="focusTask(row)"
+        >
+          <div class="upgrade-page__history-card-head">
+            <strong class="upgrade-page__history-card-title">{{ row.packageName }}</strong>
+            <el-tag :type="upgradeTagType(row.status)" size="small">{{ row.statusLabel }}</el-tag>
+          </div>
+          <div class="upgrade-page__history-card-row">
+            <span class="upgrade-page__muted">版本</span>
+            <span>{{ row.sourceVersion || '—' }} → {{ row.targetVersion }}</span>
+          </div>
+          <div class="upgrade-page__history-card-row">
+            <span class="upgrade-page__muted">任务号</span>
+            <span class="upgrade-page__mono">{{ row.taskNo }}</span>
+          </div>
+          <div class="upgrade-page__history-card-row">
+            <span class="upgrade-page__muted">发起人</span>
+            <span>{{ row.operatorName || '—' }}</span>
+          </div>
+          <div class="upgrade-page__history-card-row">
+            <span class="upgrade-page__muted">时间</span>
+            <span>{{ row.createdAt || '—' }}</span>
+          </div>
+        </div>
+        <el-empty v-if="tasks.length === 0" :image-size="70" description="暂无升级记录" />
+      </div>
     </el-card>
   </div>
 </template>
@@ -672,6 +795,19 @@ async function startOnlineUpgrade(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.upgrade-page__switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.upgrade-page__entries {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -733,5 +869,53 @@ async function startOnlineUpgrade(): Promise<void> {
   gap: 8px;
   margin-top: 16px;
   flex-wrap: wrap;
+}
+
+/* ---------- 升级历史的紧凑档卡片（≤1023px 替代表格） ---------- */
+.upgrade-page__history-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.upgrade-page__history-card {
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.upgrade-page__history-card:hover {
+  border-color: var(--ts-accent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 6%);
+}
+
+.upgrade-page__history-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.upgrade-page__history-card-title {
+  font-size: var(--ts-fs-body);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.upgrade-page__history-card-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: var(--ts-fs-caption);
+  line-height: 1.6;
+}
+
+.upgrade-page__history-card-row > .upgrade-page__muted:first-child {
+  flex: 0 0 56px;
 }
 </style>

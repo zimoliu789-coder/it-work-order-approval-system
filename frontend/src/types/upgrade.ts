@@ -108,14 +108,26 @@ export interface UpgradeTaskItem {
   rollbackable: boolean
 }
 
+/**
+ * 升级入口模式。
+ *
+ * 与后端 `UpgradeSettings.Mode` 逐字对应：`ONLINE`（一键在线升级）/ `PACKAGE`（上传升级包）。
+ * 两个入口各有独立开关，切换开关时要把它一并传给后端 —— 服务端**拒绝缺省或拼错的值**，
+ * 不会静默落到另一个开关上。
+ */
+export type UpgradeMode = 'ONLINE' | 'PACKAGE'
+
 /** 升级能力总览（对应后端 `UpgradeOverviewVO`） */
 export interface UpgradeOverview {
-  /** 总开关（生产默认关闭） */
-  enabled: boolean
+  /** 「一键在线升级」开关（生效值 = 数据库开关 或 环境变量；生产默认关闭） */
+  onlineEnabled: boolean
+  /** 「上传升级包」开关（生效值 = 数据库开关 或 环境变量；生产默认关闭） */
+  packageEnabled: boolean
   /**
    * 环境变量把功能强制钉在「开」上（页面开关关不掉）。
    *
    * 只有这一种情况下开关要置灰 —— 否则管理员会反复点一个没反应的按钮。
+   * 它同时作用于两个开关（环境变量是「这套部署允不允许升级」的总闸，不区分入口）。
    */
   envForced: boolean
   /** 当前已应用版本（读 state/current.json，首次部署为空） */
@@ -123,8 +135,9 @@ export interface UpgradeOverview {
   /**
    * 运维代理（ops-agent）是否就绪。
    *
-   * 这个字段决定页面显示**哪一个**升级入口，因此两者绝不并列：
-   * 就绪（Docker 部署）⇒ 一键在线升级；未就绪（非容器化）⇒ 上传升级包。
+   * V51 起它**不再决定显示哪个入口**（两个入口常显，各受自己的开关控制），
+   * 只用于在线升级卡片内的提示与「立即升级」按钮的可用性判断：
+   * 代理未就绪时点了会明确报错，而不是静默什么都不做。
    */
   agentReady: boolean
   /** 运维代理版本（未就绪时为空） */

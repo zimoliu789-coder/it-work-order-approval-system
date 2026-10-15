@@ -70,7 +70,7 @@ public class UpgradeService {
     private final UpgradeApplier applier;
     private final UpgradeTaskMapper upgradeTaskMapper;
     /**
-     * 升级总开关落库（V49）。
+     * 升级开关落库（V49 引入，V51 拆成两个：在线升级 / 上传升级包）。
      *
      * <p>改造前它读环境变量 {@code UPGRADE_ENABLED} —— 每次开关都要 SSH 改 .env 再重建容器；
      * 改错的表现为「功能用不了」，排查时还得回头确认 .env 到底有没有生效。
@@ -111,10 +111,9 @@ public class UpgradeService {
         settleQuietly();
         UpgradeTask active = upgradeTaskMapper.selectActive();
         boolean envEnabled = config.isEnabled();
-        boolean dbEnabled = systemConfigService.getBoolean(
-                UpgradeSettings.KEY_ENABLED, UpgradeSettings.DEFAULT_ENABLED);
         return new UpgradeOverviewVO(
-                dbEnabled || envEnabled,
+                dbEnabled(UpgradeSettings.Mode.ONLINE) || envEnabled,
+                dbEnabled(UpgradeSettings.Mode.PACKAGE) || envEnabled,
                 // 环境变量把功能钉在「开」上时，页面的开关关不掉它 —— 必须如实告知，
                 // 否则管理员会以为是按钮坏了（这正是「配置分散在两处」的代价）
                 envEnabled,
@@ -159,7 +158,7 @@ public class UpgradeService {
      * @param body     请求体字节流
      */
     public UpgradeTaskVO upload(String fileName, InputStream body) {
-        requireEnabled();
+        requirePackageEnabled();
 
         UpgradeTask active = upgradeTaskMapper.selectActive();
         if (active != null) {
@@ -257,7 +256,7 @@ public class UpgradeService {
      * 不需要事务包裹，而包上事务反而会引入上面那个窗口。
      */
     public UpgradeTaskVO apply(String taskNo) {
-        requireEnabled();
+        requirePackageEnabled();
         UpgradeTask task = requireTask(taskNo);
 
         // 上传包这条路径只服务「非镜像化部署」（systemd / 手工部署）。
@@ -301,11 +300,20 @@ public class UpgradeService {
     /**
      * 一键在线升级：拉取最新镜像并重建容器（V49 · 第 2 项）。
      *
-     * <h2>为什么它与「上传升级包」是两条互不相容的路</h2>
+     * <h2>为什么它与「上传升级包」是两条互不相容的路 —— 但页面仍并列显示（V51）</h2>
      * <p>容器跑的是<b>镜像</b>：上传的 jar/dist 落在宿主目录里根本不会被加载。
      * 因此 Docker 部署的升级动作只能是「拉最新镜像 + 重建容器」，
-     * 而上传包这条路径只服务非容器化部署。页面按 {@code agentReady} 二选一显示，
-     * **不并列** —— 两个入口同时摆出来，管理员一定会去点错的那个。
+     * 而上传包这条路径只服务非容器化部署。
+     *
+     * <p>V49 时页面按 {@code agentReady} <b>二选一</b>显示入口，理由是「两个入口同时摆出来，
+     * 管理员一定会去点错的那个」。但实际使用暴露了两个问题：
+     * ① 两条路径无法<b>同框验证</b>；②「就绪」是运行时状态，入口会随时间跳变。
+     * 需求方 2026-10-13 明确改为：<b>两个入口常显、各自独立开关、默认都关闭</b>。
+     *
+     * <p>因此「互不相容」这件事不再靠<b>隐藏入口</b>来规避，而是靠两层显式反馈：
+     * ① 每张卡片自带说明（Docker 下上传包不会被加载）；
+     * ② 真正执行时按事实拦截 —— 本方法要求 {@code agentReady}，
+     * 未就绪直接报 {@code UPGRADE_APPLY_UNAVAILABLE}，绝不静默什么都不做。
      *
      * <h2>为什么也要落一条任务记录</h2>
      * <p>在线升级同样会改变线上运行形态，必须和上传包升级一样留下「谁在什么时候升级到哪一版」的痕迹。
@@ -313,7 +321,7 @@ public class UpgradeService {
      * 复用既有的 {@code UpgradeRecoveryRunner} 对账与超时兜底，不另开一套。
      */
     public UpgradeTaskVO applyOnline() {
-        requireEnabled();
+        requireOnlineEnabled();
         if (!opsAgentBridge.agentReady()) {
             throw new BusinessException(ErrorCode.UPGRADE_APPLY_UNAVAILABLE,
                     "运维代理（ops-agent）未就绪，无法执行一键在线升级。"
@@ -384,7 +392,7 @@ public class UpgradeService {
      * 这一点会写进返回的任务说明里，避免管理员以为点完就生效了。
      */
     public UpgradeTaskVO rollback(String taskNo) {
-        requireEnabled();
+        requirePackageEnabled();
         AppProperties.Upgrade config = storage.config();
         if (!config.isRollbackEnabled()) {
             throw BusinessException.of(ErrorCode.UPGRADE_ROLLBACK_DISABLED);
@@ -438,7 +446,7 @@ public class UpgradeService {
     // ------------------------------------------------------------------
 
     /**
-     * 在线升级是否可用。
+     * 某个升级入口是否可用。
      *
      * <p>取值是「数据库开关 <b>或</b> 环境变量」而不是只读其一，理由有两条：
      * <ol>
@@ -447,16 +455,44 @@ public class UpgradeService {
      *   <li><b>页面上能真实生效</b> —— 只要按新文档把 .env 里那一行去掉，开关就完全由页面控制。
      *       若环境变量把功能钉在「开」上，概览接口会用 {@code envForced} 如实告知，页面据此禁用开关。</li>
      * </ol>
+     *
+     * <p>V51 起两个入口<b>各有独立开关</b>：数据库侧读各自的键，环境变量则同时兜底两者
+     * （它是「这套部署允不允许升级」的总闸，语义上不区分入口）。
      */
-    public boolean enabled() {
-        return systemConfigService.getBoolean(UpgradeSettings.KEY_ENABLED, UpgradeSettings.DEFAULT_ENABLED)
-                || storage.config().isEnabled();
+    public boolean enabled(UpgradeSettings.Mode mode) {
+        return dbEnabled(mode) || storage.config().isEnabled();
     }
 
-    /** 页面上的「启用在线升级」开关 */
-    public void setEnabled(boolean enabled) {
-        systemConfigService.updateValue(UpgradeSettings.KEY_ENABLED, enabled ? "1" : "0");
-        log.warn("[升级] 在线升级开关被 {} 设置为 {}", SecurityUtils.getCurrentUsername(), enabled ? "开启" : "关闭");
+    /** 一键在线升级入口是否可用 */
+    public boolean onlineEnabled() {
+        return enabled(UpgradeSettings.Mode.ONLINE);
+    }
+
+    /** 上传升级包入口是否可用 */
+    public boolean packageEnabled() {
+        return enabled(UpgradeSettings.Mode.PACKAGE);
+    }
+
+    /** 只读数据库里的那一行（不含环境变量兜底） */
+    private boolean dbEnabled(UpgradeSettings.Mode mode) {
+        return systemConfigService.getBoolean(mode.configKey(), UpgradeSettings.DEFAULT_ENABLED);
+    }
+
+    /**
+     * 页面上的入口开关：改<b>指定入口</b>的开关（V51 起一个入口一个开关）。
+     *
+     * @param rawMode 前端传来的模式串（{@code ONLINE} / {@code PACKAGE}）
+     */
+    public void setEnabled(String rawMode, boolean enabled) {
+        UpgradeSettings.Mode mode = UpgradeSettings.Mode.of(rawMode);
+        if (mode == null) {
+            // 不静默回落：传了拼错的 mode 却改到另一个开关，是最难查的一类配置事故
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "无法识别的升级入口「" + rawMode + "」，应为 ONLINE 或 PACKAGE");
+        }
+        systemConfigService.updateValue(mode.configKey(), enabled ? "1" : "0");
+        log.warn("[升级] 「{}」开关被 {} 设置为 {}",
+                mode.label(), SecurityUtils.getCurrentUsername(), enabled ? "开启" : "关闭");
     }
 
     /** 惰性对账：打开升级页时顺手把已到回执的任务收掉（失败不影响概览返回） */
@@ -469,9 +505,24 @@ public class UpgradeService {
         }
     }
 
-    private void requireEnabled() {
-        if (!enabled()) {
-            throw BusinessException.of(ErrorCode.UPGRADE_DISABLED);
+    /**
+     * 闸门：在线升级入口未打开时拒绝。
+     *
+     * <p>报错文案里点名「哪一个入口」与「去哪里打开」——
+     * V51 起有两个开关，只说「功能未启用」会让管理员去拨错那一个。
+     */
+    private void requireOnlineEnabled() {
+        if (!onlineEnabled()) {
+            throw new BusinessException(ErrorCode.UPGRADE_DISABLED,
+                    "「一键在线升级」开关未打开。请在「系统设置 → 在线升级」页打开它后再试。");
+        }
+    }
+
+    /** 闸门：上传升级包入口未打开时拒绝 */
+    private void requirePackageEnabled() {
+        if (!packageEnabled()) {
+            throw new BusinessException(ErrorCode.UPGRADE_DISABLED,
+                    "「上传升级包」开关未打开。请在「系统设置 → 在线升级」页打开它后再试。");
         }
     }
 

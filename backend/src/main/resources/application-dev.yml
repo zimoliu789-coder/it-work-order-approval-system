@@ -48,8 +48,15 @@ app:
     # 留空时只跳过「演示员工与口令对齐」，不影响其它演示数据（部门/设备等仍会创建）。
     user-init-password: ${DEMO_USER_INIT_PASSWORD:}
   upgrade:
-    # 本地沙箱打开总开关，让「上传 → 校验 → 备份 → 落盘 → 待应用 → 回滚」整条链路
-    # 都能在开发机上真实跑通并验收。
+    # ⚠️ 本地默认**关闭**（V51 起与生产一致）。
+    #
+    # 历史上这里默认 true，目的是让「上传 → 校验 → 备份 → 落盘 → 待应用 → 回滚」整条链路
+    # 在开发机上开箱即跑。但 V51 把开关拆成了「在线升级 / 上传升级包」两个数据库开关之后，
+    # 这个环境变量就变成了**两把开关共同的总闸**：它为 true 时，页面上两个开关都会被
+    # 强制打开并置灰（envForced）—— 恰好把新开关遮住了，本地反而验证不了它们。
+    # 所以改为默认 false：本地要看哪个入口，就到升级页把对应开关拨开（改完即刻生效）。
+    # 仍然保留这个环境变量作为总闸：需要「无论页面怎么点都强制能升级」时再显式设 true。
+    enabled: ${UPGRADE_ENABLED:false}
     # ⚠️ 刻意**不**在这里配 apply-command：本地没有正常的重启托管（无 systemd / 无容器编排），
     #    配一条命令让它去「重启」只会制造一个假象。停在 READY_TO_APPLY 正是设计中的
     #    正式形态之一（见 UpgradeService 类注释），不是功能缺失。
@@ -57,7 +64,6 @@ app:
     #    例如 UPGRADE_APPLY_COMMAND='echo noop'，用于断言状态确实推进到 APPLYING。
     #    注意这里只写命令**本体**：UpgradeApplier 会自动加壳（Windows 加 cmd.exe /c，
     #    类 Unix 加 /bin/sh -c），再写成 'cmd /c echo noop' 就变成了嵌套的一层壳。
-    enabled: ${UPGRADE_ENABLED:true}
     storage-root: ${UPGRADE_STORAGE_ROOT:./data/upgrade}
     current-artifact-dir: ${UPGRADE_CURRENT_ARTIFACT_DIR:./data/upgrade/current}
 
