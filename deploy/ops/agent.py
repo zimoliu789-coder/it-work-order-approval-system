@@ -329,7 +329,7 @@ fetch('api/status').then(function(r){return r.json();}).then(render).catch(funct
 def _validate_install(payload: dict):
     data_root = str(payload.get("dataRoot") or "").strip()
     if not SAFE_PATH.match(data_root) or data_root.endswith("/") or ".." in data_root:
-        return None, "数据目录必须是一个合法的宿主绝对路径（如 /vol1/1000/docker/ticket-data）"
+        return None, "数据目录必须是一个合法的宿主绝对路径（如 /vol2/1000/docker/ticket-data）"
     try:
         web_port = int(str(payload.get("webPort") or "8080"))
     except ValueError:
@@ -468,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                 "installed": installed,
                 "version": VERSION,
                 "uiEnabled": UI_ENABLED,
-                "defaultDataRoot": os.environ.get("OPS_DEFAULT_DATA_ROOT", "/vol1/1000/docker/ticket-data"),
+                "defaultDataRoot": os.environ.get("OPS_DEFAULT_DATA_ROOT", "/vol2/1000/docker/ticket-data"),
                 "defaultCookieSecure": os.environ.get("OPS_DEFAULT_COOKIE_SECURE", "false") == "true",
                 "containers": [{"service": s, "state": st, "health": h} for s, st, h in service_states()],
             })

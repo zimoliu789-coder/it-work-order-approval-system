@@ -198,7 +198,7 @@ if [ "$(id -u)" = "0" ]; then
   fi
 else
   warn "当前不是 root，无法自动放开权限。若 mysql 反复重启，请以 root 执行："
-  warn "  chmod -R a+rX \"$(pwd)\"    # 并确保上级目录可进入，如 chmod o+rx /vol1/1000/docker"
+  warn "  chmod -R a+rX \"$(pwd)\"    # 并确保上级目录可进入，如 chmod o+rx /vol2/1000/docker"
 fi
 
 # ---------------------------------------------------------------------

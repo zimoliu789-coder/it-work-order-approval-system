@@ -175,7 +175,7 @@ sudo bash scripts/preflight.sh
 ### 1. 启动运维代理
 
 ```bash
-cd /vol1/1000/docker/it-work-order-approval-system/deploy
+cd /vol2/1000/docker/it-work-order-approval-system/deploy
 docker compose -f ops/docker-compose.ops.yml up -d
 ```
 
@@ -536,16 +536,20 @@ sudo docker compose up -d --remove-orphans    # 拉起全部
 
 镜像标签由 `IMAGE_TAG` 控制（默认 `latest`；也可填不可变标签 `commit-<短sha>` 用于锁定或回滚）。
 
-> **V49 起升级入口按部署形态自适应**（页面只显示其中一个，不并列）：
-> - **Docker 部署且运维代理就绪** ⇒ 只显示「一键在线升级（拉取最新镜像并重建容器）」。
->   容器跑的是镜像，**上传升级包无效**（上传的 jar / dist 落在宿主目录里不会被加载），
->   所以这个入口干脆不显示，避免点错；
-> - **非 Docker 部署（宿主直接跑 jar）** ⇒ 才显示「上传升级包」。
+> **V51 起：两个入口常显、各自独立开关、默认都关闭。**
+> - **「一键在线升级」** —— 拉取最新镜像并重建容器，需要**运维代理（ops-agent）就绪**；
+> - **「上传升级包」** —— 给**非 Docker 部署**（宿主直接跑 jar）用。
+>   容器跑的是镜像，**上传的 jar / dist 落进宿主目录不会被加载**，Docker 下用了也是白用 ——
+>   页面会在卡片内提示，并在点「应用」时**显式拦截**。
+>   （V49 的做法是干脆不显示这个入口，但「按部署形态隐藏」只会在别处踩坑：
+>   运维代理没起来时入口消失，用户会以为功能坏了。）
 >
-> **总开关也从 `.env` 搬进了数据库**：现在到「在线升级」页把开关拨开即可，
-> 改完立刻生效，不需要改 `UPGRADE_ENABLED`、也不需要重建容器。
-> `.env` 里如果还留着 `UPGRADE_ENABLED=true`，它会被当作「强制开启」，
-> 页面上会注明「由部署配置强制开启，此处关不掉」—— 建议按新方式删掉这一行。
+> 两个开关都**存在数据库里**，在「在线升级」页拨一下**立刻生效** ——
+> 不需要改 `.env`、也不需要重建容器；两者互不影响，可以只开其中一个。
+> ⚠️ `.env` 里的 `UPGRADE_ENABLED` 是**两个入口共同的总闸**：为 true 时页面两个开关会被
+> 强制打开并**置灰**（页面上会注明「由部署配置强制开启，此处关不掉」）——
+> 建议删掉这一行，改由页面控制。
+> ⚠️ 升级后前端没变，**别急着怀疑浏览器缓存** —— 先确认 GHCR 上的镜像到底构建完了没有（见「方式一」）。
 
 > ⚠️ **严禁新旧版本实例混跑。** 库结构由镜像内置的 Flyway 迁移驱动。含 **表名变更** 的版本
 > （如 `V47` 把 `users`→`employee`、`orders`→`borrow_order`）一旦被某个实例执行过，
@@ -576,6 +580,25 @@ docker image inspect -f '{{.Id}} created={{.Created}}' \
 
 > - 只重建 `backend` / `frontend`，**不要**用不带服务名的 `--force-recreate`（那会把数据库与缓存一并重建）。
 > - 后端启动较慢（首次可达数分钟），期间 Nginx 对 backend 返回 503 属正常现象。
+> - ⚠️ **`docker compose pull` 拉到旧镜像是有可能的，而且不是拉取失败。**
+>   镜像由 CI 在 push `main` 时构建，四个服务（backend / frontend / backup / ops-agent）是
+>   **并行 job，完成时间各不相同**；前端构建（`npm ci` + `vite build`，还要出 arm64）通常比后端慢很多。
+>   于是会出现「后端已经拉到新版、前端拉到的仍是上一版」，两个容器却是同时重建的 ——
+>   症状是**页面文案是旧的，但接口报错来自新后端**（例如 `mode 不能为空`）。
+>
+>   **升级前先确认 GHCR 上的镜像就是你的目标提交**：
+>   ```bash
+>   G=ghcr.io/zimoliu789-coder/it-work-order-approval-system
+>   docker pull "$G/frontend:latest" >/dev/null 2>&1
+>   docker image inspect -f 'frontend revision={{index .Config.Labels "org.opencontainers.image.revision"}}' "$G/frontend:latest"
+>   git rev-parse HEAD          # 两者不一致 ⇒ 镜像还没构建完，等 CI 绿了再拉
+>   ```
+>   前端还有个**不依赖构建环境的版本判据**（连浏览器缓存一起排除）：
+>   ```bash
+>   curl -s https://<你的域名>/ | grep -oE 'assets/index-[A-Za-z0-9_-]+\.css'
+>   # 再抓这个 CSS 找只有新版本才有的标记：
+>   curl -s https://<你的域名>/assets/<上面拿到的文件名> | grep -c -- '--ts-fs-caption'
+>   ```
 
 #### 方式二：源码本地构建
 
@@ -646,7 +669,7 @@ docker compose pull && docker compose up -d --force-recreate backend frontend
 | 现象 | 原因与处理 |
 |---|---|
 | 容器起不来，日志报 `.env` 变量为空 | `docker compose up` 报 `必须设置 XXX` → 回到第三节补 `.env`，或先跑 `preflight.sh` |
-| **mysql 反复重启**，日志报 `Can't read dir of '/etc/mysql/conf.d/' (OS errno 13 - Permission denied)` | 宿主上 `deploy/` 对容器内 mysql 用户（uid 999）不可读 —— 经 Windows 共享 / 文件管理器拷来的目录常是 `0700`。以 root 执行 `chmod -R a+rX <deploy 目录>`，并确保上级目录可进入（如 `chmod o+rx /vol1/1000/docker`），再 `docker compose up -d`。`preflight.sh` 第 5 步已会自动处理 |
+| **mysql 反复重启**，日志报 `Can't read dir of '/etc/mysql/conf.d/' (OS errno 13 - Permission denied)` | 宿主上 `deploy/` 对容器内 mysql 用户（uid 999）不可读 —— 经 Windows 共享 / 文件管理器拷来的目录常是 `0700`。以 root 执行 `chmod -R a+rX <deploy 目录>`，并确保上级目录可进入（如 `chmod o+rx /vol2/1000/docker`），再 `docker compose up -d`。`preflight.sh` 第 5 步已会自动处理 |
 | `docker compose pull` 报 `manifest unknown` | `.env` 的 `IMAGE_TAG` 指向了仓库上不存在的标签。可用标签：`latest`（默认）/ `main` / `commit-<sha>` |
 | **边缘 Nginx 容器反复重启**，日志报 `[emerg] "set" directive is not allowed here in /etc/nginx/conf.d/ticket.conf:20`，宿主端口无人监听（浏览器 `ERR_CONNECTION_REFUSED`） | `nginx.conf` 的 `include /etc/nginx/conf.d/*.conf;` 位于 `http {}` 块内 ⇒ conf.d 下文件的**顶层等价于 http 上下文**，而 `set` 只允许出现在 `server` / `location` / `if` 中。把 `set` 移进 `server {}` 即可（注意 `resolver` 允许在 http 上下文，可留在顶层）。判断容器是否真在跑看 `docker inspect ticket-nginx --format '{{.State.Status}} {{.RestartCount}}'`，`RestartCount` 不为 0 即崩溃循环 |
 | **登录成功，但之后任何操作都被踢回登录页**（接口 401） | `.env` 里 `COOKIE_SECURE=true`，而你用**明文 HTTP** 访问（如 `http://192.168.1.60:8080`）—— 浏览器会直接丢弃带 `Secure` 标记的 Cookie，于是每个需要鉴权的请求都 401。纯 HTTP 联调请设 `COOKIE_SECURE=false` 后 `docker compose up -d backend`（须重建容器，`restart` 不生效），并**重新登录一次**。正式上线应改为前面挂 HTTPS 反代并把该值调回 `true` |
