@@ -18,6 +18,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -46,6 +48,12 @@ import java.util.stream.Collectors;
  *       让客户端知道「等多久」而不是盲目重试；</li>
  *   <li>未知异常统一 500 INTERNAL_ERROR，完整堆栈只进日志不外泄。</li>
  * </ol>
+ *
+ * <p><b>一条贯穿始终的边界</b>：凡是「客户端把请求写错了」的，都必须在**这里**被识别成 4xx，
+ * 绝不能落到最后的兜底分支。兜底分支会 `log.error` 打完整堆栈、并把异常交给
+ * {@link ExceptionRecorder} 落库 + 排队告警 —— 一旦客户端错误走到那里，
+ * 就会被当成**服务端故障**上报，污染异常统计与 5xx 指标，还可能把真故障淹没。
+ * 405 / 406 / 415 / 404 这几个处理器存在的全部理由就是这个。
  */
 @RestControllerAdvice
 @RequiredArgsConstructor
@@ -168,6 +176,44 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
         return build(ErrorCode.METHOD_NOT_ALLOWED, ErrorCode.METHOD_NOT_ALLOWED.getDefaultMessage());
+    }
+
+    /**
+     * 请求的 {@code Content-Type} 不被目标接口支持（应为 415）。
+     *
+     * <h2>为什么必须显式处理（而不是让它落到兜底 500）</h2>
+     * <p>这类请求**错在客户端**：典型场景是向「上传升级包」接口
+     * （只收 {@code application/octet-stream}）发 {@code application/json}。
+     * 但兜底分支会做两件更重的事：`log.error` 打完整堆栈，并把异常交给
+     * {@link ExceptionRecorder} **落库 + 排队告警**。
+     * 结果是「调用方 header 写错」被当成**服务端故障**上报 ——
+     * 既污染异常统计与 5xx 指标，又可能把真故障淹没在噪音里（P4-C2 的告警正是看这个）。
+     *
+     * <p>实测依据：接口此前对三种普通的客户端写法（JSON 打二进制端点、text/plain 打 JSON 端点、
+     * 不支持的 Accept）一律返回 500，并在 {@code exception_log} 各留下一条「系统异常」记录。
+     *
+     * <p>日志用 WARN 而非 ERROR：它是客户端问题，不该占用错误级日志与告警通道。
+     * 提示语带上实际收到的 Content-Type，让调用方一眼知道自己发了什么。
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException e,
+                                                                        HttpServletRequest request) {
+        log.warn("请求 Content-Type 不被支持 uri={} contentType={} traceId={}",
+                request.getRequestURI(), e.getContentType(), TraceContext.getTraceId());
+        return build(ErrorCode.UNSUPPORTED_MEDIA_TYPE, ErrorCode.UNSUPPORTED_MEDIA_TYPE.getDefaultMessage());
+    }
+
+    /**
+     * 请求的 {@code Accept} 无法被满足（应为 406）。
+     *
+     * <p>与上一个同理：这是**响应协商**层面的客户端错误，落到兜底 500 同样会
+     * 被误记成服务端故障。这里如实返回 406，并说明本接口只产出 JSON。
+     */
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotAcceptable(HttpMediaTypeNotAcceptableException e,
+                                                                         HttpServletRequest request) {
+        log.warn("请求 Accept 无法被满足 uri={} traceId={}", request.getRequestURI(), TraceContext.getTraceId());
+        return build(ErrorCode.NOT_ACCEPTABLE, ErrorCode.NOT_ACCEPTABLE.getDefaultMessage());
     }
 
     @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})

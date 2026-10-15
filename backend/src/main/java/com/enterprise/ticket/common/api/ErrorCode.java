@@ -67,6 +67,25 @@ public enum ErrorCode {
     CSRF_HEADER_MISSING("CSRF_HEADER_MISSING", "缺少安全校验请求头，请求被拒绝", 403),
     NOT_FOUND("NOT_FOUND", "请求的资源不存在", 404),
     METHOD_NOT_ALLOWED("METHOD_NOT_ALLOWED", "请求方法不被支持", 405),
+    /**
+     * 请求的 {@code Accept} 无法被满足（接口产出 JSON，客户端却只接受别的类型）。
+     *
+     * <p>单独立码而不复用 {@code PARAM_INVALID}：它错在**响应协商**而不是请求参数，
+     * 提示语必须指向 Accept 头，否则调用方会去翻请求体找问题。
+     */
+    NOT_ACCEPTABLE("NOT_ACCEPTABLE", "请求的 Accept 无法被满足（本接口只产出 JSON）", 406),
+    /**
+     * 请求的 {@code Content-Type} 不被目标接口支持。
+     *
+     * <p>典型场景：向「上传升级包」接口（只收 {@code application/octet-stream}）
+     * 发 {@code application/json}。
+     *
+     * <p>为什么值得单独立码、而不是让它落到兜底 500：这类请求**错在客户端**，
+     * 但兜底分支会 `log.error` 打完整堆栈、并把它交给异常采集器**落库 + 排队告警** ——
+     * 于是「调用方 header 写错」会被当成服务端故障上报，既污染异常统计，
+     * 又可能把真故障淹没在噪音里。HTTP 语义本就是 415，如实返回即可。
+     */
+    UNSUPPORTED_MEDIA_TYPE("UNSUPPORTED_MEDIA_TYPE", "请求的 Content-Type 不被支持", 415),
     PARAM_INVALID("PARAM_INVALID", "请求参数不合法", 400),
     UPLOAD_FILE_TOO_LARGE("UPLOAD_FILE_TOO_LARGE", "上传文件超过服务端允许的大小上限", 400),
     PASSWORD_WEAK("PASSWORD_WEAK", "密码强度不足", 400),
@@ -510,13 +529,16 @@ public enum ErrorCode {
 
     // ---------------- ：在线一键升级 ----------------
     /**
-     * 在线升级功能未启用（{@code app.upgrade.enabled=false}）。
+     * 该升级入口未启用（V51 起为两个独立开关：在线升级 / 上传升级包）。
      *
      * <p>生产默认关闭：该模块能替换服务器上的可执行文件，等价于代码执行能力。
      * 这里刻意**不降级成「只校验不应用」** —— 那样管理员会以为升级已经完成，
      * 而实际上什么都没换。宁可明确报错并告诉他去打开哪个开关。
+     *
+     * <p>V51 起有两个开关，因此服务层抛这个码时<b>会带上具体是哪一个入口</b>，
+     * 避免管理员去拨错那一个（见 {@code UpgradeService#requireOnlineEnabled}）。
      */
-    UPGRADE_DISABLED("UPGRADE_DISABLED", "在线升级功能未启用，请在部署配置中开启 app.upgrade.enabled", 400),
+    UPGRADE_DISABLED("UPGRADE_DISABLED", "该升级入口未启用，请在「系统设置 → 在线升级」页打开对应开关", 400),
     UPGRADE_PACKAGE_REQUIRED("UPGRADE_PACKAGE_REQUIRED", "请选择要上传的升级包", 400),
     UPGRADE_PACKAGE_TOO_LARGE("UPGRADE_PACKAGE_TOO_LARGE", "升级包超过大小上限", 400),
     /**
