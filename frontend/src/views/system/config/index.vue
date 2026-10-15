@@ -1526,15 +1526,17 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-@media (max-width: 1199px) {
-  /* 中等屏：一行最多两个 —— 短项从 4 列放宽到 6 列，否则输入框会被压得过窄 */
-  .cfg__field.is-span-short {
-    grid-column: span 6;
-  }
-}
-
-@media (max-width: 900px) {
-  /* 窄屏：一律整行（跨度是宽屏建议，这里统一作废） */
+/**
+ * 断点说明（折叠屏专项）
+ * 折叠屏展开态的 CSS 视口约 728–830px，正好落在旧的 900px 断点右边缘 ——
+ * 900→901 一个像素之差，整页骨架就从「顶部横排」跳成「左侧竖排」（形态突变），
+ * 机型差一点就翻车。故把分界线从 900 提到 1023：**1024+ 才是真桌面**。
+ *
+ * 原 1199px 那条（短项放宽到 span 6）随之并入本档并删除：
+ * 两者收窄到同一阈值后，「span 6」会被本档的 span 12 完全覆盖，留着只会误导后来人。
+ */
+@media (max-width: 1023px) {
+  /* 内屏 / 窄屏：一律整行（跨度是宽屏建议，这里统一作废） */
   .cfg__field.is-span-short,
   .cfg__field.is-span-medium {
     grid-column: span 12;

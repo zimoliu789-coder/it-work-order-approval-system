@@ -243,7 +243,7 @@ onMounted(async () => {
 /* 版权文字（）：卡片底部一行小字，不与提示文案争视觉重心 */
 .ts-login__copyright {
   margin: 18px 0 0;
-  font-size: 11px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.5;
   color: var(--ts-text-hint);
   text-align: center;

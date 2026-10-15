@@ -57,6 +57,7 @@
       </el-descriptions>
 
       <el-table
+        v-if="!isCompact"
         v-loading="loading"
         class="ts-mt-16"
         :data="records"
@@ -101,6 +102,46 @@
         </el-table-column>
       </el-table>
 
+      <!--
+        紧凑档降级为卡片（≤1023px，内屏 / 手机）。
+        本表 8 列，在 840px 内屏上平均列宽不足 92px —— 表格已不可读。
+        字段按「先看结论、再看细节」排序：状态与时间在头部，失败原因单独成行且不截断
+        （备份页最需要一眼看到的恰恰是失败原因，用 tooltip 藏起来等于藏起了它）。
+      -->
+      <div v-else v-loading="loading" class="ts-backup__cards">
+        <div v-for="row in records" :key="row.id" class="ts-backup__card">
+          <div class="ts-backup__card-head">
+            <span class="ts-backup__card-time">{{ row.startedAt }}</span>
+            <el-tag size="small" effect="plain" :type="backupStatusTagType(row.status)">
+              {{ row.statusLabel }}
+            </el-tag>
+          </div>
+          <div class="ts-backup__card-row">
+            <span class="ts-text-hint">触发方式</span>
+            <el-tag size="small" effect="plain" :type="backupTriggerTagType(row.triggerType)">
+              {{ row.triggerLabel }}
+            </el-tag>
+          </div>
+          <div class="ts-backup__card-row">
+            <span class="ts-text-hint">文件</span>
+            <span class="ts-backup__card-file">{{ row.fileName || '-' }}</span>
+          </div>
+          <div class="ts-backup__card-row">
+            <span class="ts-text-hint">大小 / 耗时</span>
+            <span>{{ row.sizeText }} · {{ row.durationText }}</span>
+          </div>
+          <div class="ts-backup__card-row">
+            <span class="ts-text-hint">操作人</span>
+            <span>{{ row.operatorName ?? '-' }}</span>
+          </div>
+          <div v-if="row.errorMessage" class="ts-backup__card-row ts-backup__card-row--error">
+            <span class="ts-text-hint">失败原因</span>
+            <span class="ts-backup__failure">{{ row.errorMessage }}</span>
+          </div>
+        </div>
+        <el-empty v-if="!loading && records.length === 0" :image-size="70" description="暂无备份记录" />
+      </div>
+
       <el-pagination
         v-if="total > 0"
         class="ts-mt-16"
@@ -132,6 +173,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { backupApi } from '@/api/backup'
+import { useResponsive } from '@/composables/useResponsive'
 import {
   backupStatusTagType,
   backupTriggerTagType,
@@ -148,8 +190,18 @@ const page = ref(1)
 const size = ref(20)
 const overview = ref<BackupOverview | null>(null)
 
-/** 窄屏判定：与全站其它页面同一断点（<= 768px） */
-const isMobile = computed(() => window.innerWidth <= 768)
+/**
+ * 响应式断点统一走 useResponsive（不再手写 window.innerWidth）。
+ *
+ * ⚠️ 原实现 `computed(() => window.innerWidth <= 768)` 有两个问题：
+ *   ① 阈值 768 与全站事实标准 767 差一个像素 —— 767 与 768 会走到不同分支；
+ *   ② 更严重的是**不响应 resize**：computed 无响应式依赖，首次求值后即被永久缓存，
+ *      窗口缩放（以及折叠屏展开 / 合上）都不会重算。
+ * useResponsive 用 matchMedia + change 监听，两个问题一次解决。
+ *
+ * isCompact = 手机 + 内屏（≤1023px）：本页表格 8 列，内屏上也摊不开，故沿用同一降级阈值。
+ */
+const { isMobile, isCompact } = useResponsive()
 
 /**
  * 首屏横幅：按「严重程度」从高到低取第一条真正需要处置的事实。
@@ -293,5 +345,56 @@ async function handleRun(): Promise<void> {
 
 .ts-ml-8 {
   margin-left: 8px;
+}
+
+/* ---------- 备份记录的紧凑档卡片（≤1023px 替代表格） ---------- */
+.ts-backup__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.ts-backup__card {
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-radius);
+  background: var(--ts-surface);
+  padding: 12px;
+}
+
+.ts-backup__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ts-backup__card-time {
+  font-size: var(--ts-fs-body);
+  font-weight: 600;
+}
+
+.ts-backup__card-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: var(--ts-fs-caption);
+  line-height: 1.6;
+}
+
+.ts-backup__card-row > .ts-text-hint:first-child {
+  flex: 0 0 72px;
+}
+
+.ts-backup__card-file {
+  word-break: break-all;
+}
+
+/* 失败原因不截断：备份页最需要一眼看到的正是它 */
+.ts-backup__card-row--error {
+  color: var(--ts-danger);
+  word-break: break-all;
 }
 </style>

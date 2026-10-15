@@ -428,7 +428,8 @@ onMounted(load)
 }
 
 .ts-fm__cell-hint {
-  font-size: 11px;
+  /* 11px 低于 12px 可读下限（也低于全站最小字号档）—— 提到 caption 档 */
+  font-size: var(--ts-fs-caption);
   line-height: 1.4;
 }
 

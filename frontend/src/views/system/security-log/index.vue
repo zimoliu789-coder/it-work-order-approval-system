@@ -405,7 +405,7 @@ onMounted(() => {
   word-break: break-all;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ts-seclog__field {
     width: 100%;
   }

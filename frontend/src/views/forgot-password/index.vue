@@ -578,6 +578,17 @@ onBeforeUnmount(stopCountdown)
   text-align: center;
 }
 
+/**
+ * 「返回登录」是 link 型按钮 —— Element Plus 对它设的是 `height: auto; padding: 0`，
+ * 实测只有 62×20px。这在**降级态**（找回密码暂不可用）下是致命的：
+ * 此时本页唯一的可交互元素就是它，20px 高在触屏上几乎点不中。
+ * 故显式给足触控高度（桌面 32px / 手机 44px，与全站口径一致）。
+ */
+.ts-fp__links .el-button {
+  min-height: 32px;
+  padding: 0 8px;
+}
+
 @media (max-width: 767px) {
   .ts-fp {
     align-items: flex-start;
@@ -587,6 +598,11 @@ onBeforeUnmount(stopCountdown)
   .ts-fp__panel {
     padding: 22px 18px;
     border-radius: 12px;
+  }
+
+  .ts-fp__links .el-button {
+    min-height: 44px;
+    padding: 0 12px;
   }
 }
 </style>

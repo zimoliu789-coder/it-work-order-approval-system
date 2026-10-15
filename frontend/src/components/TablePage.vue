@@ -263,7 +263,7 @@ function handleSizeChange(next: number): void {
       :data="rows"
       border
       stripe
-      size="small"
+      size="default"
       class="ts-table-page__table"
     >
       <!--

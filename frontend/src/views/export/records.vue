@@ -296,7 +296,7 @@ onMounted(load)
 .ts-filter {
   width: 160px;
 }
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ts-card__actions {
     width: 100%;
   }

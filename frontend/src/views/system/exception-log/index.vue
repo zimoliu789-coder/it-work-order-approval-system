@@ -427,7 +427,7 @@ onMounted(() => {
   border-radius: 6px;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 767px) {
   .ts-exlog__stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

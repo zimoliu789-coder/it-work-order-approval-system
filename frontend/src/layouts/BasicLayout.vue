@@ -337,6 +337,18 @@ onMounted(() => {
 
 .ts-layout__content {
   flex: 1 1 auto;
+  /*
+   * 内容区宽度上限 —— 治「卡片宽度 264~1169px 七种并存」。
+   * 1128 = 1060（实测标准内容区）+ 左右各 24 内边距 + 20 余量，取 8 的倍数。
+   * 该值让 /asset/fault、/system/role 的 1169px 自动收回，/dashboard 的 1134px 也不再超框。
+   *
+   * ⚠️ 若发现某页被「挤窄」，不要调大这个值 ——
+   *    那说明该页在靠「铺满」塞内容，正确做法是让**该页内容横向滚动**（列表页的常规做法）。
+   */
+  width: 100%;
+  max-width: 1128px;
+  margin: 0 auto;
+  padding: 0 24px;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;

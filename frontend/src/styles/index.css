@@ -1,10 +1,21 @@
 /**
- * 全局样式与响应式断点（ 浏览器兼容性与响应式 UI、 前端 UI 规范）
+ * 全局样式 · 设计基座（ 浏览器兼容性与响应式 UI、 前端 UI 规范）
  *
- * 断点定义：
- *   0-767px    手机
- *   768-1199px 平板
- *   1200px+    PC
+ * ════════════════════════════════════════════════════════════════
+ * 三档断点（全站唯一口径，页面级不要再自造阈值）
+ * ════════════════════════════════════════════════════════════════
+ *   外屏 / 手机    ≤ 767px     抽屉菜单 + 卡片列表 + 44px 触控
+ *   内屏 / 平板    768–1023px  图标栏 + 表格 + 40px 触控（折叠屏展开态落在这里）
+ *   桌面          ≥ 1024px    完整侧栏 + 表格 + 32px 控件
+ *
+ * 为什么平板档上界是 1023 而不是 1199：
+ *   1024–1199 这段宽度下「完整侧栏 + 表格」是**可用**的，没必要降级；
+ *   而折叠屏内屏（展开态 CSS 视口约 410→830px）最高只到 ≈830px，
+ *   768–1023 已完全覆盖。旧的 1199 会把折叠屏内屏和「半吊子区」混在一起。
+ *
+ * ⚠️ 本文件里 Element Plus 覆盖的**书写顺序即优先级**（媒体查询不增加权重）。
+ *    顺序固定为：基座覆盖（桌面档） → 手机档 → 平板档。
+ *    新增规则时**只能往后追加**，插到前面会被后面的同权重规则盖掉。
  */
 
 :root {
@@ -27,6 +38,27 @@
 
   /* 移动端安全区域（刘海屏 / 底部手势条） */
   --ts-safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ============================================================
+     字号层级（治「全站 87% 文字挤在 12 / 14 两档」）
+     原状全站并存 11 / 12 / 13 / 14 / 15 / 16 / 20px 七个档，
+     这里收敛为 4 档 —— 13px / 15px 并入相邻档，11px 提到 12px。
+     页面里原有的 13 / 15px 写法暂不强改，等基座生效后逐页替换。
+     ============================================================ */
+  --ts-fs-page: 20px;    /* 页面标题（原状全站只出现 3 次） */
+  --ts-fs-card: 16px;    /* 卡片 / 区块标题 */
+  --ts-fs-body: 14px;    /* 正文、表单标签、按钮 */
+  --ts-fs-caption: 12px; /* 说明、辅助、表格 */
+
+  /* ============================================================
+     8px 栅格间距（治「间距无基准」）
+     ============================================================ */
+  --ts-sp-1: 4px;
+  --ts-sp-2: 8px;
+  --ts-sp-3: 12px;
+  --ts-sp-4: 16px;
+  --ts-sp-6: 24px;
+  --ts-sp-8: 32px;
 }
 
 * {
@@ -62,12 +94,8 @@ a {
   text-decoration: none;
 }
 
-/* 触控友好：移动端保证足够点击面积（） */
+/* 手机档的弹窗与表单（触控目标统一放在文件末尾，见下方「手机档」） */
 @media (max-width: 767px) {
-  .el-button {
-    min-height: 40px;
-  }
-
   /* 移动端弹窗贴合屏幕，避免超出可视区域 */
   .el-dialog {
     width: calc(100vw - 24px) !important;
@@ -76,11 +104,6 @@ a {
 
   .el-dialog__body {
     padding: 16px;
-  }
-
-  /* 表单在手机上单列展开 */
-  .el-form-item {
-    margin-bottom: 16px;
   }
 }
 
@@ -142,5 +165,179 @@ a {
 
   .ts-page {
     padding: 12px;
+  }
+}
+
+/* ============================================================
+   Element Plus 基座覆盖（桌面档）
+   ────────────────────────────────────────────────────────────
+   全站**只有这一处**覆盖 el-table / el-form / el-button 的默认尺寸。
+   页面内不要再各写各的，否则又会回到「七种字号 / 五种控件高度」的状态。
+
+   ⚠️ 两条必须记住的坑（都在浏览器里实测确认过）：
+   ① 同权重规则**靠加载顺序**判胜负。EP 的样式表在运行时**后注入**，
+      所以只写 `.el-form-item { … }` 会被 EP 自己的声明盖掉。
+      凡是要覆盖 EP 的，都要**提权**（见下面 form 那两条）。
+   ② EP 的尺寸变量（`--el-component-size` / `--el-input-height` /
+      `--el-form-item-margin-bottom` …）是声明在**组件根元素自身**上的，
+      写进 `:root` 无效 —— 必须就近覆盖。
+   ============================================================ */
+
+/* ---------- 表格：表头必须与数据行「长得不一样」 ----------
+   实测原状：表头与数据行同为 32px、同为 12px、表头无底色 →
+   用户第一眼找不到表头在哪。
+   作用域限定 .ts-table-page__table（TablePage 渲染的页面主表）：
+   弹窗 / 抽屉里的 el-table 保持 EP 紧凑档，不被撑高。 */
+.ts-table-page__table th.el-table__cell {
+  height: 40px;
+  padding: 0 12px;
+  font-size: var(--ts-fs-caption);
+  font-weight: 600;
+  color: var(--ts-text);
+  background: var(--ts-bg);
+}
+
+.ts-table-page__table td.el-table__cell {
+  height: 44px;
+  padding: 0 12px;
+  font-size: var(--ts-fs-caption);
+  color: var(--ts-text);
+}
+
+/* 斑马纹：原状组件已传 stripe，但底色贴近白色、看不出差异 —— 给一个可辨识的值 */
+.ts-table-page__table.el-table--striped
+  .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafbfc;
+}
+
+/* 悬停高亮 */
+.ts-table-page__table .el-table__body tr:hover > td.el-table__cell {
+  background: #f5f7fa;
+}
+
+/* 表头与表体之间的分隔线加重一档 */
+.ts-table-page__table th.el-table__cell.is-leaf {
+  border-bottom: 1px solid var(--ts-border);
+}
+
+/* ---------- 表单：标签与控件拉开 ----------
+   ⚠️ 权重必须高于 EP 的 `.el-form-item`（同为 0,1,0 时会输给后注入的 EP），
+      所以这里用 `form .el-form-item` / `.el-form .el-form-item`（0,1,1）。 */
+form .el-form-item,
+.el-form .el-form-item {
+  --el-form-item-margin-bottom: var(--ts-sp-6);
+  margin-bottom: var(--ts-sp-6);
+}
+
+.el-form-item__label {
+  font-size: var(--ts-fs-body);
+  color: var(--ts-text);
+}
+
+/* ---------- 按钮：统一最小高度 ----------（原状实测在 20 / 32 / 40px 之间跳） */
+.el-button {
+  min-height: 32px;
+}
+
+/* ---------- 输入框：统一高度 ----------（原状实测 24 / 30 / 32 / 38px 混用） */
+.el-input__inner,
+.el-select__wrapper,
+.el-textarea__inner {
+  min-height: 32px;
+}
+
+/* ---------- 卡片标题：全站一个规格 ----------（原状 15px / 16px 两种实现并存） */
+.ts-card > h3,
+.ts-card > .ts-card__title {
+  font-size: var(--ts-fs-card);
+  font-weight: 600;
+  margin: 0 0 var(--ts-sp-4);
+}
+
+/* ============================================================
+   手机档 ≤767px：触控目标 ≥44px（WCAG 2.5.5）
+   ────────────────────────────────────────────────────────────
+   ⚠️ 必须放在文件**最末尾**：媒体查询**不增加权重**，
+      同权重下后写的赢 —— 把本块放在基座覆盖之前，
+      就会被上面的 32px 压回去（现象是 matchMedia 命中但高度没变）。
+   ============================================================ */
+@media (max-width: 767px) {
+  .el-button {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 14px;
+  }
+
+  .el-input__inner,
+  .el-select__wrapper,
+  .el-textarea__inner {
+    min-height: 44px;
+  }
+
+  /* 分页按钮 32×32 → 44×44 */
+  .el-pagination .btn-prev,
+  .el-pagination .btn-next,
+  .el-pagination .el-pager li {
+    min-width: 44px;
+    height: 44px;
+    line-height: 44px;
+  }
+
+  /* 表格行内操作按钮：允许换行、拉开间距，避免挤成一团 */
+  .el-table .el-button + .el-button {
+    margin-left: 0;
+  }
+
+  .el-table .cell > .el-button {
+    margin: 2px 4px 2px 0;
+  }
+
+  /* 表单在手机上保持紧凑（16px）；权重与基座覆盖持平，靠位置在后获胜 */
+  form .el-form-item,
+  .el-form .el-form-item {
+    --el-form-item-margin-bottom: var(--ts-sp-4);
+    margin-bottom: var(--ts-sp-4);
+  }
+}
+
+/* ============================================================
+   内屏 / 平板档 768–1023px：触控目标 40px
+   ────────────────────────────────────────────────────────────
+   折叠屏展开态就落在这一档，而原状**这一档完全没处理** ——
+   所以折叠屏的问题不是「新问题」，是「空的中间档」被暴露。
+
+   为什么是 40px 而不是 Google 建议的 48px：
+     内屏信息密度远高于手机，48px 会让 /asset/ledger（单页 90+ 控件）
+     明显臃肿、反而影响扫读。40px 是「触控可达」与「密度可控」的折中，
+     且已高于桌面档的 32px。**手机档仍是 44px，不下调。**
+   ============================================================ */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .ts-table-page__bar .el-button,
+  .ts-table-page__pager .el-button,
+  .ts-layout__header .el-button,
+  .cfg__bar .el-button,
+  .el-dialog__footer .el-button {
+    min-height: 40px;
+    padding: 0 16px;
+  }
+
+  .el-input__inner,
+  .el-select__wrapper,
+  .el-textarea__inner {
+    min-height: 40px;
+  }
+
+  .el-pagination .btn-prev,
+  .el-pagination .btn-next,
+  .el-pagination .el-pager li {
+    min-width: 40px;
+    height: 40px;
+    line-height: 40px;
+  }
+
+  /* 表格行内按钮保持紧凑，避免密集表格臃肿 */
+  .el-table .cell > .el-button {
+    min-height: 30px;
+    padding: 0 10px;
   }
 }

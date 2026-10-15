@@ -2067,8 +2067,10 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 }
 
 .ts-org__aside {
-  flex: 0 0 264px;
-  width: 264px;
+  /* 264 → 300px：264px 时部门名稍长就被截断，而左侧树恰恰是「按名找部门」的入口。
+     加宽后与右侧成员表 1:3 的比例也更接近常见的主从布局。 */
+  flex: 0 0 300px;
+  width: 300px;
   max-height: calc(100vh - 160px);
   overflow: auto;
 }
@@ -2148,7 +2150,8 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 .ts-org__node-badge {
   flex: 0 0 auto;
   padding: 0 4px;
-  font-size: 11px;
+  /* 11px 低于 12px 可读下限 —— 提到 caption 档（徽标字号小但要读得清） */
+  font-size: var(--ts-fs-caption);
   line-height: 16px;
   color: var(--el-color-primary);
   border: 1px solid var(--el-color-primary-light-5);
