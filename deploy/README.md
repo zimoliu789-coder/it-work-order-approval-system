@@ -176,10 +176,47 @@ sudo bash scripts/preflight.sh
 
 ```bash
 cd /vol2/1000/docker/it-work-order-approval-system/deploy
-docker compose -f ops/docker-compose.ops.yml up -d
+
+# ⚠️ DEPLOY_HOST_DIR = 本目录在**宿主上的绝对路径**，必须给（见下方说明）
+DEPLOY_HOST_DIR=$(pwd) docker compose -f ops/docker-compose.ops.yml up -d
 ```
 
 一条命令就够 —— 这份编排文件**不含任何必填变量**，所以能在还没有 `.env` 时跑起来。
+
+#### ⚠️ 一键在线升级的真实前提：`DEPLOY_HOST_DIR`
+
+`DEPLOY_HOST_DIR` 必须等于 **deploy 目录在宿主上的绝对路径**，并让容器内挂到**同一路径**。
+不设它也能启动（会退回 `..:/deploy`），但**一键在线升级会被 agent 的前置检查拒绝执行**，
+并在升级任务里如实写明原因 —— 这是刻意的：宁可响亮失败，也不要静默重建出坏容器。
+
+**为什么**：agent 执行的 compose 命令是交给**宿主的 docker daemon** 的，而主 compose 里存在
+**相对路径的绑定挂载**（`./ops-data:/data/ops`）。**相对路径由宿主解析** ——
+若把容器内的 `/deploy` 当工作目录传过去，宿主上并没有这个目录，Docker 会
+**静默新建一个空的 `/deploy/ops-data`** 挂进被重建的容器。于是：
+
+| 谁 | 读写哪里 |
+|---|---|
+| agent | `deploy/ops-data/…`（它有挂载，写得到） |
+| 被它重建的 backend | 宿主凭空出现的 `/deploy/ops-data`（空的） |
+
+⇒ 后端读不到心跳与升级回执 ⇒ 页面显示「运维代理未就绪」+ 任务**永远停在「应用中」**，
+30 分钟后被兜底逻辑**误判为失败**。全程**没有任何一边报错**。
+（2026-10-16 现场实跑踩到，已加前置自检拦截。）
+
+**改完之后验证**（两条都应能对上）：
+
+```bash
+docker inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{"\n"}}{{end}}' ticket-ops-agent | grep "$(pwd)"
+docker inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{"\n"}}{{end}}' ticket-backend  | grep /data/ops
+# 第二条应输出：/data/ops=/vol2/.../deploy/ops-data   （而不是 /deploy/ops-data）
+```
+
+> 若曾经用错误的工作目录跑过一次在线升级，宿主上可能残留一个空的 `/deploy/` 目录
+> （`ls -ld /deploy`）。**确认没有任何容器在用它之后再删**：
+> ```bash
+> docker ps -aq | xargs docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}} {{end}}' | grep /deploy \
+>   || echo "无容器引用 /deploy，可安全删除"
+> ```
 （主 compose 不行：里面 `${MYSQL_ROOT_PASSWORD:?}` 会让 Compose 在**解析阶段**直接报错，
 即使只想启动其中一个服务也一样 —— 这是 Compose 的既定行为，不是配置问题。）
 

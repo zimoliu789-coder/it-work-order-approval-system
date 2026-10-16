@@ -174,8 +174,60 @@ def finish_receipt(task_no: str, result: str, message: str) -> None:
         })
 
 
+def deploy_dir_matches_host():
+    """
+    自检：「容器内的 deploy 路径」是否等于「它在宿主上的真实路径」。
+
+    <h2>为什么必须在动手前查这一件事</h2>
+    agent 执行的 compose 命令是交给**宿主的** docker daemon 执行的，而主 compose 里存在
+    **相对路径的绑定挂载**（`./ops-data:/data/ops`）。相对路径由宿主解析 ——
+    如果容器内的 deploy 路径（例如 `/deploy`）在宿主上并不存在，Docker 会
+    **静默新建一个空目录**挂进被重建的容器。此后 agent 与后端读写的是**两个不同的目录**：
+    心跳、升级回执全部读不到，页面表现为「运维代理未就绪 + 任务永远停在应用中」，
+    而且**两边都不报错**。2026-10-16 现场实跑踩到过。
+
+    判据：读自己的挂载表，取 Destination 等于 DEPLOY_DIR 的那一条，比较 Source。
+    不等 ⇒ 相对路径必然错位 ⇒ 必须拒绝执行，把**静默失败**变成**响亮失败**。
+
+    @return (是否一致, 不一致时的说明)
+    """
+    me = os.environ.get("HOSTNAME", "").strip()
+    if not me:
+        # 拿不到自己的容器名就不拦 —— 宁可少拦一次，也不要因为环境差异误拦正常升级
+        return True, ""
+    code, out, _ = _run(["docker", "inspect", "-f",
+                         '{{range .Mounts}}{{.Destination}}={{.Source}}{{"\\n"}}{{end}}',
+                         me], timeout=30)
+    if code != 0:
+        return True, ""
+    for line in out.splitlines():
+        dest, _, src = line.partition("=")
+        if dest.strip() == DEPLOY_DIR:
+            src = src.strip()
+            if src != DEPLOY_DIR:
+                return False, "容器内 %s ← 宿主 %s（二者必须相同）" % (DEPLOY_DIR, src)
+            return True, ""
+    return True, ""
+
+
 def apply_upgrade(task_no: str) -> None:
     log("[升级] 收到请求 taskNo=%s，开始执行 docker compose pull" % task_no)
+
+    # ---- 前置自检：条件不满足就在「破坏之前」拒绝 ----
+    # 放在最前面是有意的：此刻被重建的容器还没动，后端的挂载仍然正确，
+    # 所以下面这条 FAILED 回执**一定读得到**（若等重建完再发现，后端就读不到了）。
+    ok, detail = deploy_dir_matches_host()
+    if not ok:
+        msg = ("拒绝执行一键在线升级：deploy 目录在容器内与宿主上的路径不一致（%s）。"
+               "继续执行会让 compose 的相对路径挂载被宿主解析到另一个目录，"
+               "重建后的后端将读不到心跳与升级回执。"
+               "修法：给 ops-agent 设置 DEPLOY_HOST_DIR = deploy 目录在宿主上的绝对路径，"
+               "并让容器内也挂到同一路径（见 deploy/ops/docker-compose.ops.yml 的 volumes）。"
+               % detail)
+        log("[升级] %s" % msg)
+        finish_receipt(task_no, "FAILED", msg)
+        return
+
     code, out, err = compose("pull", timeout=1800)
     if code != 0:
         detail = (err or out).strip()[-800:]

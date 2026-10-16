@@ -34,11 +34,20 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
       # 安装向导开关。装完可以设为 false 只保留升级执行能力（少一个入口就少一分风险）
       OPS_UI_ENABLED: ${OPS_UI_ENABLED:-true}
-      DEPLOY_DIR: /deploy
+      # ⚠️ 给成 deploy 目录在**宿主上的绝对路径**（同时容器内也挂到同一路径，见下面 volumes）。
+      #
+      # 为什么不能沿用容器内的 /deploy：agent 会把这个值当作 compose 的
+      # `--project-directory` 交给**宿主的** docker daemon。主 compose 里有相对路径的绑定挂载
+      # （`./ops-data:/data/ops`），而**相对路径是由宿主 daemon 解析的** —— 传 /deploy 时
+      # 宿主上并没有这个目录，Docker 会**静默新建一个空的 /deploy/ops-data** 挂进被重建的容器。
+      # 于是：agent 写 deploy/ops-data（它有挂载、写得到），它重建的 backend 却挂着宿主那个
+      # 空目录 ⇒ 后端读不到心跳与升级回执 ⇒「运维代理未就绪」+「任务永远停在应用中」，
+      # 而且**两边都不报错**。2026-10-16 现场实跑踩到过（详见 deploy/README.md）。
+      DEPLOY_DIR: "${DEPLOY_HOST_DIR:-/deploy}"
       # 与后端共享的目录：agent 写心跳/回执，后端写升级请求。
       # 它同时是 UPGRADE_STORAGE_ROOT 的父目录，所以「当前版本」与回执都在这里，
       # 后端重启后能读到 —— 不需要两边各配一遍路径。
-      OPS_SHARED_DIR: /deploy/ops-data
+      OPS_SHARED_DIR: "${DEPLOY_HOST_DIR:-/deploy}/ops-data"
       COMPOSE_PROJECT_NAME: ticket-system
       # 向导里的默认值，只是给不熟悉的人一个提示，不参与任何判断
       OPS_DEFAULT_DATA_ROOT: ${OPS_DEFAULT_DATA_ROOT:-}
@@ -54,8 +63,14 @@ services:
       #    backend / frontend / nginx / mysql / redis **全都不挂**。
       #    收窄手段见 deploy/README.md「运维代理与 docker.sock」一节。
       - /var/run/docker.sock:/var/run/docker.sock
-      # deploy 目录可写：引导阶段要生成 .env，升级阶段要读 compose 文件
-      - ../:/deploy
+      # deploy 目录可写：引导阶段要生成 .env，升级阶段要读 compose 文件。
+      #
+      # ⚠️ 源与目标**写成同一个绝对路径**（由 DEPLOY_HOST_DIR 给出），不是 `../:/deploy`。
+      #    原因见上面 DEPLOY_DIR 的说明：agent 交给宿主 daemon 的 `--project-directory`
+      #    必须是一个在**宿主上也成立**的路径，否则主 compose 里的相对挂载会被解析到错误位置。
+      #    未设置 DEPLOY_HOST_DIR 时退回旧写法（`..:/deploy`）—— 此时**一键在线升级会被
+      #    agent 的前置检查拦下并如实报错**，不会静默重建出挂载错位的容器。
+      - "${DEPLOY_HOST_DIR:-..}:${DEPLOY_HOST_DIR:-/deploy}"
     logging:
       driver: json-file
       options:
