@@ -26,6 +26,15 @@ public record UpgradeTaskVO(
         String step,
         Integer progress,
         String message,
+        /**
+         * agent **此刻正在做的动作**（如「正在拉取最新镜像…」）。
+         *
+         * <p>仅「应用中」阶段有值，来自 {@code state/progress/<taskNo>.json}。
+         * 「替换 + 重启」对外是原子的，但 `docker compose pull` 实测要 2.5 分钟 ——
+         * 没有它，页面只能显示一个不动的 90% 进度条，管理员无法分辨「正常拉取」与「已经卡死」。
+         * 为 null 表示暂无进展（前端据此回退到自己的静态说明文案）。
+         */
+        String progressText,
         String operatorName,
         LocalDateTime startedAt,
         LocalDateTime finishedAt,
@@ -37,6 +46,13 @@ public record UpgradeTaskVO(
 ) {
 
     public static UpgradeTaskVO of(UpgradeTask task, boolean rollbackEnabled) {
+        return of(task, rollbackEnabled, null);
+    }
+
+    /**
+     * @param progressText agent 当前动作的一行文案（见 {@link #progressText}），无进展时传 null
+     */
+    public static UpgradeTaskVO of(UpgradeTask task, boolean rollbackEnabled, String progressText) {
         UpgradeStatus status = UpgradeStatus.of(task.getStatus());
         boolean stateOk = status != null && status.isRollbackable();
         return new UpgradeTaskVO(
@@ -51,6 +67,7 @@ public record UpgradeTaskVO(
                 task.getStep(),
                 task.getProgress(),
                 task.getMessage(),
+                progressText,
                 task.getOperatorName(),
                 task.getStartedAt(),
                 task.getFinishedAt(),

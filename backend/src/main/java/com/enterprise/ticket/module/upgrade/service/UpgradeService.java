@@ -134,9 +134,16 @@ public class UpgradeService {
                 .toList();
     }
 
-    /** 单条任务详情 */
+    /**
+     * 单条任务详情。
+     *
+     * <p>只有这里读 agent 的进展文件 —— 历史列表（{@link #history()}）刻意不读：
+     * 那是「每行一次文件读取」的 N+1，而历史里的任务早就结束了，进展本来也没有意义。
+     */
     public UpgradeTaskVO detail(String taskNo) {
-        return UpgradeTaskVO.of(requireTask(taskNo), storage.config().isRollbackEnabled());
+        UpgradeTask task = requireTask(taskNo);
+        return UpgradeTaskVO.of(task, storage.config().isRollbackEnabled(),
+                storage.progressText(task.getTaskNo()));
     }
 
     // ==================================================================

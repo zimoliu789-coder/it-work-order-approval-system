@@ -11,6 +11,6 @@
 set -e
 
 SHARED="${OPS_SHARED_DIR:-/deploy/ops-data}"
-mkdir -p "${SHARED}/requests" "${SHARED}/upgrade/state/result" 2>/dev/null || true
+mkdir -p "${SHARED}/requests" "${SHARED}/upgrade/state/result" "${SHARED}/upgrade/state/progress" 2>/dev/null || true
 
 exec python3 /opt/ops/agent.py

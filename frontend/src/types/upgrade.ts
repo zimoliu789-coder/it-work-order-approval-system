@@ -98,6 +98,14 @@ export interface UpgradeTaskItem {
   step?: string
   progress?: number
   message?: string
+  /**
+   * agent **此刻正在做的动作**（如「正在拉取最新镜像…」）。
+   *
+   * 仅在「应用中」阶段、且 agent 已写入进展时有值。`docker compose pull` 实测要 2.5 分钟，
+   * 没有它页面只能显示一个不动的进度条，管理员无法分辨「正常拉取」与「已经卡死」。
+   * 为 null / undefined 时前端回退到自己的静态说明文案。
+   */
+  progressText?: string
   operatorName?: string
   startedAt?: string
   finishedAt?: string

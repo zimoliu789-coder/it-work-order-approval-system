@@ -3,6 +3,7 @@ package com.enterprise.ticket.module.upgrade.support;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.config.AppProperties;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -291,6 +292,52 @@ public class UpgradeStorage {
     /** 写结果回执（供测试与后端自身标记用途） */
     public void writeApplyResult(String taskNo, UpgradeApplyResult result) {
         writeJson(resultFile(taskNo), result);
+    }
+
+    // ------------------------------------------------------------------
+    // 过程进展（agent 在每个阶段写一行，供页面显示「正在做什么」）
+    // ------------------------------------------------------------------
+
+    /**
+     * agent 写的过程进展（{@code state/progress/&lt;taskNo&gt;.json}）。
+     *
+     * <h2>为什么需要它</h2>
+     * 「替换 + 重启」对外是原子的，所以结果回执只在最后写一次 —— 但 `docker compose pull`
+     * 实测要 **2.5 分钟**，这段时间页面上**一点动静都没有**，管理员只能盯着一个 90% 的
+     * 进度条干等，不知道是在正常拉镜像还是已经卡死。（2026-10-16 现场实跑暴露）
+     * agent 因此在每个阶段写一行进展，后端读出来展示。
+     *
+     * <p>它**不参与任何状态判断** —— 任务终态只认结果回执。所以读到坏文件、
+     * 读到过期任务的进展，都只是「这一拍没显示」，绝不能让流程失败。
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record AgentProgress(String taskNo, String phase, String text, String at) {
+    }
+
+    public Path progressFile(String taskNo) {
+        return stateDir().resolve("progress").resolve(taskNo + ".json");
+    }
+
+    /** 读 agent 写的过程进展；不存在或损坏时返回空 */
+    public Optional<AgentProgress> readProgress(String taskNo) {
+        Path file = progressFile(taskNo);
+        if (!Files.isRegularFile(file)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.ofNullable(objectMapper.readValue(file.toFile(), AgentProgress.class));
+        } catch (IOException e) {
+            log.warn("[升级] 读取进展文件失败（忽略）：{} - {}", file, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** 给页面显示的一行进展文案；没有进展时为 null */
+    public String progressText(String taskNo) {
+        return readProgress(taskNo)
+                .map(AgentProgress::text)
+                .filter(text -> text != null && !text.isBlank())
+                .orElse(null);
     }
 
     /** 写 JSON 文件（自动创建父目录） */

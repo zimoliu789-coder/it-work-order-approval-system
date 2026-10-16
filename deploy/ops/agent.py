@@ -43,6 +43,8 @@ SHARED_DIR = os.environ.get("OPS_SHARED_DIR", os.path.join(DEPLOY_DIR, "ops-data
 REQ_DIR = os.path.join(SHARED_DIR, "requests")
 STATE_DIR = os.path.join(SHARED_DIR, "upgrade", "state")
 RESULT_DIR = os.path.join(STATE_DIR, "result")
+# 「此刻正在做什么」—— 每个阶段写一行，供页面显示（不参与任何状态判断）
+PROGRESS_DIR = os.path.join(STATE_DIR, "progress")
 LOG_DIR = os.path.join(SHARED_DIR, "logs")
 INSTALLED_FLAG = os.path.join(SHARED_DIR, ".installed")
 ENV_FILE = os.path.join(DEPLOY_DIR, ".env")
@@ -52,6 +54,9 @@ ENV_FILE = os.path.join(DEPLOY_DIR, ".env")
 UPGRADE_SERVICES = ("backend", "frontend")
 HEARTBEAT_SECONDS = 5.0
 POLL_SECONDS = 2.0
+# 容器数探测周期。它要调 `docker compose ps`（内部超时 60 秒），**必须与心跳解耦** ——
+# 否则升级期间这个调用一慢，心跳的「新鲜度」就被拖垮（详见 heartbeat_loop 的注释）。
+CONTAINERS_PROBE_SECONDS = 30.0
 
 _log_lock = threading.Lock()
 
@@ -72,7 +77,7 @@ def log(message: str) -> None:
 
 
 def ensure_dirs() -> None:
-    for path in (REQ_DIR, RESULT_DIR, LOG_DIR):
+    for path in (REQ_DIR, RESULT_DIR, PROGRESS_DIR, LOG_DIR):
         os.makedirs(path, exist_ok=True)
 
 
@@ -134,16 +139,43 @@ def service_states():
 # 心跳：后端据此判断「代理是否就绪」
 # ---------------------------------------------------------------------
 
+# 心跳里要展示的「运行中容器数」。由独立线程刷新，心跳只读不探测。
+_probe = {"running": 0}
+
+
+def containers_loop() -> None:
+    """独立线程：周期探测运行中的容器数，供心跳引用（**只用于展示**，不参与任何判断）。"""
+    while True:
+        try:
+            states = service_states()
+            _probe["running"] = sum(1 for _, state, _ in states if state == "running")
+        except Exception as exc:  # noqa: BLE001 —— 探测失败绝不能让这个线程死掉
+            log("[心跳] 容器数探测失败（忽略）：%s" % exc)
+        time.sleep(CONTAINERS_PROBE_SECONDS)
+
+
 def heartbeat_loop() -> None:
+    """
+    心跳：后端据此判断「代理是否就绪」。
+
+    <h2>为什么心跳循环里**不能**调 service_states()</h2>
+    原先每拍都调一次 `docker compose ps`（内部超时 60 秒）再写心跳 —— 而升级期间
+    `docker compose pull` 正占着 Docker CLI/daemon，`ps` 会明显变慢，**心跳的写入就被它拖住**。
+    后端判「就绪」用的是心跳**新鲜度**（30 秒阈值），于是升级期间页面显示
+    「运维代理未就绪，请确认容器正在运行」—— 把**「忙」误报成「挂」**，
+    而且正好发生在最需要信任它的时候，还会诱导管理员去重启一个健康的服务。
+    （2026-10-16 现场实跑踩到）
+
+    拆开之后：心跳循环只做一次文件写入（微秒级，绝不阻塞），容器数由 containers_loop
+    在另一个线程里慢慢探；探测结果慢一拍对展示毫无影响。
+    """
     ensure_dirs()
     while True:
-        states = service_states()
-        running = sum(1 for _, state, _ in states if state == "running")
         write_json(os.path.join(SHARED_DIR, "heartbeat.json"), {
             "version": VERSION,
             "at": now(),
             "status": "installed" if os.path.exists(INSTALLED_FLAG) else "bootstrap",
-            "containersRunning": running,
+            "containersRunning": _probe["running"],
         })
         time.sleep(HEARTBEAT_SECONDS)
 
@@ -151,6 +183,30 @@ def heartbeat_loop() -> None:
 # ---------------------------------------------------------------------
 # 升级执行
 # ---------------------------------------------------------------------
+
+def write_progress(task_no: str, phase: str, text: str) -> None:
+    """
+    写「此刻正在做什么」，供页面显示。
+
+    <h2>为什么需要它</h2>
+    「替换 + 重启」对外是原子的，所以结果回执只在最后写一次 —— 但 `docker compose pull`
+    实测要 **2.5 分钟**。这段时间页面上一点动静都没有，管理员只能盯着一个不动的 90% 进度条，
+    **分不清「正在正常拉镜像」与「已经卡死」**。（2026-10-16 现场实跑暴露）
+
+    <p>它**不参与任何状态判断**（任务终态只认结果回执），所以写失败也无害 ——
+    绝不因为「写不了进展」而让升级失败。
+    """
+    try:
+        os.makedirs(PROGRESS_DIR, exist_ok=True)
+        write_json(os.path.join(PROGRESS_DIR, "%s.json" % task_no), {
+            "taskNo": task_no,
+            "phase": phase,
+            "text": text,
+            "at": now(),
+        })
+    except Exception as exc:  # noqa: BLE001
+        log("[升级] 写进展失败（忽略）：%s" % exc)
+
 
 def finish_receipt(task_no: str, result: str, message: str) -> None:
     """
@@ -228,6 +284,7 @@ def apply_upgrade(task_no: str) -> None:
         finish_receipt(task_no, "FAILED", msg)
         return
 
+    write_progress(task_no, "PULLING", "正在拉取最新镜像（docker compose pull）……")
     code, out, err = compose("pull", timeout=1800)
     if code != 0:
         detail = (err or out).strip()[-800:]
@@ -235,6 +292,8 @@ def apply_upgrade(task_no: str) -> None:
         finish_receipt(task_no, "FAILED", "拉取镜像失败：%s" % detail)
         return
 
+    write_progress(task_no, "RECREATING",
+                   "镜像已就绪，正在重建容器（backend / frontend）…… 此刻站点会短暂不可用")
     code, out, err = compose("up", "-d", "--force-recreate", *UPGRADE_SERVICES, timeout=900)
     if code != 0:
         detail = (err or out).strip()[-800:]
@@ -247,6 +306,7 @@ def apply_upgrade(task_no: str) -> None:
 
     # 等后端健康：重建后容器需要几十秒才 ready。轮询到健康为止；
     # 超时也算成功但注明「健康检查未通过」，因为此时镜像与容器确实已经是新的。
+    write_progress(task_no, "HEALTH_CHECK", "容器已重建，正在等待后端健康检查通过……")
     deadline = time.time() + 300
     while time.time() < deadline:
         states = dict(((svc, (state, health)) for svc, state, health in service_states()))
@@ -553,6 +613,7 @@ def main() -> int:
     ensure_dirs()
     log("启动 ops-agent v%s（deploy=%s shared=%s ui=%s port=%d）"
         % (VERSION, DEPLOY_DIR, SHARED_DIR, UI_ENABLED, PORT))
+    threading.Thread(target=containers_loop, daemon=True).start()
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=request_loop, daemon=True).start()
     try:

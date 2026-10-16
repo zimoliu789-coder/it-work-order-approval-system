@@ -196,9 +196,29 @@ if [ "$(id -u)" = "0" ]; then
   else
     warn "chmod -R a+rX . 执行失败；若 mysql 反复重启，请手动执行后再 docker compose up -d"
   fi
+
+  # ⚠️ 只放开「可读」还不够 —— 必须同时**收掉「其他用户可写」**。
+  # MySQL 出于安全会**直接拒绝读取** world-writable 的配置文件（my.cnf），
+  # 于是里面的字符集、时区、innodb_buffer_pool_size、慢查询日志等**全部静默失效**：
+  # 服务照常启动、日志里只有一行 `World-writable config file ... is ignored`，
+  # 除非手动执行 mysql 客户端，否则永远发现不了。（2026-10-16 现场踩到）
+  WW="$(find . -type f -perm -o+w 2>/dev/null | head -20)"
+  if [ -n "$WW" ]; then
+    warn "发现「其他用户可写」文件 —— MySQL 会拒绝读取这类配置文件，导致 my.cnf 静默失效："
+    echo "$WW" | sed 's/^/      /'
+    if chmod -R o-w . 2>/dev/null; then
+      ok "已收掉 deploy/ 下的「其他用户可写」位（配置文件恢复正常读取）"
+    else
+      warn "chmod -R o-w . 失败，请手动执行后再 docker compose up -d"
+    fi
+  else
+    ok "未发现「其他用户可写」文件"
+  fi
 else
   warn "当前不是 root，无法自动放开权限。若 mysql 反复重启，请以 root 执行："
   warn "  chmod -R a+rX \"$(pwd)\"    # 并确保上级目录可进入，如 chmod o+rx /vol2/1000/docker"
+  warn "另外请确认没有「其他用户可写」的文件（否则 my.cnf 会被 MySQL 忽略）："
+  warn "  find \"$(pwd)\" -type f -perm -o+w      # 有输出就执行：chmod -R o-w \"$(pwd)\""
 fi
 
 # ---------------------------------------------------------------------

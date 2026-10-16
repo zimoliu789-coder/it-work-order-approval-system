@@ -641,6 +641,15 @@ async function startOnlineUpgrade(): Promise<void> {
         show-icon
         :title="upgradeHint(currentTask, applyConfigured)"
       >
+        <!--
+          实时进展行：agent 在「应用」阶段每换一个动作就写一行（拉镜像 → 重建容器 → 等健康）。
+          刻意放在 message 之上 —— 前者是「此刻正在发生什么」（会变），后者是「已下发的指令」（不变）。
+          先看到会变的那条，管理员才不会被一个不动的进度条误导成「界面卡死了」。
+        -->
+        <div v-if="currentTask.progressText" class="upgrade-page__hint-live">
+          <span class="upgrade-page__live-dot" aria-hidden="true" />
+          {{ currentTask.progressText }}
+        </div>
         <div v-if="currentTask.message" class="upgrade-page__hint-detail">
           {{ currentTask.message }}
         </div>
@@ -854,6 +863,42 @@ async function startOnlineUpgrade(): Promise<void> {
   margin-top: 4px;
   font-size: 13px;
   word-break: break-all;
+}
+
+/*
+  agent 的实时进展。用主色 + 加粗与下面的静态说明拉开层次：
+  「这条在动」是本次改动唯一要传达的信息，不能让两条文字看起来一样重。
+*/
+.upgrade-page__hint-live {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  word-break: break-all;
+}
+
+.upgrade-page__live-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--el-color-primary);
+  animation: upgrade-live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes upgrade-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* 呼吸点只是点缀、不是信息本身 —— 尊重系统的「减少动态效果」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .upgrade-page__live-dot {
+    animation: none;
+  }
 }
 
 .upgrade-page__detail {
