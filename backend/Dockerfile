@@ -10,7 +10,11 @@
 # =====================================================================
 
 # ---------------- 第一阶段：构建 ----------------
-FROM maven:3.9-eclipse-temurin-21 AS build
+# ⚠️ 必须带 `--platform=$BUILDPLATFORM`（与 frontend/Dockerfile 同理）。
+# Maven 下载依赖 + javac 编译是纯 CPU 活，产物（fat jar）与架构**无关**；
+# 不加这一行，多架构构建会让 arm64 那一份**在 QEMU 模拟下**跑完整套 Maven，
+# 慢一个数量级且易卡死。加上之后构建只原生跑一次，arm64 只重做运行层。
+FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 
 # 先只拷 pom.xml 预热依赖：只要 pom 不变，这一层就命中缓存，
