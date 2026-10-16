@@ -1033,11 +1033,18 @@ onBeforeUnmount(() => {
                     />
                   </template>
 
-                  <!-- 数字 / 文本 -->
+                  <!--
+                    数字 / 文本。
+                    widget=textarea 时渲染成多行文本域：邮件模板这类内容是多行的，
+                    用单行输入框根本没法编辑（换行看不见、长文本只能横向滚动）。
+                  -->
                   <template v-else>
                     <el-input
                       :model-value="valueOf(item)"
                       class="cfg__control"
+                      :type="item.widget === 'textarea' ? 'textarea' : 'text'"
+                      :autosize="item.widget === 'textarea' ? { minRows: 5, maxRows: 14 } : false"
+                      :placeholder="item.widget === 'textarea' ? '留空使用系统默认文案' : ''"
                       :disabled="!isEditableItem(item, section)"
                       @update:model-value="(v: string) => onEdit(item, v)"
                     />

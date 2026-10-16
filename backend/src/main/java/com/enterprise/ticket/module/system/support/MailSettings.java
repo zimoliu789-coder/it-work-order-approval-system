@@ -50,6 +50,26 @@ public final class MailSettings {
     public static final String KEY_SSL = "smtp_ssl";
 
     // ------------------------------------------------------------------
+    // 邮件模板（V52）
+    //
+    // 主题与正文此前**写死在代码里**，管理员改不了邮件长什么样。
+    // 现在抽成参数：留空即回落下面的默认文案，因此**升级后行为完全不变**（零回归）。
+    // 渲染规则见 {@link MailTemplateRenderer}。
+    // ------------------------------------------------------------------
+
+    /** 验证码邮件主题模板 */
+    public static final String KEY_SUBJECT_VERIFY = "mail_subject_verify";
+
+    /** 验证码邮件正文模板 */
+    public static final String KEY_BODY_VERIFY = "mail_body_verify";
+
+    /** 告警邮件主题模板 */
+    public static final String KEY_SUBJECT_ALERT = "mail_subject_alert";
+
+    /** 告警邮件正文模板 */
+    public static final String KEY_BODY_ALERT = "mail_body_alert";
+
+    // ------------------------------------------------------------------
     // 内置默认值（配置行缺失时回落）
     // ------------------------------------------------------------------
 
@@ -58,6 +78,34 @@ public final class MailSettings {
     public static final boolean DEFAULT_SSL = true;
 
     public static final String DEFAULT_FROM_NAME = "设备借用工单系统";
+
+    // ------------------------------------------------------------------
+    // 邮件模板的默认文案（模板留空时使用；与模板改动前的写死文案逐字一致）
+    // ------------------------------------------------------------------
+
+    /** 可用占位符（配置页展示用；也便于单测核对「文档与实现一致」） */
+    public static final String PLACEHOLDER_VERIFY = "{siteName} {code} {minutes}";
+
+    public static final String PLACEHOLDER_ALERT = "{siteName} {level} {title} {body} {time}";
+
+    public static final String DEFAULT_SUBJECT_VERIFY = "【{siteName}】邮箱验证码";
+
+    public static final String DEFAULT_BODY_VERIFY = """
+            您的验证码是：{code}
+
+            有效期 {minutes} 分钟，请勿转发给他人。
+            如果这不是您本人的操作，请忽略本邮件。
+
+            {siteName}""";
+
+    public static final String DEFAULT_SUBJECT_ALERT = "【{siteName}】[{level}] {title}";
+
+    public static final String DEFAULT_BODY_ALERT = """
+            {body}
+
+            ——
+            发送时间：{time}
+            {siteName}""";
 
     /** 常用邮箱的参数参考（配置页展示；不参与任何运行时判定） */
     public static final String[] REFERENCE_NOTES = {

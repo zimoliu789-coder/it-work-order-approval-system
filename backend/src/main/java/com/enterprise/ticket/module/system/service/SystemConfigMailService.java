@@ -3,6 +3,7 @@ package com.enterprise.ticket.module.system.service;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.system.support.MailSettings;
+import com.enterprise.ticket.module.system.support.MailTemplateRenderer;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,10 @@ import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Properties;
 
 import javax.net.ssl.SSLException;
@@ -57,11 +62,33 @@ public class SystemConfigMailService {
      */
     private static final int TIMEOUT_MS = 10_000;
 
+    /** 测试邮件里用于渲染模板预览的示例验证码（固定值，便于管理员一眼认出这是示例） */
+    private static final String SAMPLE_CODE = "123456";
+
+    /** 告警邮件里 {@code {time}} 的格式（不带秒：告警看的是一天里的什么时候） */
+    private static final DateTimeFormatter ALERT_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
     private final SystemConfigService systemConfigService;
 
     /** 当前生效的 SMTP 设置（授权码已解密） */
     public MailSettings.Settings effectiveSettings() {
         return systemConfigService.mailSettings();
+    }
+
+    /**
+     * 组装占位符取值（null 一律转成空串）。
+     *
+     * <p>用 {@code LinkedHashMap} 而不是 {@code Map.of}：后者**不接受 null 值**，
+     * 而站点名 / 告警标题这类字段在上游是允许为空的 —— 那会在渲染前就抛 NPE，
+     * 表现成「发个邮件也能 500」，排查起来离真正的原因很远。
+     */
+    private static Map<String, String> vars(Object... pairs) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < pairs.length; i += 2) {
+            Object value = pairs[i + 1];
+            map.put(String.valueOf(pairs[i]), value == null ? "" : String.valueOf(value));
+        }
+        return map;
     }
 
     /**
@@ -71,13 +98,19 @@ public class SystemConfigMailService {
      */
     public void sendVerificationCode(String to, String code, int expireMinutes) {
         MailSettings.Settings settings = effectiveSettings();
-        String siteName = systemConfigService.siteName();
-        String subject = "【" + siteName + "】邮箱验证码";
-        String body = "您的验证码是：" + code + "\n\n"
-                + "有效期 " + expireMinutes + " 分钟，请勿转发给他人。\n"
-                + "如果这不是您本人的操作，请忽略本邮件。\n\n"
-                + siteName;
-        send(settings, to, subject, body);
+        // 主题与正文都走模板（V52）：模板留空即用默认文案 —— 默认值与抽模板前的写死文案逐字一致，
+        // 因此「没配过模板」的部署行为完全不变（零回归）。
+        Map<String, String> vars = vars(
+                "siteName", systemConfigService.siteName(),
+                "code", code,
+                "minutes", expireMinutes);
+        send(settings, to,
+                MailTemplateRenderer.subject(
+                        systemConfigService.getString(MailSettings.KEY_SUBJECT_VERIFY, ""),
+                        MailSettings.DEFAULT_SUBJECT_VERIFY, vars),
+                MailTemplateRenderer.body(
+                        systemConfigService.getString(MailSettings.KEY_BODY_VERIFY, ""),
+                        MailSettings.DEFAULT_BODY_VERIFY, vars));
     }
 
     /**
@@ -91,6 +124,20 @@ public class SystemConfigMailService {
      */
     public void sendTestMail(String to, MailSettings.Settings settings) {
         String siteName = systemConfigService.siteName();
+
+        // 用**示例值**渲染一遍当前模板：管理员点「发送测试邮件」时能直接看到
+        // 收件人将看到的样子（所见即所得），不必先保存再拿真实验证码去试。
+        Map<String, String> sample = vars(
+                "siteName", siteName,
+                "code", SAMPLE_CODE,
+                "minutes", 5);
+        String previewSubject = MailTemplateRenderer.subject(
+                systemConfigService.getString(MailSettings.KEY_SUBJECT_VERIFY, ""),
+                MailSettings.DEFAULT_SUBJECT_VERIFY, sample);
+        String previewBody = MailTemplateRenderer.body(
+                systemConfigService.getString(MailSettings.KEY_BODY_VERIFY, ""),
+                MailSettings.DEFAULT_BODY_VERIFY, sample);
+
         String subject = "【" + siteName + "】SMTP 配置测试邮件";
         String body = "这是一封测试邮件，说明当前 SMTP 配置可以正常发信。\n\n"
                 + "服务器：" + settings.host() + "\n"
@@ -99,6 +146,10 @@ public class SystemConfigMailService {
                 + "发件邮箱：" + settings.username() + "\n"
                 + "发件人显示名：" + settings.displayName() + "\n"
                 + "授权码：已填写（" + settings.password().length() + " 位，不回显）\n\n"
+                + "---------- 以下是用当前「验证码邮件」模板渲染出来的样子（示例验证码 " + SAMPLE_CODE + "）----------\n"
+                + "主题：" + previewSubject + "\n"
+                + "正文：\n" + previewBody + "\n"
+                + "---------- 模板预览结束 ----------\n\n"
                 + "收到本邮件后即可在系统参数页保存配置，邮箱验证码将改为真实发送。\n\n"
                 + siteName;
         send(settings, to, subject, body);
@@ -126,6 +177,36 @@ public class SystemConfigMailService {
      */
     public void sendAlert(String to, String subject, String body) {
         send(effectiveSettings(), to, subject, body);
+    }
+
+    /**
+     * 发送**运维告警**邮件（主题与正文按模板渲染，V52）。
+     *
+     * <h2>为什么与 {@link #sendAlert} 并存，而不是把它改掉</h2>
+     * {@code sendAlert} 还有另一个调用方：{@code UserNotificationService}
+     * —— 它发给**普通员工**的业务通知（「你的工单已通过」这类）。
+     * 那类邮件不该套上运维告警模板：会给普通通知带上 {@code [P0]} 这类告警语义、
+     * 以及「发送时间」这种运维味道的落款。两者受众与语义都不同，共用一个模板只会两头不讨好。
+     * 因此保留 {@code sendAlert} 原样（零回归），另开本方法给运维告警用。
+     *
+     * @param level 告警级别码（P0/P1/P2…），渲染到 {@code {level}}
+     * @param title 告警标题，渲染到 {@code {title}}
+     * @param body  告警正文（由各业务模块给定），渲染到 {@code {body}}
+     */
+    public void sendAlertTemplated(String to, String level, String title, String body) {
+        Map<String, String> vars = vars(
+                "siteName", systemConfigService.siteName(),
+                "level", level,
+                "title", title,
+                "body", body,
+                "time", LocalDateTime.now().format(ALERT_TIME_FORMAT));
+        send(effectiveSettings(), to,
+                MailTemplateRenderer.subject(
+                        systemConfigService.getString(MailSettings.KEY_SUBJECT_ALERT, ""),
+                        MailSettings.DEFAULT_SUBJECT_ALERT, vars),
+                MailTemplateRenderer.body(
+                        systemConfigService.getString(MailSettings.KEY_BODY_ALERT, ""),
+                        MailSettings.DEFAULT_BODY_ALERT, vars));
     }
 
     /**

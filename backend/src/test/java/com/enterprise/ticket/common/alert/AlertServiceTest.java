@@ -100,7 +100,7 @@ class AlertServiceTest {
         AlertService.AlertOutcome outcome = fire();
 
         verify(messageService, never()).send(anyCollection(), any(), anyString(), anyString(), any());
-        verify(mailService, never()).sendAlert(anyString(), anyString(), anyString());
+        verify(mailService, never()).sendAlertTemplated(anyString(), anyString(), anyString(), anyString());
         assertTrue(capturedAuditDetail().contains("recipients=0"),
                 "「没人可通知」必须与「没触发告警」在审计里可区分");
         assertTrue(!outcome.delivered(), "没有接收人时不应报告「已送达」");
@@ -153,15 +153,16 @@ class AlertServiceTest {
                 .thenReturn(List.of(user(1L, "ops@company.com", null), user(2L, null, null)));
         when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
         when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.siteName()).thenReturn("设备借用工单系统");
         when(systemConfigService.exceptionAlertExtraRecipients()).thenReturn("");
 
-        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        // 主题不再由 AlertService 拼，而是把「级别 + 标题」交给邮件模板渲染（V52）——
+        // 因此这里断言的是**级别被如实传下去**（主题里的 [P1] 由模板负责渲染），
+        // 「主题里含站点名 / 含级别」由 MailTemplateRendererTest 覆盖。
+        ArgumentCaptor<String> level = ArgumentCaptor.forClass(String.class);
         fire();
 
-        verify(mailService).sendAlert(eq("ops@company.com"), subject.capture(), anyString());
-        assertTrue(subject.getValue().contains("设备借用工单系统"), subject.getValue());
-        assertTrue(subject.getValue().contains("P1"), "主题应带级别，便于在收件箱里一眼分流：" + subject.getValue());
+        verify(mailService).sendAlertTemplated(eq("ops@company.com"), level.capture(), anyString(), anyString());
+        assertTrue(level.getValue().contains("P1"), "级别必须原样传给模板，便于收件箱里一眼分流：" + level.getValue());
         assertTrue(capturedAuditDetail().contains("email=1/1"), capturedAuditDetail());
     }
 
@@ -174,7 +175,7 @@ class AlertServiceTest {
 
         fire();
 
-        verify(mailService, never()).sendAlert(anyString(), anyString(), anyString());
+        verify(mailService, never()).sendAlertTemplated(anyString(), anyString(), anyString(), anyString());
         verify(messageService).send(anyCollection(), any(), anyString(), anyString(), any());
     }
 
@@ -186,14 +187,13 @@ class AlertServiceTest {
                 .thenReturn(List.of(user(1L, "bad@company.com", null), user(2L, "ok@company.com", null)));
         when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
         when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.siteName()).thenReturn("工单系统");
         when(systemConfigService.exceptionAlertExtraRecipients()).thenReturn("");
         doThrow(new RuntimeException("SMTP 连接超时"))
-                .when(mailService).sendAlert(eq("bad@company.com"), anyString(), anyString());
+                .when(mailService).sendAlertTemplated(eq("bad@company.com"), anyString(), anyString(), anyString());
 
         assertDoesNotThrow(this::fire);
 
-        verify(mailService).sendAlert(eq("ok@company.com"), anyString(), anyString());
+        verify(mailService).sendAlertTemplated(eq("ok@company.com"), anyString(), anyString(), anyString());
         verify(messageService).send(anyCollection(), any(), anyString(), anyString(), any());
         assertTrue(capturedAuditDetail().contains("email=1/2"), capturedAuditDetail());
     }
@@ -207,7 +207,7 @@ class AlertServiceTest {
 
         assertDoesNotThrow(this::fire);
 
-        verify(mailService, never()).sendAlert(anyString(), anyString(), anyString());
+        verify(mailService, never()).sendAlertTemplated(anyString(), anyString(), anyString(), anyString());
         verify(messageService).send(anyCollection(), any(), anyString(), anyString(), any());
     }
 
@@ -222,15 +222,14 @@ class AlertServiceTest {
         when(userMapper.selectBatchIds(any())).thenReturn(List.of(user(1L, null, null)));
         when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
         when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.siteName()).thenReturn("工单系统");
         // 同一个邮箱写两遍：必须去重，否则同一个人收两封同样的邮件
         when(systemConfigService.exceptionAlertExtraRecipients())
                 .thenReturn("ops@company.com, ops@company.com , devops@company.com");
 
         alertService.alert(AlertLevel.P1, MessageType.EXCEPTION_ALERT, TITLE, BODY, "TEST_ACTION", "detail");
 
-        verify(mailService).sendAlert(eq("ops@company.com"), anyString(), anyString());
-        verify(mailService).sendAlert(eq("devops@company.com"), anyString(), anyString());
+        verify(mailService).sendAlertTemplated(eq("ops@company.com"), anyString(), anyString(), anyString());
+        verify(mailService).sendAlertTemplated(eq("devops@company.com"), anyString(), anyString(), anyString());
         assertTrue(capturedAuditDetail().contains("extra=2"), capturedAuditDetail());
     }
 
@@ -241,11 +240,10 @@ class AlertServiceTest {
         when(userMapper.selectBatchIds(any())).thenReturn(List.of(user(1L, null, null)));
         when(systemConfigService.emailVerifyEnabled()).thenReturn(true);
         when(systemConfigService.smsVerifyEnabled()).thenReturn(false);
-        when(systemConfigService.siteName()).thenReturn("工单系统");
 
         alertService.alert(AlertLevel.P2, MessageType.EXCEPTION_ALERT, TITLE, BODY, "TEST_ACTION", "detail");
 
-        verify(mailService, never()).sendAlert(anyString(), anyString(), anyString());
+        verify(mailService, never()).sendAlertTemplated(anyString(), anyString(), anyString(), anyString());
         assertTrue(capturedAuditDetail().contains("extra=0"), capturedAuditDetail());
     }
 
@@ -264,7 +262,7 @@ class AlertServiceTest {
 
         AlertService.AlertOutcome outcome = fire();
 
-        verify(mailService, never()).sendAlert(anyString(), anyString(), anyString());
+        verify(mailService, never()).sendAlertTemplated(anyString(), anyString(), anyString(), anyString());
         String detail = capturedAuditDetail();
         assertTrue(detail.contains("sms=log/1"), detail);
         assertTrue(!detail.contains("Delivered"), "审计里不得出现任何「已送达」字样：" + detail);

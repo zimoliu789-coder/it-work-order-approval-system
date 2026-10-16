@@ -59,6 +59,15 @@ public final class SystemConfigCatalog {
     private SystemConfigCatalog() {
     }
 
+    /**
+     * 控件提示：多行文本域。
+     *
+     * <p>前端据此把该项渲染成 textarea（邮件模板是多行文本，单行输入框没法用）。
+     * 用常量而不是各处写字符串 —— 两端一旦漂移，表现是「配了但界面没变成多行」，
+     * 而这既不报错也不影响保存，最难察觉。
+     */
+    public static final String WIDGET_TEXTAREA = "textarea";
+
     /** 控件类型：决定配置页渲染成什么 */
     public enum Type {
         /** 开关（布尔） */
@@ -468,7 +477,32 @@ public final class SystemConfigCatalog {
                                         text(MailSettings.KEY_FROM_NAME, "发件人显示名",
                                                 "收件人看到的发件人名字，留空则显示「设备借用工单系统」。",
                                                 MailSettings.DEFAULT_FROM_NAME))),
-                        // 2.3 验证码设置（与渠道开关彼此独立）
+                        // 2.3 邮件模板（V52）：主题与正文可自定义，留空即回落默认文案
+                        new Section("mail-template", "邮件模板",
+                                "验证码邮件与运维告警邮件的主题、正文。"
+                                        + "留空即使用系统默认文案 —— 清空输入框就是「恢复默认」。",
+                                null,
+                                List.of("占位符用花括号，例如 {code}；**写错的占位符会原样显示在邮件里**，"
+                                                + "便于发现笔误（而不是静默少一段）。",
+                                        "验证码邮件可用占位符：" + MailSettings.PLACEHOLDER_VERIFY,
+                                        "告警邮件可用占位符：" + MailSettings.PLACEHOLDER_ALERT,
+                                        "主题里的换行会自动清除 —— 主题属于邮件头，换行可被用于伪造邮件头。"),
+                                null,
+                                List.of(
+                                        text(MailSettings.KEY_SUBJECT_VERIFY, "验证码邮件主题",
+                                                "发验证码时的邮件标题。默认：【{siteName}】邮箱验证码",
+                                                MailSettings.DEFAULT_SUBJECT_VERIFY, WIDGET_TEXTAREA),
+                                        text(MailSettings.KEY_BODY_VERIFY, "验证码邮件正文",
+                                                "发验证码时的邮件内容。{code} 是验证码本身，{minutes} 是有效期分钟数。",
+                                                MailSettings.DEFAULT_BODY_VERIFY, WIDGET_TEXTAREA),
+                                        text(MailSettings.KEY_SUBJECT_ALERT, "告警邮件主题",
+                                                "运维告警的邮件标题。默认：【{siteName}】[{level}] {title}",
+                                                MailSettings.DEFAULT_SUBJECT_ALERT, WIDGET_TEXTAREA),
+                                        text(MailSettings.KEY_BODY_ALERT, "告警邮件正文",
+                                                "运维告警的邮件内容。{body} 是各模块给出的告警详情。"
+                                                        + "（发给普通员工的业务通知邮件不套这个模板）",
+                                                MailSettings.DEFAULT_BODY_ALERT, WIDGET_TEXTAREA))),
+                        // 2.4 验证码设置（与渠道开关彼此独立）
                         new Section("code", "验证码设置",
                                 "验证码本身的位数与有效期，与上面两条通道的开关彼此独立。",
                                 null,

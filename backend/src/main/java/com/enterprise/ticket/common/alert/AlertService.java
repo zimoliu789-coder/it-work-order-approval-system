@@ -158,13 +158,14 @@ public class AlertService {
         List<User> users = userMapper.selectBatchIds(recipients);
 
         if (emailOn) {
-            String subject = "【" + safe(siteName()) + "】[" + level.code() + "] " + title;
+            // 主题不再在这里拼「【站点名】[级别] 标题」——改由邮件模板渲染（V52），
+            // 管理员在系统参数页就能改措辞，不必改代码。
             for (User user : users) {
                 if (!StringUtils.hasText(user.getEmail())) {
                     continue;
                 }
                 emailAttempted++;
-                if (sendMail(user.getEmail().trim(), subject, body)) {
+                if (sendMail(user.getEmail().trim(), level.code(), title, body)) {
                     emailSent++;
                 }
             }
@@ -173,7 +174,7 @@ public class AlertService {
                 for (String to : extraRecipients()) {
                     emailAttempted++;
                     extraRecipients++;
-                    if (sendMail(to, subject, body)) {
+                    if (sendMail(to, level.code(), title, body)) {
                         emailSent++;
                     }
                 }
@@ -193,9 +194,9 @@ public class AlertService {
         return new ChannelOutcome(emailAttempted, emailSent, extraRecipients, smsLogged);
     }
 
-    private boolean sendMail(String to, String subject, String body) {
+    private boolean sendMail(String to, String level, String title, String body) {
         try {
-            mailService.sendAlert(to, subject, body);
+            mailService.sendAlertTemplated(to, level, title, body);
             return true;
         } catch (Exception e) {
             log.warn("[告警] 邮件发送失败：recipient={} 原因={}", AccountFormats.maskContact(to), e.getMessage());

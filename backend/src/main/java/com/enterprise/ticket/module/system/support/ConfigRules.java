@@ -258,6 +258,17 @@ public final class ConfigRules {
         rules.put(MailSettings.KEY_FROM_NAME, Rule.text(false));
         rules.put(MailSettings.KEY_SSL, Rule.bool(false));
 
+        // 邮件模板（V52）。
+        // ⚠️ 正文模板**不能沿用全局 500 上限**（MAX_TEXT_LENGTH）—— 几行中文正文就超了，
+        //    而超限表现是「保存失败」而不是「太长了」。
+        // 上限刻意与渲染层的截断阈值对齐（MailTemplateRenderer.MAX_BODY_LENGTH）：
+        // 若规则放得比渲染层宽，就会出现「库里存得下、发出去却被截断」——
+        // 管理员会以为「改了没生效」，这类不一致最难查。
+        rules.put(MailSettings.KEY_SUBJECT_VERIFY, Rule.text(500, false));
+        rules.put(MailSettings.KEY_BODY_VERIFY, Rule.text(MailTemplateRenderer.MAX_BODY_LENGTH, false));
+        rules.put(MailSettings.KEY_SUBJECT_ALERT, Rule.text(500, false));
+        rules.put(MailSettings.KEY_BODY_ALERT, Rule.text(MailTemplateRenderer.MAX_BODY_LENGTH, false));
+
         // 短信通知（，预留）。
         // 与邮件同源：留空即可，不做「完整性」判定（见 SmsSettings 类注释）。
         rules.put(SmsSettings.KEY_PROVIDER, Rule.text(false));
