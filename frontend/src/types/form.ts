@@ -28,6 +28,8 @@ export type FormFieldTypeCode =
   | 'USER'
   | 'DEVICE'
   | 'BIZ_GROUP'
+  /** 一级分部选择（V53）：底层固定只能选组织树一级部门，无开关 */
+  | 'ROOT_DEPT'
   | 'DESCRIPTION'
   | 'DIVIDER'
 
@@ -81,6 +83,13 @@ export interface FormField {
   label?: string | null
   type: FormFieldTypeCode
   required?: boolean | null
+  /**
+   * 系统内置字段（V53）：设计器里**不允许删除**（可改显示名 / 必填 / 顺序）。
+   *
+   * 这些字段是业务逻辑的读取依据 —— 报修·借用的「当前所在分部」决定匹配哪个处理组，
+   * 出差申请的「起止日期 / 目标一级分部」决定预填与重叠校验。删掉会让逻辑**静默失效**。
+   */
+  systemField?: boolean | null
   placeholder?: string | null
   /** 帮助说明（展示在控件下方） */
   help?: string | null
@@ -150,6 +159,13 @@ export const FIELD_TYPE_META: FieldTypeMeta[] = [
   { type: 'USER', label: '人员选择', category: 'ADVANCED', valueKind: 'USER_REF', supportsOptions: false },
   { type: 'DEVICE', label: '设备选择', category: 'ADVANCED', valueKind: 'DEVICE_REF', supportsOptions: false },
   { type: 'BIZ_GROUP', label: '部门选择', category: 'ADVANCED', valueKind: 'GROUP_REF', supportsOptions: false },
+  {
+    type: 'ROOT_DEPT',
+    label: '一级分部选择',
+    category: 'ADVANCED',
+    valueKind: 'GROUP_REF',
+    supportsOptions: false
+  },
   { type: 'DESCRIPTION', label: '说明文字', category: 'LAYOUT', valueKind: 'NONE', supportsOptions: false },
   { type: 'DIVIDER', label: '分隔线', category: 'LAYOUT', valueKind: 'NONE', supportsOptions: false }
 ]

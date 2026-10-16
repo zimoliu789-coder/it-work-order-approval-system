@@ -94,6 +94,12 @@ function patch(index: number, patchObj: Partial<FormField>): void {
 }
 
 function remove(index: number): void {
+  // 系统内置字段（V53）**不可删除**：它们是业务逻辑的读取依据（如「当前所在分部」决定匹配
+  // 哪个处理组），删掉会让分配与预填**静默失效** —— 不报错、只是"没人可派"。
+  // 界面上按钮已隐藏，这里再拦一道（父级或将来新增入口都可能绕过界面）。
+  if (props.modelValue[index]?.systemField === true) {
+    return
+  }
   emit(
     'update:modelValue',
     props.modelValue.filter((_, i) => i !== index)
@@ -293,7 +299,26 @@ defineExpose({ incompleteProblems })
           >
             下移
           </el-button>
-          <el-button link size="small" type="danger" :icon="Delete" @click="remove(index)">删除</el-button>
+          <el-button
+            v-if="field.systemField !== true"
+            link
+            size="small"
+            type="danger"
+            :icon="Delete"
+            @click="remove(index)"
+          >
+            删除
+          </el-button>
+          <!-- 系统内置字段：不给删除按钮，改为一个说明性标签（可改名称 / 必填 / 顺序） -->
+          <el-tag
+            v-else
+            size="small"
+            type="info"
+            effect="plain"
+            title="系统内置字段：业务逻辑会读取它，因此不能删除；显示名称、必填与顺序位置都可以改"
+          >
+            内置，不可删
+          </el-tag>
         </template>
       </div>
 

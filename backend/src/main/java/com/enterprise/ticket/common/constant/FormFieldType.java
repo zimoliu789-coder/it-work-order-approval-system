@@ -54,8 +54,26 @@ public enum FormFieldType {
     USER("人员选择", FieldCategory.ADVANCED, ValueKind.USER_REF, false),
     /** 设备选择 */
     DEVICE("设备选择", FieldCategory.ADVANCED, ValueKind.DEVICE_REF, false),
-    /** 部门选择 */
+    /** 部门选择（任意层级） */
     BIZ_GROUP("部门选择", FieldCategory.ADVANCED, ValueKind.GROUP_REF, false),
+    /**
+     * 一级分部选择（V53）
+     *
+     * <h2>为什么是独立类型，而不是给「部门选择」加一个「仅一级」开关</h2>
+     * 这个字段的业务语义**就是**选一级分部，后续多处业务都会持续复用它
+     * （小额免审批额度、处理组绑定、出差目标分部、工单分配）。
+     * 若做成通用组件上的开关，会有三个真实代价：
+     * <ul>
+     *   <li><b>易误用</b>：管理员建表单时随手勾选/取消，一不小心就能选子部门 ⇒ 工单分配错误；</li>
+     *   <li><b>隐性配置</b>：以后每个与分部相关的新功能都要记得打开它，排查问题要靠猜；</li>
+     *   <li><b>语义模糊</b>：日志、数据库、接口里看不出这是分部，只是普通部门字段多了个标记。</li>
+     * </ul>
+     * 独立类型则<b>底层固定只能选组织树一级部门、没有开关、不能切成全层级</b>。
+     *
+     * <p>取值仍是部门 id，故沿用 {@link ValueKind#GROUP_REF}；
+     * 「只能选一级」由渲染器与校验器各自依据本类型判定，不依赖任何配置。
+     */
+    ROOT_DEPT("一级分部选择", FieldCategory.ADVANCED, ValueKind.GROUP_REF, false),
 
     // ---------------- 布局（不产生数据） ----------------
     /** 说明文字（只读） */

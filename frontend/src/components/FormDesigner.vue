@@ -163,6 +163,14 @@ function duplicateField(index: number): void {
 }
 
 async function removeField(index: number): Promise<void> {
+  // 系统内置字段（V53）**不可删除**：它们是业务逻辑的读取依据
+  // （如报修/借用的「当前所在分部」决定匹配哪个处理组、出差单的起止日期决定预填），
+  // 删掉会让那些逻辑**静默失效** —— 不报错，只是"分配不到人"或"预填永远走兜底"。
+  // 这里给出明确原因，而不是让按钮点了没反应。
+  if (fields.value[index]?.systemField === true) {
+    ElMessage.warning('这是系统内置字段，不能删除；显示名称、必填与位置顺序都可以改')
+    return
+  }
   if (props.readonly) {
     return
   }

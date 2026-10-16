@@ -96,6 +96,24 @@ const userOptions = ref<UserOption[]>([])
 const deviceOptions = ref<DeviceOption[]>([])
 const groupOptions = ref<DepartmentOption[]>([])
 
+/**
+ * 一级分部选项（V53）—— 「一级分部选择」字段的下拉数据源。
+ *
+ * <p>一级分部 = **组织树根节点的直接子节点**。这里用「根的 id」推导，而不是写死
+ * `depth === 1`：depth 的起始值属于后端实现细节，而「谁的父节点是根」在语义上
+ * 恰好就是一级分部，不受 depth 约定变化影响。
+ *
+ * <p>找不到根节点（选项为空 / 数据异常）时**回落到全部部门**：宁可多列几项让用户能选，
+ * 也不要给一个空下拉 —— 空下拉会让人以为「系统里没有分部」。
+ */
+const rootDeptOptions = computed(() => {
+  const root = groupOptions.value.find((item) => item.parentId == null)
+  if (!root) {
+    return groupOptions.value
+  }
+  return groupOptions.value.filter((item) => item.parentId === root.id)
+})
+
 const fields = computed<FormField[]>(() => schemaFields(props.schema))
 const editableFields = computed<FormField[]>(() => dataFields(props.schema))
 
@@ -221,7 +239,9 @@ function refLabel(field: FormField, value: unknown): string {
       const hit = deviceOptions.value.find((device) => device.id === Number(id))
       return hit ? `${hit.deviceName}（${hit.assetNo}）` : `#${id}`
     }
-    case 'BIZ_GROUP': {
+    case 'BIZ_GROUP':
+    // 一级分部选择取值也是部门 id，显示名解析与部门选择一致
+    case 'ROOT_DEPT': {
       const hit = groupOptions.value.find((item) => item.id === Number(id))
       return hit ? hit.deptName : `#${id}`
     }
@@ -276,7 +296,8 @@ async function loadRefOptions(): Promise<void> {
       // 同上
     }
   }
-  if (types.has('BIZ_GROUP')) {
+  // 部门选择与「一级分部选择」共用同一份部门选项（后者在渲染时过滤到一级）
+  if (types.has('BIZ_GROUP') || types.has('ROOT_DEPT')) {
     try {
       groupOptions.value = await departmentApi.options()
     } catch {
@@ -500,6 +521,24 @@ watch(() => props.schema, loadRefOptions)
               :key="group.id"
               :label="group.deptName"
               :value="String(group.id)"
+            />
+          </el-select>
+
+          <!-- 一级分部选择（V53）：与「部门选择」同构，但**只列组织树一级部门**，无开关可切 -->
+          <el-select
+            v-else-if="field.type === 'ROOT_DEPT'"
+            :model-value="singleValue(field)"
+            :placeholder="field.placeholder ?? '请选择分部'"
+            filterable
+            clearable
+            class="ts-form-render__full"
+            @update:model-value="(v) => update(field, v)"
+          >
+            <el-option
+              v-for="dept in rootDeptOptions"
+              :key="dept.id"
+              :label="dept.deptName"
+              :value="String(dept.id)"
             />
           </el-select>
 

@@ -37,7 +37,7 @@ function field(partial: Partial<FormField> & Pick<FormField, 'type'>): FormField
 }
 
 describe('字段类型元数据 FIELD_TYPE_META', () => {
-  it('16 种类型齐全且不重复，覆盖后端 FormFieldType 全部枚举', () => {
+  it('17 种类型齐全且不重复，覆盖后端 FormFieldType 全部枚举', () => {
     const types = FIELD_TYPE_META.map((m) => m.type)
     expect(new Set(types).size).toBe(types.length)
     expect(types.sort()).toEqual(
@@ -54,6 +54,7 @@ describe('字段类型元数据 FIELD_TYPE_META', () => {
         'MULTI_SELECT',
         'NUMBER',
         'RADIO',
+        'ROOT_DEPT',
         'SELECT',
         'TEXT',
         'TEXTAREA',
