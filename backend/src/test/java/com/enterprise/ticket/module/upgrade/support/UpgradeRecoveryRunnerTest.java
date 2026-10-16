@@ -170,6 +170,56 @@ class UpgradeRecoveryRunnerTest {
     }
 
     // ------------------------------------------------------------------
+    // 证据 2 的闸门：版本比对**必须有信息量**才能真正参与判定
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("目标版本是浮动标签 latest：current.json 也是 latest 时**不得**判成功（恒真陷阱）")
+    void floatingTagNeverConfirmsByVersion() throws IOException {
+        // 真实场景（2026-10-16 现场实跑）：IMAGE_TAG=latest ⇒ current.json 也写 latest
+        // ⇒「当前版本 == 目标版本」恒真 ⇒ 任务在 pull 还在跑时就被标成功，
+        //   随后到达的 FAILED 回执因任务已非 APPLYING 被静默丢弃 —— 失败被伪装成成功。
+        LocalDateTime now = LocalDateTime.now();
+        stubApplying(task(8L, "t-floating", "latest", now.minusMinutes(2)));
+        writeCurrentVersion("latest");
+
+        assertEquals(0, runner.reconcile(now));
+        verify(mapper, never()).finish(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("源版本 == 目标版本：本次没有版本变化，不得据此判成功")
+    void sameSourceAndTargetNeverConfirmsByVersion() throws IOException {
+        LocalDateTime now = LocalDateTime.now();
+        UpgradeTask same = task(9L, "t-same", "1.5.0", now.minusMinutes(2));
+        same.setSourceVersion("1.5.0");
+        stubApplying(same);
+        writeCurrentVersion("1.5.0");
+
+        assertEquals(0, runner.reconcile(now));
+        verify(mapper, never()).finish(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("回执说 FAILED、任务却已记为 SUCCESS：只体检不改写 —— 对账不替管理员改写历史结论")
+    void warnsButNeverRewritesContradictingReceipt() {
+        LocalDateTime now = LocalDateTime.now();
+        when(mapper.selectStaleProcessing(any())).thenReturn(List.of());
+        when(mapper.selectApplying()).thenReturn(List.of());
+
+        // 回执到了，但任务早已收尾（正是「被提前判定」留下的痕迹）
+        storage.writeApplyResult("t-dropped",
+                new UpgradeApplyResult("t-dropped", "FAILED", "重建容器失败", now.toString()));
+        UpgradeTask settled = task(10L, "t-dropped", "latest", now);
+        settled.setStatus(UpgradeStatus.SUCCESS.name());
+        when(mapper.selectByTaskNo("t-dropped")).thenReturn(settled);
+
+        assertEquals(0, runner.reconcile(now));
+        verify(mapper).selectByTaskNo("t-dropped");   // 体检确实跑了
+        verify(mapper, never()).finish(any(), anyString(), anyString(), anyString());
+    }
+
+    // ------------------------------------------------------------------
     // 工具
     // ------------------------------------------------------------------
 

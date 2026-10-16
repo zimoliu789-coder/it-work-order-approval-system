@@ -47,6 +47,10 @@ public interface UpgradeTaskMapper extends BaseMapper<UpgradeTask> {
     @Select("SELECT * FROM upgrade_task WHERE status = 'APPLYING' ORDER BY created_at DESC")
     List<UpgradeTask> selectApplying();
 
+    /** 按任务号查单条（回执完整性体检用）；不存在返回 null */
+    @Select("SELECT * FROM upgrade_task WHERE task_no = #{taskNo} LIMIT 1")
+    UpgradeTask selectByTaskNo(@Param("taskNo") String taskNo);
+
     /** 升级历史（倒序，条数由调用方按配置限制） */
     @Select("SELECT * FROM upgrade_task ORDER BY created_at DESC LIMIT #{limit}")
     List<UpgradeTask> selectHistory(@Param("limit") int limit);

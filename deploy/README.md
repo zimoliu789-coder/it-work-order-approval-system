@@ -217,6 +217,25 @@ docker inspect -f '{{range .Mounts}}{{.Destination}}={{.Source}}{{"\n"}}{{end}}'
 > docker ps -aq | xargs docker inspect -f '{{.Name}} {{range .Mounts}}{{.Source}} {{end}}' | grep /deploy \
 >   || echo "无容器引用 /deploy，可安全删除"
 > ```
+
+#### ⚠️ 系统已部署完成之后：把安装向导关掉
+
+`OPS_UI_ENABLED` 默认 `true`（首次部署要用它跑向导）。**部署完成之后应当关掉** ——
+向导对外再无用途，却仍是一个能「重建整套容器」的入口：
+
+```bash
+DEPLOY_HOST_DIR=$(pwd) OPS_UI_ENABLED=false \
+  docker compose -f ops/docker-compose.ops.yml up -d
+```
+
+⚠️ 这两个变量是**容器环境变量**，必须在**创建/重建容器时**给出 ——
+`docker compose restart` 不会重新读取它们，必须用 `up -d` 重建才生效。
+
+> ⚠️ **不要**用 `docker run` 手工起侧车（早期文档里给过这种写法，已作废）：
+> 那条命令里的 `DEPLOY_DIR` / `OPS_SHARED_DIR` 会指向容器内的 `/deploy`，
+> 于是 agent 交给宿主 daemon 的 compose 工作目录也是 `/deploy` ——
+> 正是下面「一键在线升级的真实前提」里描述的挂载错位成因。
+> 正确做法只有上面这一条 compose 命令。
 （主 compose 不行：里面 `${MYSQL_ROOT_PASSWORD:?}` 会让 Compose 在**解析阶段**直接报错，
 即使只想启动其中一个服务也一样 —— 这是 Compose 的既定行为，不是配置问题。）
 

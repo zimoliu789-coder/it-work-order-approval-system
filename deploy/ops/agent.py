@@ -208,6 +208,35 @@ def write_progress(task_no: str, phase: str, text: str) -> None:
         log("[升级] 写进展失败（忽略）：%s" % exc)
 
 
+def upgrade_version() -> str:
+    """
+    写进 current.json 的「当前版本」—— 取新镜像里真实的 commit，而不是 IMAGE_TAG。
+
+    <h2>为什么不能用 IMAGE_TAG</h2>
+    它通常是**浮动标签**（`latest`）。后端有一条兜底判定：「当前版本 == 任务目标版本 ⇒
+    升级成功」—— 两边都取到 `latest` 时该判定**恒真**，于是任务会在 `pull` 还在进行时
+    就被标成成功；等真回执（可能是 FAILED）到达时，任务已不是 APPLYING，
+    回执被静默丢弃 ⇒ **失败被伪装成成功**。（2026-10-16 现场实跑踩到）
+
+    镜像里带 OCI 标准标签 `org.opencontainers.image.revision`（即构建它的 commit），
+    拿它当版本才有信息量：一次升级里它必然会变，不同升级之间也能区分。
+    """
+    try:
+        code, out, _ = compose("images", "-q", UPGRADE_SERVICES[0], timeout=60)
+        image_id = (out or "").strip().splitlines()[0] if code == 0 and (out or "").strip() else ""
+        if image_id:
+            code, out, _ = _run(["docker", "inspect", "-f",
+                                 '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+                                 image_id], timeout=30)
+            revision = (out or "").strip()
+            if code == 0 and revision and revision != "<no value>":
+                return revision
+    except Exception as exc:  # noqa: BLE001
+        log("[升级] 读取镜像版本失败（回退 IMAGE_TAG）：%s" % exc)
+    # 回退：拿不到 commit 也不能让流程失败，如实退回标签值（后端另有闸门防止误判）
+    return os.environ.get("IMAGE_TAG", "latest")
+
+
 def finish_receipt(task_no: str, result: str, message: str) -> None:
     """
     写结果回执 + 当前版本。
@@ -225,7 +254,9 @@ def finish_receipt(task_no: str, result: str, message: str) -> None:
     })
     if result == "SUCCESS":
         write_json(os.path.join(STATE_DIR, "current.json"), {
-            "version": os.environ.get("IMAGE_TAG", "latest"),
+            # ⚠️ 必须是**会变的确定值**（真实 commit），不能写 IMAGE_TAG ——
+            #    后端的版本兜底判定在浮动标签下恒真，会让失败被伪装成成功（详见 upgrade_version）
+            "version": upgrade_version(),
             "appliedAt": now(),
         })
 

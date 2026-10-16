@@ -21,8 +21,12 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * 升级工作目录
@@ -84,7 +88,7 @@ public class UpgradeStorage {
     }
 
     public Path resultFile(String taskNo) {
-        return stateDir().resolve("result").resolve(taskNo + ".json");
+        return resultDir().resolve(taskNo + ".json");
     }
 
     /** {@code state/current.json}：当前已应用版本的描述（由外部脚本维护） */
@@ -338,6 +342,53 @@ public class UpgradeStorage {
                 .map(AgentProgress::text)
                 .filter(text -> text != null && !text.isBlank())
                 .orElse(null);
+    }
+
+    // ------------------------------------------------------------------
+    // 回执目录体检
+    // ------------------------------------------------------------------
+
+    public Path resultDir() {
+        return stateDir().resolve("result");
+    }
+
+    /**
+     * 最近 {@code within} 时间内写入的结果回执。
+     *
+     * <h2>用途</h2>
+     * 给启动对账做一次**完整性体检**：正常情况下回执总是先于任务收尾到达；
+     * 一旦出现「回执已到、任务却早已收尾」，说明该任务在回执到达之前就被判定了 ——
+     * 那份回执会被静默丢弃（典型是曾经的浮动标签版本比对恒真：任务在 pull 途中被判成功，
+     * 等真回执（可能是 FAILED）到达时已没人看它）。这类问题必须留下痕迹。
+     *
+     * <p>只读**近期**文件，成本可控；读取失败一律跳过，绝不影响主流程。
+     */
+    public List<UpgradeApplyResult> recentApplyResults(Duration within) {
+        Path dir = resultDir();
+        if (!Files.isDirectory(dir)) {
+            return List.of();
+        }
+        long cutoff = System.currentTimeMillis() - within.toMillis();
+        List<UpgradeApplyResult> out = new ArrayList<>();
+        try (Stream<Path> files = Files.list(dir)) {
+            for (Path file : files.toList()) {
+                String name = file.getFileName().toString();
+                if (!Files.isRegularFile(file) || !name.endsWith(".json")) {
+                    continue;
+                }
+                try {
+                    if (Files.getLastModifiedTime(file).toMillis() < cutoff) {
+                        continue;
+                    }
+                } catch (IOException e) {
+                    continue;
+                }
+                readApplyResult(name.substring(0, name.length() - ".json".length())).ifPresent(out::add);
+            }
+        } catch (IOException e) {
+            log.warn("[升级] 列举回执目录失败（忽略）：{}", e.getMessage());
+        }
+        return out;
     }
 
     /** 写 JSON 文件（自动创建父目录） */
