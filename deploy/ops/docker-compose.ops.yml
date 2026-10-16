@@ -27,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ghcr.io/zimoliu789-coder/it-work-order-approval-system/ops-agent:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/zimoliu789-coder/it-work-order-approval-system/ops-agent:${IMAGE_TAG:-latest}
     container_name: ticket-ops-agent
     restart: unless-stopped
     environment:

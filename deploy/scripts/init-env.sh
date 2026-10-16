@@ -176,6 +176,9 @@ echo "  bash scripts/preflight.sh          # 体检 .env 与目录权限"
 echo "  docker compose pull                # 拉取 GHCR 预构建镜像"
 echo "  docker compose up -d               # 启动"
 echo
+echo "国内网络拉不动 ghcr.io 时：在 .env 里把 REGISTRY 改成镜像站即可，无需改 compose ——"
+echo "  REGISTRY=ghcr.nju.edu.cn"
+echo
 echo "需要独立备份容器时："
 echo "  docker compose --profile backup up -d"
 echo "并把 .env 的 BACKUP_DIR 指向另一块物理盘（留空则落到 \$DATA_ROOT/backup，同盘不算备份）。"

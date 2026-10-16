@@ -602,6 +602,16 @@ sudo docker compose up -d --remove-orphans    # 拉起全部
 CI（GitHub Actions，push `main` 触发）会把 backend / frontend / backup 三个镜像推到 GHCR，
 这些包是 **public**，无需 `docker login`：
 
+> 🌐 **国内网络拉不动 `ghcr.io` 时**：在 `.env` 里加一行换用镜像站即可，**不需要改 compose**：
+> ```bash
+> REGISTRY=ghcr.nju.edu.cn
+> ```
+> 四个镜像（含 ops-agent）都会自动走该仓库（`${REGISTRY:-ghcr.io}`，不填即用 ghcr.io）。
+>
+> ⚠️ **不要手改 `docker-compose.yml` 里的 `image:` 地址** —— 那会变成一处**长期未提交的本地改动**，
+> 后果是**每一次 `git pull` 都被它挡住**（报 `Your local changes would be overwritten`），
+> 每次都要手工冲突处理，且很容易在丢弃时连别的改动一起丢掉。用 `REGISTRY` 变量就没有这个问题。
+
 ```bash
 cd <deploy 目录>
 docker compose pull

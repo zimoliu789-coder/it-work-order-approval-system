@@ -110,7 +110,7 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    image: ghcr.io/zimoliu789-coder/it-work-order-approval-system/backend:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/zimoliu789-coder/it-work-order-approval-system/backend:${IMAGE_TAG:-latest}
     container_name: ticket-backend
     restart: unless-stopped
     depends_on:
@@ -198,7 +198,7 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
-    image: ghcr.io/zimoliu789-coder/it-work-order-approval-system/frontend:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/zimoliu789-coder/it-work-order-approval-system/frontend:${IMAGE_TAG:-latest}
     container_name: ticket-frontend
     restart: unless-stopped
     environment:
@@ -254,7 +254,7 @@ services:
     build:
       context: ./backup
       dockerfile: Dockerfile
-    image: ghcr.io/zimoliu789-coder/it-work-order-approval-system/backup:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io}/zimoliu789-coder/it-work-order-approval-system/backup:${IMAGE_TAG:-latest}
     container_name: ticket-backup
     restart: unless-stopped
     depends_on:
