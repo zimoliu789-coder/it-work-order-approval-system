@@ -5,8 +5,8 @@ import { ArrowDown, ArrowUp, CopyDocument, Delete, Plus, View } from '@element-p
 import FormRenderer from '@/components/FormRenderer.vue'
 import { useResponsive } from '@/composables/useResponsive'
 import {
-  FIELD_CATEGORIES,
   FIELD_KEY_PATTERN,
+  addableFieldGroups,
   createField,
   fieldTypeMeta,
   isDataFieldType,
@@ -55,13 +55,13 @@ const emit = defineEmits<{
 
 const { isMobile } = useResponsive()
 
-/** 字段库分组（声明在 paletteGroups 之前，避免「使用后定义」） */
-const FIELD_TYPES_BY_CATEGORY: Record<string, FormFieldTypeCode[]> = {
-  BASIC: ['TEXT', 'TEXTAREA', 'NUMBER', 'DATE', 'DATETIME'],
-  SELECT: ['SELECT', 'MULTI_SELECT', 'RADIO', 'CHECKBOX'],
-  ADVANCED: ['FILE', 'IMAGE', 'USER', 'DEVICE', 'BIZ_GROUP'],
-  LAYOUT: ['DESCRIPTION', 'DIVIDER']
-}
+/*
+ * ⚠️ 这里曾有一份手写的「字段类型分组」数组（FIELD_TYPES_BY_CATEGORY）。
+ * 它与简化编辑器 ApplyFieldEditor 里那份**各自维护**，两边一旦不同步，
+ * 同一个表单在「新建申请向导」和本设计器里能配的类型就不一样 ——
+ * 2026-10-16 报的 P0 bug 正是这个形态（向导缺了 12 种类型）。
+ * 现在清单只由 types/form.ts 的 addableFieldGroups() 推导，本组件不再自带数组。
+ */
 
 const fields = computed<FormField[]>(() => props.modelValue.fields ?? [])
 const selectedIndex = ref<number | null>(null)
@@ -77,10 +77,12 @@ const selectedField = computed<FormField | null>(() =>
   selectedIndex.value == null ? null : (fields.value[selectedIndex.value] ?? null)
 )
 
+/** 字段库分组：内容来自唯一事实源，模板只关心「类型码」列表 */
 const paletteGroups = computed(() =>
-  FIELD_CATEGORIES.map((category) => ({
-    ...category,
-    items: FIELD_TYPES_BY_CATEGORY[category.code] ?? []
+  addableFieldGroups().map((group) => ({
+    code: group.code,
+    label: group.label,
+    items: group.items.map((item) => item.type)
   }))
 )
 

@@ -162,6 +162,33 @@ export const FIELD_CATEGORIES: Array<{ code: FieldCategoryCode; label: string }>
   { code: 'LAYOUT', label: '布局元素' }
 ]
 
+/**
+ * 「添加字段」菜单的分组数据 —— **全站唯一一份**。
+ *
+ * <h2>为什么必须抽成一处</h2>
+ * 完整设计器（FormDesigner）与简化编辑器（ApplyFieldEditor，用于新建申请向导与申请类型配置页）
+ * 各有自己的「添加字段」入口。它们曾经**各自维护一份类型清单**：
+ * 简化编辑器那份写死了 4 种，于是向导里看不到多行文本等 12 种类型，而设计器里却有 ——
+ * 同一个表单在两个页面能配的东西不一样（2026-10-16 用户报的 P0 bug）。
+ *
+ * <p>现在两侧都从这里取：清单只由 {@link FIELD_TYPE_META} 与 {@link FIELD_CATEGORIES} 推导，
+ * **任何一侧都不再手写类型数组**。加类型只需改元数据表。
+ */
+export function addableFieldGroups(): Array<{
+  code: FieldCategoryCode
+  label: string
+  items: Array<{ type: FormFieldTypeCode; label: string }>
+}> {
+  return FIELD_CATEGORIES.map((category) => ({
+    code: category.code,
+    label: category.label,
+    items: FIELD_TYPE_META.filter((meta) => meta.category === category.code).map((meta) => ({
+      type: meta.type,
+      label: meta.label
+    }))
+  })).filter((group) => group.items.length > 0)
+}
+
 const META_BY_TYPE = new Map<FormFieldTypeCode, FieldTypeMeta>(FIELD_TYPE_META.map((m) => [m.type, m]))
 
 /** 取字段类型元数据；未知类型返回 undefined（调用方据此降级为「不支持」） */
