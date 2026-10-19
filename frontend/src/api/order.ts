@@ -54,7 +54,7 @@ export const orderApi = {
     return http.get<ScanLookupResult>('/orders/scan-lookup', { code })
   },
 
-  /** 提交借用申请（需先调用 deviceApi.lock 拿到 lockToken） */
+  /** 提交借用申请（V56：只声明「借哪一类 + 什么型号」，具体资产在交付时绑定） */
   create(data: OrderPayload) {
     return http.post<number>('/orders', data)
   },
@@ -66,17 +66,20 @@ export const orderApi = {
    * 而申请人自己并不知道这一点 —— 所以由服务端按当前登录用户反查其分组后计算。
    * 未绑定流程时返回 `bound=false`，前端应回退展示固定审批人列表。
    *
+   * **V56**：入参由 `deviceId` 改为 `primaryCategoryId` —— 提交时已不挑具体资产，
+   * 预览必须与提交侧用同一个「设备分类」口径，否则条件分支算出的路径与实际不一致。
+   *
    * 只读、不落库；调用失败不应阻断提交（真正的闸门在 `create`）。
    */
   borrowFlowPreview(query: {
     useType?: string
     expectedReturnDate?: string | null
-    deviceId?: number | null
+    primaryCategoryId?: number | null
   }) {
     return http.get<BorrowFlowPreview>('/orders/borrow-flow-preview', {
       useType: query.useType,
       expectedReturnDate: query.expectedReturnDate ?? undefined,
-      deviceId: query.deviceId ?? undefined
+      primaryCategoryId: query.primaryCategoryId ?? undefined
     })
   },
 
@@ -217,9 +220,16 @@ export const orderApi = {
     return http.put<void>(`/orders/${id}/cancel`, { reason: reason ?? null })
   },
 
-  /** 实际执行人确认交付（工单→使用中，设备→使用中） */
-  deliver(id: number) {
-    return http.put<void>(`/orders/${id}/deliver`)
+  /**
+   * 实际执行人确认交付（工单→使用中，设备→使用中）
+   *
+   * **V56**：新单提交时没有设备，交付必须带上「发哪一台」的资产编号
+   * （扫码或手输），服务端做三层校验（分类 → 型号 → 空闲）后绑定。
+   * V56 之前的历史工单不需要传 —— 服务端按 `deviceId` 是否为空自动分支，
+   * 但前端仍应显式传 `null`，避免「少传字段」与「传空」在日志里分不清。
+   */
+  deliver(id: number, assetNo?: string | null) {
+    return http.put<void>(`/orders/${id}/deliver`, { assetNo: assetNo?.trim() || null })
   },
 
   /**

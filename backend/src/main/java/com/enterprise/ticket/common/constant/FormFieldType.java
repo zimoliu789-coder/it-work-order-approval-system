@@ -57,6 +57,22 @@ public enum FormFieldType {
     /** 部门选择（任意层级） */
     BIZ_GROUP("部门选择", FieldCategory.ADVANCED, ValueKind.GROUP_REF, false),
     /**
+     * 一级分类选择（V59 · 第 9 项 / 批次 3.5）。
+     *
+     * <p>借用单不再挑具体资产，改为声明「借哪一类」—— 这就是那个「类」。
+     * 它必须是 {@code device_category} 里 <b>level = 1</b> 的行，
+     * 由渲染器只列一级分类、校验器校验层级来保证，不依赖任何配置。
+     *
+     * <p>与 {@link #DEVICE_SUBCATEGORY} 分成两个类型而不是一个「分类」加开关：
+     * 一级是必填的归类依据，二级是选填的细化，两者的数据源（全部一级 / 某个一级的子类）
+     * 与必填性都不同；合成一个类型就要在前端按 key 猜语义，那是下一个 bug 的温床。
+     */
+    DEVICE_CATEGORY("设备分类选择", FieldCategory.ADVANCED, ValueKind.CATEGORY_REF, false),
+    /** 二级分类选择（V59）：选项随所选一级分类联动，值必须是 level = 2 的分类 */
+    DEVICE_SUBCATEGORY("设备二级分类", FieldCategory.ADVANCED, ValueKind.CATEGORY_REF, false),
+    /** 设备型号选择（V59 · R3）：选项来自型号字典 {@code device_model}，存 {@code model_id} */
+    DEVICE_MODEL("设备型号选择", FieldCategory.ADVANCED, ValueKind.MODEL_REF, false),
+    /**
      * 一级分部选择（V53）
      *
      * <h2>为什么是独立类型，而不是给「部门选择」加一个「仅一级」开关</h2>
@@ -128,7 +144,11 @@ public enum FormFieldType {
         /** 设备 id（必须存在） */
         DEVICE_REF,
         /** 部门 id */
-        GROUP_REF
+        GROUP_REF,
+        /** 设备分类 id（一级 / 二级两种语义，按字段类型区分层级） */
+        CATEGORY_REF,
+        /** 设备型号 id（型号字典行） */
+        MODEL_REF
     }
 
     private final String label;

@@ -42,6 +42,30 @@ public final class StorageSettings {
     public static final String KEY_EXPORT_RETENTION_DAYS = "export_retention_days";
 
     // ------------------------------------------------------------------
+    // 附件单张上限：按业务类型拆分（V58 / 第 10 项 R2）
+    //
+    // 【为什么必须拆】改造前只有一个全局 `attachment.max-size-mb`（部署配置），
+    // 它同时管「借用申请附件」与「故障照片」。两类东西的真实需求不同：
+    // 故障照片是手机现场拍的（单张常见 3~8MB），借用附件多是 PDF / 截图。
+    // 想放宽照片就得连带放宽附件 —— 而附件是随单长期留存、占磁盘的大头。
+    //
+    // 【为什么放系统参数而不是 application.yml】R2 定稿要求「两个限额后台可视化可改」：
+    // 现场按实际拍摄设备调整大小，不该要求运维改配置文件再重启。
+    // ------------------------------------------------------------------
+
+    /** 故障照片单张上限（MB） */
+    public static final String KEY_FAULT_PHOTO_MAX_MB = "attachment_fault_photo_max_mb";
+
+    /** 借用申请附件单张上限（MB） */
+    public static final String KEY_APPLY_ATTACHMENT_MAX_MB = "attachment_apply_attachment_max_mb";
+
+    /** 故障照片默认 10MB（与 R2 定稿一致） */
+    public static final int DEFAULT_FAULT_PHOTO_MAX_MB = 10;
+
+    /** 借用附件默认 10MB（维持改造前的行为，不因拆分而变化） */
+    public static final int DEFAULT_APPLY_ATTACHMENT_MAX_MB = 10;
+
+    // ------------------------------------------------------------------
     // 内置默认值
     // ------------------------------------------------------------------
 
@@ -81,4 +105,19 @@ public final class StorageSettings {
             "主备双机部署时，两台机器必须挂载同一个 NAS 路径，否则备机看不到主机写入的附件。",
             "目录需要运行账号有读写权限；路径变更不会自动搬迁已有文件，迁移历史附件请手工拷贝。"
     };
+
+    /**
+     * 兜底：生效的单张上限（MB）。
+     *
+     * <p>配置值 ≤ 0 时回落部署配置的 {@code app.attachment.max-size-mb}。
+     * 为什么需要这层兜底：0MB 会让<b>所有</b>上传被拒，那是「配置坏了」而不是
+     * 「策略收紧」—— 现场表现是「系统突然传不上任何附件」，而参数页上那个 0 看起来
+     * 只是一次无关紧要的手滑。
+     *
+     * @param configured 系统参数里的值（≤0 或未配置时无效）
+     * @param fallback   部署配置里的默认上限（MB）
+     */
+    public static int effectiveMaxSizeMb(int configured, int fallback) {
+        return configured > 0 ? configured : fallback;
+    }
 }

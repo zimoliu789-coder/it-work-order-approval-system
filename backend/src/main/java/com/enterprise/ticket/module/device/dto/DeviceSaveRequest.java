@@ -40,6 +40,28 @@ public class DeviceSaveRequest {
     @Size(max = 128, message = "型号长度不能超过 128 个字符")
     private String model;
 
+    /**
+     * 型号字典 id（V56 / R3）。
+     *
+     * <p>传了它就以字典为准：服务端会把 {@link #model} 文本一并写成字典里的名称，
+     * 让「规范型号」与「可读原文」两列保持一致。不传则沿用 {@link #model} 文本
+     * （兼容批量导入与旧前端），此时该设备属于「型号待整理」。
+     *
+     * <p>允许选中<b>已停用</b>的型号：编辑一台老设备时，它原来选的型号可能已被停用 ——
+     * 若这里强制「必须启用」，管理员就永远改不了这台设备的其它字段。
+     * 「新增时只能选启用型号」是<b>下拉层的约束</b>，不是保存时的硬校验。
+     */
+    private Long modelId;
+
+    /**
+     * 负责人 user_id（V57 / 第 10 项）。
+     *
+     * <p>资产归属责任人，长期固定，与「借用人」无关。选填：存量设备默认未指定，
+     * 未指定者不会出现在报修页的「我名下的设备」下拉里。
+     * 只有资产管理员能改这个字段（端点权限 {@code device:ledger:manage}）。
+     */
+    private Long ownerId;
+
     @Size(max = 128, message = "序列号长度不能超过 128 个字符")
     private String serialNo;
 

@@ -5,6 +5,7 @@ import com.enterprise.ticket.module.device.dto.DeviceFaultHandleRequest;
 import com.enterprise.ticket.module.device.dto.DeviceFaultQuery;
 import com.enterprise.ticket.module.device.dto.DeviceFaultRequest;
 import com.enterprise.ticket.module.device.dto.vo.DeviceFaultVO;
+import com.enterprise.ticket.module.device.dto.vo.FaultDeviceLookupVO;
 import com.enterprise.ticket.module.device.dto.vo.FaultDeviceOptionVO;
 
 import java.time.LocalDateTime;
@@ -26,7 +27,11 @@ public interface DeviceFaultService {
      * 上报设备故障
      *
      * <p>带 {@code orderId} = 借用人在使用中上报（设备保持使用中，不改变设备状态）；
-     * 不带 {@code orderId} = 管理员 / 最终处理人在台账直接登记（设备 可用 → 维修中）。
+     * 不带 {@code orderId} = 无工单登记（设备 可用 → 维修中）。
+     *
+     * <p><b>V57 / 第 10 项</b>：无工单登记已对普通员工开放（「公共设备」模式），
+     * 前提是设备处于「可用」—— 使用中的设备必须走工单路径，否则设备状态会绕过
+     * 借用单被改成维修中，那台设备的工单再也收不回来。
      *
      * @return 故障记录 id
      */
@@ -48,6 +53,33 @@ public interface DeviceFaultService {
      * </ul>
      */
     List<FaultDeviceOptionVO> selectableDevices();
+
+    /**
+     * 报修「我的设备」（V57 / 第 10 项模式 1）：**我负责的 ∪ 我正在用的**。
+     *
+     * <p><b>两类的并集，缺一不可</b>：
+     * <ul>
+     *   <li>{@code owner_id = 我} —— 我是这台资产的负责人（长期固定），
+     *       「我桌上的显示器坏了」靠它；</li>
+     *   <li>我有一笔「使用中」借用单 —— 「我今天借的笔记本坏了」靠它。
+     *       这类设备的负责人通常是 IT，不是我；<b>只查负责人会让普通员工看到一个空列表</b>，
+     *       报修入口等于不存在。</li>
+     * </ul>
+     *
+     * <p>负责人为空、也非我在用的设备**不出现在这里**，只能走「公共设备」入口（第 10 项要求）。
+     * 每项都带 {@code reportable} / {@code reason}，让「我名下但正被别人用着 / 已报废」的设备
+     * 也列出来、但明确不可报 —— 直接不列会让人以为设备丢了。
+     */
+    List<FaultDeviceLookupVO> ownedDevices();
+
+    /**
+     * 报修「公共设备」（V57 / 第 10 项模式 2）：按资产编号查询，**不校验负责人**。
+     *
+     * @param assetNo 资产编号（扫码枪扫出来的就是它）
+     * @return 查到时 {@code found=true} 并带上可报修判定；查不到时 {@code found=false}
+     *         （**不抛错**：查错编号是这个入口的日常动作，不该每次弹一个红色错误）
+     */
+    FaultDeviceLookupVO lookupByAssetNo(String assetNo);
 
     /** 维修完成：故障记录 → 已维修，设备 → 可用（ / ） */
     void markRepaired(Long faultId, DeviceFaultHandleRequest request);

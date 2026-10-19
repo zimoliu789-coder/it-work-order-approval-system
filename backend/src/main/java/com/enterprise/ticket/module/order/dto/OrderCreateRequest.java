@@ -6,16 +6,21 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
+import java.util.Map;
 
 /**
  * 借用申请提交请求（； 简化后为**三项 + 附件**）。
  *
  * <h2> 的字段取舍（需求文档 三·）</h2>
  * <pre>
- *   借什么设备  deviceId + lockToken   必填   （先「锁定设备」再提交，，两者一体）
+ *   借什么设备  primaryCategoryId + secondaryCategoryId + modelId  必填（一级）/ 选填（二三级）
  *   还的日期    expectedReturnDate     必填   （ 起一律必填：借用类型固定为短期借用）
  *   用途        reason                 选填   （原「借用原因」，一句话即可）
  * </pre>
+ *
+ * <p><b>V56 / 第 9 项再改一次</b>：原 {@code deviceId + lockToken} 两列<b>整体移除</b>。
+ * 申请人不再挑选具体资产，临时锁机制随之取消 —— 提交时没有设备，自然也没有锁。
+ * 设备绑定延后到 IT 交付扫码那一刻（见 {@code OrderDeliverRequest}）。
  *
  * <p><b>已砍掉的字段</b>：使用地点、备注、借用类型（表单上不再出现）。
  * 其中「使用地点 / 备注」是**删字段**，「借用类型」是**转为系统默认值**（见下）。
@@ -38,13 +43,25 @@ import java.time.LocalDate;
 @Data
 public class OrderCreateRequest {
 
-    @NotNull(message = "请选择要借用的设备")
-    private Long deviceId;
+    /**
+     * 要借用的<b>一级分类</b>（V56 / 第 9 项）。
+     *
+     * <p>申请人不再挑选具体资产：提交时只声明「借哪一类 + 什么型号」，
+     * 具体设备由 IT 在交付时扫码录入资产编号，经三层校验（分类 → 型号 → 空闲）后绑定。
+     * 这样做的直接好处是「审批中不再占用设备」—— 设备只在真正交到人手里才变成使用中。
+     */
+    @NotNull(message = "请选择要借用的设备类别")
+    private Long primaryCategoryId;
 
-    /** 设备临时锁令牌：由「锁定设备」接口下发，提交时原样回传 */
-    @NotBlank(message = "设备临时锁已失效，请返回重新选择设备")
-    @Size(max = 64, message = "临时锁令牌长度不合法")
-    private String lockToken;
+    /** 二级分类，选填（非空时必须归属所选一级分类） */
+    private Long secondaryCategoryId;
+
+    /**
+     * 型号 {@code device_model.id}，选填（V56 / R3）。
+     *
+     * <p>填了就在交付时按型号校验；留空表示「同类别内哪台都行」。
+     */
+    private Long modelId;
 
     /**
      * 借用类型：SHORT_TERM 短期借用 / LONG_TERM 长期领用。
@@ -73,4 +90,22 @@ public class OrderCreateRequest {
      * 否则报 {@code PARAM_INVALID}（子分部或停用分部会让处理小组匹配走偏）。
      */
     private Long currentDivisionId;
+
+    /**
+     * 借用表单的**自定义字段值**（V59 / 批次 3.5「表单完全放开」）。
+     *
+     * <h2>它装什么</h2>
+     * 借用单放开表单自定义后，管理员可以在系统字段之后追加任意字段（如「是否需要电源适配器」）。
+     * 这些值按字段 key 放在本 map 里，随工单一起落 {@code order_form_data} ——
+     * 与自定义申请（{@code CustomOrderRequest.formData}）走同一条存储链路。
+     *
+     * <h2>系统字段为什么也走这里</h2>
+     * 一级分类 / 二级分类 / 型号 / 分部 / 归还日期 / 用途**同时**有专用入参（见上方各字段），
+     * 提交页把 schema 值映射到那些入参上；map 里只放**新增字段**的值。
+     * 两处都写也不会错：服务端按 schema 校验 map，专用入参按业务规则校验，
+     * 落库时 map 原样存档（详情页按 schema 回显）。
+     *
+     * <p>可为空：改造前提交的工单没有这个 map，存量调用方不受影响。
+     */
+    private Map<String, Object> formData;
 }

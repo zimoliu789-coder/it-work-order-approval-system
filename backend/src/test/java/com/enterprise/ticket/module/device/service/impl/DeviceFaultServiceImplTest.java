@@ -12,9 +12,12 @@ import com.enterprise.ticket.module.device.dto.DeviceFaultHandleRequest;
 import com.enterprise.ticket.module.device.dto.DeviceFaultQuery;
 import com.enterprise.ticket.module.device.dto.DeviceFaultRequest;
 import com.enterprise.ticket.module.device.dto.vo.DeviceFaultVO;
+import com.enterprise.ticket.module.device.dto.vo.FaultDeviceLookupVO;
 import com.enterprise.ticket.module.device.dto.vo.FaultDeviceOptionVO;
 import com.enterprise.ticket.module.device.entity.Device;
+import com.enterprise.ticket.module.device.entity.DeviceCategory;
 import com.enterprise.ticket.module.device.entity.DeviceFault;
+import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceFaultMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.order.entity.Order;
@@ -36,8 +39,11 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,10 +58,14 @@ import static org.mockito.Mockito.when;
  * <p>重点覆盖三条上报路径的权限与状态边界，以及「设备状态与故障记录成对推进」：
  * <ul>
  *   <li>工单内上报：只有该单借用人或管理员可报，<b>设备保持「使用中」不变</b>；</li>
- *   <li>台账直接登记：仅管理员，设备「可用 → 维修中」；</li>
+ *   <li>台账直接登记（V57 起对普通员工开放）：<b>硬约束是设备必须「可用」</b>，设备「可用 → 维修中」；</li>
  *   <li>维修完成：设备「维修中 → 可用」；报废：使用中禁止，仅可用/维修中可报废；</li>
  *   <li>归还登记故障：同单已有待维修记录时不重复建档。</li>
  * </ul>
+ *
+ * <p>V57 / 第 10 项把「无工单登记仅管理员」放开为「设备必须可用」，因此本类不再断言
+ * 「普通员工无法无工单登记」——那条限制已不是产品规则。真正需要守住的是**状态护栏**：
+ * 使用中的设备必须走工单路径，否则设备状态会绕过借用单被改成维修中。
  */
 @ExtendWith(MockitoExtension.class)
 class DeviceFaultServiceImplTest {
@@ -76,6 +86,14 @@ class DeviceFaultServiceImplTest {
     private DeviceFaultMapper faultMapper;
     @Mock
     private DeviceMapper deviceMapper;
+    /**
+     * V57 / 第 10 项：报修的两种填报模式都要回显「这台设备属于什么分类」。
+     *
+     * <p>不加这个 mock，{@code @InjectMocks} 注入 null，凡是走到
+     * {@code ownedDevices()} / {@code lookupByAssetNo()} 的用例全部 NPE。
+     */
+    @Mock
+    private DeviceCategoryMapper categoryMapper;
     @Mock
     private OrderMapper orderMapper;
     @Mock
@@ -95,6 +113,19 @@ class DeviceFaultServiceImplTest {
      */
     @Mock
     private com.enterprise.ticket.module.order.support.DivisionPrefillService divisionPrefillService;
+    /**
+     * V59 / 批次 3.5：报修表单放开后新增的三个依赖。
+     *
+     * <p>不加 {@code applyTypeService} mock，{@code @InjectMocks} 注入 null，
+     * 凡是带 formData 的用例都会 NPE；{@code formTemplateService} 不加同理
+     * （schema 要从版本 id 取）。{@code formDataValidator} 不加则校验那步直接 NPE。
+     */
+    @Mock
+    private com.enterprise.ticket.module.applytype.service.ApplyTypeService applyTypeService;
+    @Mock
+    private com.enterprise.ticket.module.form.service.FormTemplateService formTemplateService;
+    @Mock
+    private com.enterprise.ticket.common.form.FormDataValidator formDataValidator;
 
     @InjectMocks
     private DeviceFaultServiceImpl service;
@@ -275,14 +306,43 @@ class DeviceFaultServiceImplTest {
     }
 
     @Test
-    @DisplayName("台账直接登记：普通员工被拒绝（无工单登记仅管理员）")
-    void report_ledger_byEmployee_rejected() {
+    @DisplayName("台账直接登记：普通员工可对「可用」设备登记（V57 公共设备模式），设备 可用 → 维修中")
+    void report_ledger_byEmployee_movesAvailableToMaintenance() {
+        // V57 / 第 10 项把「无工单登记仅管理员」放开：会议室打印机这类没有负责人的设备，
+        // 非要管理员才能报，等于把「公共设备」这个模式废掉。
         loginAs(APPLICANT_ID, RoleCode.USER);
         when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, DeviceStatus.AVAILABLE.name()));
+        when(deviceMapper.update(any(), any())).thenReturn(1);
+        when(faultMapper.insert(any(DeviceFault.class))).thenAnswer(invocation -> {
+            ((DeviceFault) invocation.getArgument(0)).setId(FAULT_ID);
+            return 1;
+        });
+        when(divisionPrefillService.resolve(any(), any()))
+                .thenReturn(new com.enterprise.ticket.module.order.support.DivisionPrefillService
+                        .ResolvedDivision(10L, "MANUAL"));
 
-        assertEquals(ErrorCode.FAULT_REPORTER_NOT_ALLOWED,
+        service.report(reportRequest(DEVICE_ID, null, "卡纸且报错灯常亮", LocalDateTime.now()));
+
+        // 设备必须被真的推进到「维修中」，否则故障记录建了、设备还在可用池里
+        verify(deviceMapper).update(any(), any());
+        ArgumentCaptor<DeviceFault> captor = ArgumentCaptor.forClass(DeviceFault.class);
+        verify(faultMapper).insert(captor.capture());
+        assertNull(captor.getValue().getOrderId(), "公共设备无关联工单");
+        assertEquals(APPLICANT_ID, captor.getValue().getReporterId());
+    }
+
+    @Test
+    @DisplayName("★ 台账直接登记：普通员工对「使用中」设备无工单登记仍被拒（状态护栏，不是权限护栏）")
+    void report_ledger_byEmployee_deviceInUse_rejected() {
+        // 放开的是「谁能报」，不是「什么状态都能报」：没有工单却能把一台使用中的设备
+        // 改成维修中，那台设备的使用中工单就永远收不回来了。
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, DeviceStatus.IN_USE.name()));
+
+        assertEquals(ErrorCode.FAULT_DEVICE_STATE_INVALID,
                 errorCodeOf(() -> service.report(reportRequest(DEVICE_ID, null, "x", LocalDateTime.now()))));
         verify(deviceMapper, never()).update(any(), any());
+        verify(faultMapper, never()).insert(any());
     }
 
     @Test
@@ -304,6 +364,138 @@ class DeviceFaultServiceImplTest {
         assertEquals(ErrorCode.FAULT_OCCURRED_TIME_INVALID,
                 errorCodeOf(() -> service.report(
                         reportRequest(DEVICE_ID, null, "x", LocalDateTime.now().plusDays(1)))));
+    }
+
+    // ------------------------------------------------------------------
+    // V59 / 批次 3.5：报修表单放开后的自定义字段
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("★ 自定义字段：绑了表单版本时校验 + 随记录落库（版本指针与值同生共死）")
+    void report_withFormData_validatesAndStores() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, DeviceStatus.AVAILABLE.name()));
+        when(deviceMapper.update(any(), any())).thenReturn(1);
+        when(faultMapper.insert(any(DeviceFault.class))).thenAnswer(invocation -> {
+            ((DeviceFault) invocation.getArgument(0)).setId(FAULT_ID);
+            return 1;
+        });
+        when(divisionPrefillService.resolve(any(), any()))
+                .thenReturn(new com.enterprise.ticket.module.order.support.DivisionPrefillService
+                        .ResolvedDivision(10L, "MANUAL"));
+        // 内置「故障报修」类型绑定了 V77 这一版表单
+        when(applyTypeService.builtInFormVersionId(
+                com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog.CODE_FAULT_REPORT))
+                .thenReturn(77L);
+        when(formTemplateService.requirePublishedSchema(77L)).thenReturn(faultFormSchema());
+
+        DeviceFaultRequest request = reportRequest(DEVICE_ID, null, "异响", LocalDateTime.now().minusHours(1));
+        request.setFormData(java.util.Map.of("urgency", "HIGH"));
+
+        service.report(request);
+
+        // 必须走一遍 schema 校验：不校验就意味着任何人都能往 form_data_json 里塞任意 key
+        verify(formDataValidator).validate(any(), any());
+        ArgumentCaptor<DeviceFault> captor = ArgumentCaptor.forClass(DeviceFault.class);
+        verify(faultMapper).insert(captor.capture());
+        assertEquals(77L, captor.getValue().getFormTemplateVersionId(),
+                "版本指针必须落库，否则详情页不知道该按哪一版回显");
+        assertTrue(captor.getValue().getFormDataJson().contains("urgency"),
+                "自定义字段值必须落库，实际：" + captor.getValue().getFormDataJson());
+    }
+
+    @Test
+    @DisplayName("★ 自定义字段：没绑表单版本时，空值照常放行、非空明确拒绝（不静默丢数据）")
+    void report_withFormData_withoutFormVersion() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, DeviceStatus.AVAILABLE.name()));
+        when(deviceMapper.update(any(), any())).thenReturn(1);
+        when(faultMapper.insert(any(DeviceFault.class))).thenAnswer(invocation -> {
+            ((DeviceFault) invocation.getArgument(0)).setId(FAULT_ID);
+            return 1;
+        });
+        when(divisionPrefillService.resolve(any(), any()))
+                .thenReturn(new com.enterprise.ticket.module.order.support.DivisionPrefillService
+                        .ResolvedDivision(10L, "MANUAL"));
+        // 升级未跑播种 / 内置类型被改坏的部署：拿不到表单版本
+        when(applyTypeService.builtInFormVersionId(
+                com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog.CODE_FAULT_REPORT))
+                .thenReturn(null);
+
+        DeviceFaultRequest withData = reportRequest(DEVICE_ID, null, "异响", LocalDateTime.now());
+        withData.setFormData(java.util.Map.of("urgency", "HIGH"));
+        assertEquals(ErrorCode.PARAM_INVALID, errorCodeOf(() -> service.report(withData)));
+
+        // 但不传 formData 的存量调用方必须照常成功 —— 否则升级后普通报修直接不可用
+        service.report(reportRequest(DEVICE_ID, null, "异响", LocalDateTime.now()));
+        ArgumentCaptor<DeviceFault> captor = ArgumentCaptor.forClass(DeviceFault.class);
+        verify(faultMapper).insert(captor.capture());
+        assertNull(captor.getValue().getFormTemplateVersionId());
+        assertNull(captor.getValue().getFormDataJson());
+    }
+
+    @Test
+    @DisplayName("★ 故障列表：自定义字段按「当初那一版」schema 一起下发（快照语义，不读当前绑定版本）")
+    void page_carriesFormSchemaSnapshot() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+        DeviceFault fault = fault(FaultStatus.PENDING_REPAIR.name(), DEVICE_ID);
+        fault.setReporterId(ADMIN_ID);
+        fault.setFormTemplateVersionId(77L);
+        fault.setFormDataJson("{\"urgency\":\"HIGH\"}");
+        when(faultMapper.selectPage(any(), any())).thenReturn(pageOf(fault));
+        when(deviceMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(device(DEVICE_ID, DeviceStatus.MAINTENANCE.name())));
+        when(formTemplateService.requirePublishedSchema(77L)).thenReturn(faultFormSchema());
+
+        PageResult<DeviceFaultVO> result = service.page(new DeviceFaultQuery());
+
+        DeviceFaultVO vo = result.getRecords().get(0);
+        assertEquals(77L, vo.getFormTemplateVersionId());
+        assertEquals("HIGH", vo.getFormData().get("urgency"));
+        assertNotNull(vo.getFormSchema(), "缺 schema 前端只能显示 key，等于没回显");
+        assertEquals("urgency", vo.getFormSchema().getFields().get(0).getKey());
+    }
+
+    @Test
+    @DisplayName("故障列表：schema 版本不可用时只跳过该条，不让整张列表打不开")
+    void page_toleratesMissingFormSchema() {
+        loginAs(ADMIN_ID, RoleCode.ADMIN);
+        DeviceFault fault = fault(FaultStatus.PENDING_REPAIR.name(), DEVICE_ID);
+        fault.setReporterId(ADMIN_ID);
+        fault.setFormTemplateVersionId(999L);
+        fault.setFormDataJson("{\"urgency\":\"HIGH\"}");
+        when(faultMapper.selectPage(any(), any())).thenReturn(pageOf(fault));
+        when(deviceMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(device(DEVICE_ID, DeviceStatus.MAINTENANCE.name())));
+        when(formTemplateService.requirePublishedSchema(999L))
+                .thenThrow(new BusinessException(ErrorCode.PARAM_INVALID, "版本不存在"));
+
+        PageResult<DeviceFaultVO> result = service.page(new DeviceFaultQuery());
+
+        DeviceFaultVO vo = result.getRecords().get(0);
+        assertNull(vo.getFormSchema(), "版本不可用时 schema 留空，前端按「无自定义字段」渲染");
+        assertEquals("HIGH", vo.getFormData().get("urgency"), "值仍然下发，丢的只是显示名");
+    }
+
+    private static com.enterprise.ticket.common.form.FormSchema faultFormSchema() {
+        com.enterprise.ticket.common.form.FormField field =
+                new com.enterprise.ticket.common.form.FormField();
+        field.setKey("urgency");
+        field.setLabel("紧急程度");
+        field.setType(com.enterprise.ticket.common.constant.FormFieldType.SELECT.name());
+        field.setRequired(true);
+        field.setWidth(1);
+        com.enterprise.ticket.common.form.FormSchema schema =
+                new com.enterprise.ticket.common.form.FormSchema();
+        schema.setFields(new ArrayList<>(List.of(field)));
+        return schema;
+    }
+
+    private static Page<DeviceFault> pageOf(DeviceFault... faults) {
+        Page<DeviceFault> page = new Page<>(1, 10);
+        page.setRecords(new ArrayList<>(List.of(faults)));
+        page.setTotal(faults.length);
+        return page;
     }
 
     // ------------------------------------------------------------------
@@ -589,7 +781,8 @@ class DeviceFaultServiceImplTest {
         assertEquals(DEVICE_ID, vo.getDeviceId());
         assertEquals(ORDER_ID, vo.getOrderId(), "工单路径必须带 orderId");
         assertEquals("BO20260917-100", vo.getOrderNo());
-        // 普通用户不查「可用设备」（无工单直登路径仅管理员可用）
+        // 普通用户不查「可用设备」—— 这个下拉的「可用」分支是**管理员代报**用的；
+        // 普通员工走 V57 的 ownedDevices() / lookupByAssetNo() 两个入口（见下一节）。
         verify(deviceMapper, never()).selectList(any());
     }
 
@@ -621,6 +814,144 @@ class DeviceFaultServiceImplTest {
         assertEquals(ORDER_ID, options.get(0).getOrderId(), "第一类来自使用中工单");
         assertNull(options.get(1).getOrderId(), "可用设备走台账直接登记，无 orderId");
         assertEquals(OTHER_DEVICE_ID, options.get(1).getDeviceId());
+    }
+
+    // ------------------------------------------------------------------
+    // 第 10 项两种填报模式（V57）：我名下的设备 / 扫码查设备
+    // ------------------------------------------------------------------
+
+    private Device ownedDevice(Long id, String status, Long ownerId, Long primaryCategoryId) {
+        Device device = device(id, status);
+        device.setOwnerId(ownerId);
+        device.setPrimaryCategoryId(primaryCategoryId);
+        return device;
+    }
+
+    private DeviceCategory category(Long id, String name) {
+        DeviceCategory category = new DeviceCategory();
+        category.setId(id);
+        category.setCategoryName(name);
+        return category;
+    }
+
+    @Test
+    @DisplayName("我名下的设备：可用 → 可报（无 orderId）；正被我用 → 可报（带 orderId）")
+    void ownedDevices_availableAndMyBorrowed_reportable() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        Device available = ownedDevice(DEVICE_ID, DeviceStatus.AVAILABLE.name(), APPLICANT_ID, 5L);
+        Device inUse = ownedDevice(OTHER_DEVICE_ID, DeviceStatus.IN_USE.name(), APPLICANT_ID, 5L);
+        when(deviceMapper.selectList(any())).thenReturn(java.util.List.of(available, inUse));
+        when(categoryMapper.selectBatchIds(any())).thenReturn(java.util.List.of(category(5L, "电脑整机")));
+        // 只有「我本人使用中」的工单能带 orderId —— 服务端只允许该单借用人关联
+        when(orderMapper.selectList(any()))
+                .thenReturn(java.util.List.of(order(OrderStatus.BORROWED.name(), OTHER_DEVICE_ID, APPLICANT_ID)));
+
+        java.util.List<FaultDeviceLookupVO> list = service.ownedDevices();
+
+        assertEquals(2, list.size());
+        FaultDeviceLookupVO availableVo = list.get(0);
+        assertTrue(availableVo.isReportable(), "可用设备走台账登记路径");
+        assertNull(availableVo.getOrderId(), "无工单不能带 orderId，否则提交必被拒");
+        assertEquals("电脑整机", availableVo.getPrimaryCategoryName(), "要回显分类，让用户确认选对了没有");
+
+        FaultDeviceLookupVO inUseVo = list.get(1);
+        assertTrue(inUseVo.isReportable());
+        assertEquals(ORDER_ID, inUseVo.getOrderId(), "正被我用 → 走工单路径，设备保持使用中");
+        assertEquals("BO20260917-100", inUseVo.getOrderNo());
+    }
+
+    @Test
+    @DisplayName("★ 我名下的设备：必须含「我在用的」（负责人不是我）—— 只查 owner_id 会让普通员工看到空列表")
+    void ownedDevices_includesDevicesImUsingEvenIfNotOwnedByMe() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(orderMapper.selectList(any()))
+                .thenReturn(java.util.List.of(order(OrderStatus.BORROWED.name(), OTHER_DEVICE_ID, APPLICANT_ID)));
+        // 负责人是资产管理员（99），不是我 —— 但我正在用它
+        when(deviceMapper.selectList(any()))
+                .thenReturn(java.util.List.of(ownedDevice(OTHER_DEVICE_ID, DeviceStatus.IN_USE.name(), 99L, null)));
+
+        java.util.List<FaultDeviceLookupVO> list = service.ownedDevices();
+
+        assertEquals(1, list.size());
+        assertEquals(ORDER_ID, list.get(0).getOrderId(), "我在用的设备必须能带工单上报");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<Device>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(deviceMapper).selectList(captor.capture());
+        String sql = captor.getValue().getSqlSegment();
+        assertTrue(sql.contains("owner_id"), "必须含「我负责的」，实际 SQL：" + sql);
+        assertTrue(sql.contains("IN"), "必须含「我在用的」，实际 SQL：" + sql);
+    }
+
+    @Test
+    @DisplayName("★ 我名下的设备：别人在用 / 维修中 / 已报废 / 丢失 → 不可报，且给出能照做的原因")
+    void ownedDevices_notReportable_givesActionableReason() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(deviceMapper.selectList(any())).thenReturn(java.util.List.of(
+                ownedDevice(11L, DeviceStatus.IN_USE.name(), APPLICANT_ID, null),
+                ownedDevice(12L, DeviceStatus.MAINTENANCE.name(), APPLICANT_ID, null),
+                ownedDevice(13L, DeviceStatus.SCRAPPED.name(), APPLICANT_ID, null),
+                ownedDevice(14L, DeviceStatus.LOST.name(), APPLICANT_ID, null)));
+        // 设备在使用中，但工单借用人不是我（这里返回空：不是我的单）
+        when(orderMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        java.util.List<FaultDeviceLookupVO> list = service.ownedDevices();
+
+        assertEquals(4, list.size());
+        for (FaultDeviceLookupVO vo : list) {
+            assertTrue(!vo.isReportable(), "这些状态都不该可报：" + vo.getDeviceStatus());
+            // 「不可报修」四个字本身没有任何指导意义，必须给出下一步动作
+            assertTrue(vo.getReason() != null && !vo.getReason().isBlank(),
+                    "不可报修必须带原因：" + vo.getDeviceStatus());
+            assertNull(vo.getOrderId(), "不是我的单，就不能带 orderId 让前端以为能关联");
+        }
+    }
+
+    @Test
+    @DisplayName("扫码查询：资产编号查不到 → found=false 且不抛错（输错编号是日常动作）")
+    void lookupByAssetNo_notFound_returnsFoundFalse() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(deviceMapper.selectOne(any())).thenReturn(null);
+
+        FaultDeviceLookupVO vo = service.lookupByAssetNo("IT-NOT-EXIST");
+
+        assertTrue(!vo.isFound());
+        assertTrue(!vo.isReportable());
+        // 空编号同样走「查不到」，不能 NPE 也不能抛 400 —— 扫码枪扫空串很常见
+        assertTrue(!service.lookupByAssetNo("   ").isFound());
+    }
+
+    @Test
+    @DisplayName("扫码查询：设备被别人使用中 → 不可报，提示去找实际使用人（不带 orderId）")
+    void lookupByAssetNo_inUseByOthers_notReportable() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(deviceMapper.selectOne(any()))
+                .thenReturn(ownedDevice(DEVICE_ID, DeviceStatus.IN_USE.name(), 999L, 5L));
+        when(categoryMapper.selectBatchIds(any())).thenReturn(java.util.List.of(category(5L, "电脑整机")));
+        when(orderMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        FaultDeviceLookupVO vo = service.lookupByAssetNo("IT-2026-0001");
+
+        assertTrue(vo.isFound(), "查到了设备，只是不能报");
+        assertTrue(!vo.isReportable());
+        assertNull(vo.getOrderId());
+        assertTrue(vo.getReason().contains("使用人"), "要让人知道该找谁，实际：" + vo.getReason());
+        assertEquals("电脑整机", vo.getPrimaryCategoryName());
+    }
+
+    @Test
+    @DisplayName("扫码查询：可用设备 → 可报，走台账登记路径")
+    void lookupByAssetNo_available_reportable() {
+        loginAs(APPLICANT_ID, RoleCode.USER);
+        when(deviceMapper.selectOne(any()))
+                .thenReturn(ownedDevice(DEVICE_ID, DeviceStatus.AVAILABLE.name(), null, null));
+
+        FaultDeviceLookupVO vo = service.lookupByAssetNo("IT-2026-0001");
+
+        assertTrue(vo.isFound());
+        assertTrue(vo.isReportable());
+        assertNull(vo.getOrderId(), "可用设备没有使用中工单");
     }
 
     // ------------------------------------------------------------------

@@ -51,4 +51,12 @@ public class DeviceImportRow {
      * 比让 POI 把 {@code "5,000元"} 静默变成 5000 或 0 更容易解释。
      */
     private String amount;
+
+    /**
+     * 负责人<b>登录账号</b>（选填，V57 / 第 10 项）。
+     *
+     * <p>填账号而不是姓名：姓名会重名，而重名在这里的表现是「设备悄悄挂到了另一个人名下」——
+     * 不报错、事后极难发现。留空 = 未指定负责人，这类设备只能走「公共设备 / 扫码」报修。
+     */
+    private String ownerUsername;
 }

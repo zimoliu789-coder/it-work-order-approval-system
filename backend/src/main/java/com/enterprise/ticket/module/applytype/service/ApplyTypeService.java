@@ -3,6 +3,7 @@ package com.enterprise.ticket.module.applytype.service;
 import com.enterprise.ticket.module.applytype.dto.ApplyConfigCreateRequest;
 
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
@@ -57,6 +58,20 @@ public interface ApplyTypeService {
     /** 启用 / 停用 */
     void updateStatus(Long id, String status);
 
+    /**
+     * 整体排序：按 {@code orderedIds} 的数组下标重写所有申请类型的 {@code sort_order}。
+     *
+     * <p>内置类型与自建类型**共用一条排序链**（V48 的「内置置顶」已移除）——
+     * 提交页卡片的顺序就是这里的顺序，管理员应该能自己决定「出差申请」排在「借用设备」前还是后。
+     *
+     * <p>必须整组提交：{@code orderedIds} 需与库里当前全部类型 ID 的集合一致，
+     * 少一个都会让未提交的类型停在旧排序值上，与新值交错成乱序（且不报错）。
+     *
+     * @throws com.enterprise.ticket.common.exception.BusinessException
+     *         集合不一致（400，提示刷新重试）
+     */
+    void sort(ApplyTypeSortRequest request);
+
     /** 删除（已被工单使用时拒绝，只能停用；系统内置类型恒拒绝，V48） */
     void delete(Long id);
 
@@ -95,6 +110,25 @@ public interface ApplyTypeService {
      * 让调用方直接依赖列名，下次挪列就会在编译期之外的地方静默失效。
      */
     Long borrowBuiltInFlowVersionId();
+
+    /**
+     * 内置「借用设备」当前绑定的表单模板版本 id；未绑定返回 {@code null}。
+     *
+     * <p>V59 / 批次 3.5：借用单放开表单自定义后，提交时要按**这一版** schema
+     * 校验管理员新增的字段值，并把版本指针随工单存档（{@code order_form_data}）。
+     * 与 {@link #borrowBuiltInFlowVersionId} 同一取法：让 order 模块不直接依赖列名。
+     */
+    Long borrowBuiltInFormVersionId();
+
+    /**
+     * 任一内置申请类型当前绑定的表单模板版本 id；未绑定返回 {@code null}。
+     *
+     * <p>供「内置类型也要校验 / 存档自定义字段」的各条提交链路共用
+     * （借用单走 {@code order_form_data}、报修走 {@code device_fault.form_data_json}）。
+     * 传非内置编码时返回 {@code null} —— 调用方按「没有表单」处理，
+     * 与「这个编码不是内置类型」对外不构成有用信息（避免可枚举口径）一致。
+     */
+    Long builtInFormVersionId(String typeCode);
 
     /**
      * 审批流程预览：用「当前表单数据」算一遍命中路径，告诉提交页

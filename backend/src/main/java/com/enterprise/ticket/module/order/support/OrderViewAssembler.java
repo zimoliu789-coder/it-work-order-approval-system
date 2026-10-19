@@ -127,6 +127,9 @@ public class OrderViewAssembler {
         Map<Long, String> userNames = referenceNames.userNameMap(userIds);
         Map<Long, String> departmentNames = referenceNames.departmentNames();
         Map<Long, String> applyTypeNames = referenceNames.applyTypeNames(orders);
+        // V56：分类与型号映射（列表要显示「借的是什么」，交付前没有设备可显示）
+        Map<Long, String> categoryNames = referenceNames.categoryNameMap();
+        Map<Long, String> modelNames = referenceNames.modelNameMap();
         // ：延期统计同样批量取，避免逐行查询延期表
         List<Long> orderIds = orders.stream().map(Order::getId).toList();
         Map<Long, OrderExtendService.ExtendStat> extendStats = orderExtendService.statByOrders(orderIds);
@@ -140,7 +143,7 @@ public class OrderViewAssembler {
             OrderVO vo = new OrderVO();
             List<OrderApprovalNode> nodes = nodeMap.get(order.getId());
             fill(vo, order, devices, userNames, departmentNames, applyTypeNames,
-                    currentUserId, currentRole, nodes);
+                    categoryNames, modelNames, currentUserId, currentRole, nodes);
             applyExtendInfo(vo, order, currentUserId, extendMaxCount,
                     extendStats.getOrDefault(order.getId(), new OrderExtendService.ExtendStat(0, false)));
             applyTransferUrgeInfo(vo, order, currentUserId, currentRole, nodes,
@@ -169,6 +172,8 @@ public class OrderViewAssembler {
         fill(vo, order, referenceNames.devicesOf(List.of(order)), userNames,
                 referenceNames.departmentNames(),
                 referenceNames.applyTypeNames(List.of(order)),
+                referenceNames.categoryNameMap(),
+                referenceNames.modelNameMap(),
                 currentUserId, currentRole, nodes);
         applyExtendInfo(vo, order, currentUserId, systemConfigService.extendMaxCount(),
                 orderExtendService.statOfOrder(order.getId()));
@@ -325,6 +330,8 @@ public class OrderViewAssembler {
     private void fill(OrderVO vo, Order order, Map<Long, Device> devices, Map<Long, String> userNames,
                       Map<Long, String> departmentNames,
                       Map<Long, String> applyTypeNames,
+                      Map<Long, String> categoryNames,
+                      Map<Long, String> modelNames,
                       Long currentUserId, String currentRole, List<OrderApprovalNode> nodes) {
         vo.setId(order.getId());
         vo.setOrderNo(order.getOrderNo());
@@ -335,6 +342,18 @@ public class OrderViewAssembler {
         Device device = OrderReferenceNames.mapGet(devices, order.getDeviceId());
         vo.setDeviceName(device == null ? null
                 : device.getDeviceName() + "（" + device.getAssetNo() + "）");
+        // V56 / 第 9 项：交付前没有设备，列表靠「分类 + 型号」回答「借的是什么」。
+        // 历史工单这三项为空（那时直接绑设备），前端回落展示 deviceName 即可。
+        vo.setPrimaryCategoryId(order.getPrimaryCategoryId());
+        vo.setPrimaryCategoryName(OrderReferenceNames.mapGet(categoryNames, order.getPrimaryCategoryId()));
+        vo.setSecondaryCategoryId(order.getSecondaryCategoryId());
+        vo.setSecondaryCategoryName(OrderReferenceNames.mapGet(categoryNames, order.getSecondaryCategoryId()));
+        vo.setModelId(order.getModelId());
+        vo.setModelName(OrderReferenceNames.mapGet(modelNames, order.getModelId()));
+        // 「待交付但还没绑定设备」是 V56 新流程的正常中间态，不是数据缺失：
+        // IT 打开待交付列表时要据此知道「这一单得扫码选设备」，而不是显示一片空白
+        vo.setPendingDeviceBinding(order.getDeviceId() == null
+                && OrderStatus.PENDING_DELIVERY.name().equals(order.getStatus()));
         vo.setApplicantId(order.getApplicantId());
         vo.setApplicantName(OrderReferenceNames.mapGet(userNames, order.getApplicantId()));
         vo.setDepartmentName(OrderReferenceNames.mapGet(departmentNames, order.getDepartmentId()));

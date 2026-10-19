@@ -6,6 +6,7 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.storage.RelativeFileStorage;
 import com.enterprise.ticket.config.AppProperties;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
+import com.enterprise.ticket.module.system.support.StorageSettings;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -85,16 +86,24 @@ public class AttachmentStorage {
      *
      * <p>顺序即失败原因的优先级：先告诉用户「没选文件」，再谈大小与格式，
      * 避免用户拿到一个与真正原因无关的报错。
+     *
+     * <h2>大小上限按业务类型取（V58 / 第 10 项 R2）</h2>
+     * <p>故障照片与借用附件不再共用一个全局值：改造前两者都读
+     * {@code app.attachment.max-size-mb}，想放宽手机现场拍的照片就得连带放宽
+     * 随单长期留存的附件。现在故障照片读 {@code attachment_fault_photo_max_mb}，
+     * 其余（含借用附件）读 {@code attachment_apply_attachment_max_mb}，
+     * 两者都在「系统参数 → 附件与导出」里可视化调整。
      */
     public void validate(AttachmentBizType bizType, MultipartFile file) {
         AppProperties.Attachment cfg = appProperties.getAttachment();
         if (file == null || file.isEmpty()) {
             throw new BusinessException(ErrorCode.ATTACHMENT_FILE_REQUIRED);
         }
-        long maxBytes = (long) cfg.getMaxSizeMb() * 1024 * 1024;
+        int maxSizeMb = maxSizeMbOf(bizType);
+        long maxBytes = (long) maxSizeMb * 1024 * 1024;
         if (file.getSize() > maxBytes) {
             throw new BusinessException(ErrorCode.ATTACHMENT_FILE_TOO_LARGE,
-                    "附件不能超过 " + cfg.getMaxSizeMb() + "MB");
+                    "「" + bizType.getLabel() + "」单张不能超过 " + maxSizeMb + "MB");
         }
         String ext = extensionOf(file.getOriginalFilename());
         if (ext == null || !cfg.getAllowedExtensions().contains(ext)) {
@@ -105,6 +114,25 @@ public class AttachmentStorage {
             throw new BusinessException(ErrorCode.ATTACHMENT_TYPE_NOT_ALLOWED,
                     "「" + bizType.getLabel() + "」仅支持图片：" + String.join("、", cfg.getImageExtensions()));
         }
+    }
+
+    /**
+     * 该业务类型生效的单张上限（MB）。
+     *
+     * <p>故障照片走独立参数，其余一律按「借用申请附件」的限额 —— 新增业务类型时
+     * 默认落在较严的那一侧，而不是悄悄继承一个被放宽过的照片限额。
+     * 系统参数不可用（未初始化 / 单测未注入）时由 {@link StorageSettings#effectiveMaxSizeMb}
+     * 回落到部署配置，不会出现「0MB 全拒」。
+     */
+    private int maxSizeMbOf(AttachmentBizType bizType) {
+        int fallback = appProperties.getAttachment().getMaxSizeMb();
+        if (systemConfigService == null) {
+            return fallback;
+        }
+        int configured = bizType == AttachmentBizType.FAULT_PHOTO
+                ? systemConfigService.faultPhotoMaxSizeMb()
+                : systemConfigService.applyAttachmentMaxSizeMb();
+        return StorageSettings.effectiveMaxSizeMb(configured, fallback);
     }
 
     /**

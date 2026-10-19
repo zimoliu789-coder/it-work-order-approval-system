@@ -26,6 +26,11 @@ import com.enterprise.ticket.common.flow.ApproverRule;
 import com.enterprise.ticket.common.flow.ApproverRuleResolver;
 import com.enterprise.ticket.common.flow.ApproverRuleType;
 import com.enterprise.ticket.common.flow.BorrowFieldCatalog;
+import com.enterprise.ticket.module.device.entity.DeviceCategory;
+import com.enterprise.ticket.module.device.entity.DeviceModel;
+import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
+import com.enterprise.ticket.module.order.dto.OrderDeliverRequest;
 import com.enterprise.ticket.common.flow.BorrowFlowCatalog;
 import com.enterprise.ticket.common.flow.FlowDefinition;
 import com.enterprise.ticket.common.flow.FlowDefinitionCodec;
@@ -364,6 +369,10 @@ public class OrderServiceImpl implements OrderService {
      * 「在职启用」+「部门名」两项派生，两处各写一遍必然漂移。
      */
     private final UserService userService;
+    /** V56：交付扫码绑定的三层校验要用（分类层级/归属） */
+    private final DeviceCategoryMapper categoryMapper;
+    /** V56 / R3：型号字典（借什么 + 交付校验都按 model_id 比对） */
+    private final DeviceModelMapper deviceModelMapper;
 
     // ------------------------------------------------------------------
     // 申请页辅助
@@ -373,14 +382,11 @@ public class OrderServiceImpl implements OrderService {
     public List<DeviceOptionVO> listSelectableDevices(String keyword, int limit) {
         int safeLimit = Math.min(Math.max(limit, 1), MAX_DEVICE_OPTION_SIZE);
         String trimmed = StringUtils.hasText(keyword) ? keyword.trim() : null;
-        LocalDateTime threshold = LocalDateTime.now()
-                .minusMinutes(systemConfigService.lockTimeoutMinutes());
 
         List<Device> devices = deviceMapper.selectList(Wrappers.<Device>lambdaQuery()
-                // 可申请 = 当前可用，或「临时锁已超时」可直接接管（：超时视为已释放）
-                .and(w -> w.eq(Device::getStatus, DeviceStatus.AVAILABLE.name())
-                        .or(o -> o.eq(Device::getStatus, DeviceStatus.LOCKED.name())
-                                .lt(Device::getLockedAt, threshold)))
+                // V56：临时锁已移除，「可申请」就等价于「当前可用」，不再有
+                // 「锁已超时可直接接管」这条特例 —— 那套逻辑随锁一起删掉了
+                .eq(Device::getStatus, DeviceStatus.AVAILABLE.name())
                 .and(trimmed != null, w -> w.like(Device::getDeviceName, trimmed)
                         .or().like(Device::getAssetNo, trimmed))
                 .orderByAsc(Device::getId)
@@ -392,9 +398,12 @@ public class OrderServiceImpl implements OrderService {
             vo.setId(device.getId());
             vo.setDeviceName(device.getDeviceName());
             vo.setAssetNo(device.getAssetNo());
+            vo.setPrimaryCategoryId(device.getPrimaryCategoryId());
             vo.setPrimaryCategoryName(categoryNames.get(device.getPrimaryCategoryId()));
+            vo.setSecondaryCategoryId(device.getSecondaryCategoryId());
             vo.setSecondaryCategoryName(device.getSecondaryCategoryId() == null
                     ? null : categoryNames.get(device.getSecondaryCategoryId()));
+            vo.setModelId(device.getModelId());
             vo.setBrand(device.getBrand());
             vo.setModel(device.getModel());
             vo.setStorageLocation(device.getStorageLocation());
@@ -525,23 +534,12 @@ public class OrderServiceImpl implements OrderService {
     /**
      * 设备是否可被新建借用申请。
      *
-     * <p>与 {@code listSelectableDevices} 共用同一口径：{@code DeviceStatus.isApplicable()}
-     * 表达「 表格可否被申请」，再对 {@code LOCKED} 加一条超时可接管的特例
-     * （：锁超时视为已释放）。<b>不要</b>在这里另写一份状态名白名单，
-     * 否则新增设备状态时两条口径必然漂移。
+     * <p>V56 起只剩一条判据：{@code DeviceStatus.isApplicable()}（当前就是「可用」）。
+     * 原「LOCKED 且锁已超时视为可接管」的特例随临时锁机制一起删除。
      */
     private boolean isBorrowable(Device device) {
         DeviceStatus status = DeviceStatus.of(device.getStatus());
-        if (status == null) {
-            return false;
-        }
-        if (status.isApplicable()) {
-            return true;
-        }
-        return status == DeviceStatus.LOCKED
-                && device.getLockedAt() != null
-                && device.getLockedAt().isBefore(LocalDateTime.now()
-                        .minusMinutes(systemConfigService.lockTimeoutMinutes()));
+        return status != null && status.isApplicable();
     }
 
     /**
@@ -558,7 +556,7 @@ public class OrderServiceImpl implements OrderService {
         return switch (status) {
             case IN_USE -> "该设备正在被他人使用中，需等其归还后才能申请。";
             case IN_APPROVAL -> "该设备正处于借用审批中，暂不可申请。";
-            case LOCKED -> "该设备刚被他人选中（正在填写申请），请稍后再试。";
+            case LOCKED -> "该设备处于历史锁定状态，请联系管理员确认（V56 起已不再产生新锁）。";
             case MAINTENANCE -> "该设备维修中，暂不可借用。";
             case LOST -> "该设备已标记为丢失，不可借用。请联系管理员确认。";
             case SCRAPPED -> "该设备已报废，不可借用。";
@@ -576,9 +574,12 @@ public class OrderServiceImpl implements OrderService {
         vo.setId(device.getId());
         vo.setDeviceName(device.getDeviceName());
         vo.setAssetNo(device.getAssetNo());
+        vo.setPrimaryCategoryId(device.getPrimaryCategoryId());
         vo.setPrimaryCategoryName(categoryNames.get(device.getPrimaryCategoryId()));
+        vo.setSecondaryCategoryId(device.getSecondaryCategoryId());
         vo.setSecondaryCategoryName(device.getSecondaryCategoryId() == null
                 ? null : categoryNames.get(device.getSecondaryCategoryId()));
+        vo.setModelId(device.getModelId());
         vo.setBrand(device.getBrand());
         vo.setModel(device.getModel());
         vo.setStorageLocation(device.getStorageLocation());
@@ -605,10 +606,15 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
-    public BorrowFlowPreviewVO previewBorrowFlow(String useType, LocalDate expectedReturnDate, Long deviceId) {
+    public BorrowFlowPreviewVO previewBorrowFlow(String useType, LocalDate expectedReturnDate,
+                                                 Long primaryCategoryId) {
         // 委托 BorrowFlowPreviewer：部门反查、流程版本解冻、路径求值、审批人解析都在那边，
         // 且与提交侧共用同一套流程内核 —— 这里再实现一遍必然与真实路径漂移。
-        return borrowFlowPreviewer.preview(useType, expectedReturnDate, deviceId);
+        //
+        // V56：入参由 deviceId 改为 primaryCategoryId。提交侧此刻已没有具体设备
+        // （绑定延后到交付扫码），若预览仍靠设备反查分类，未选设备时
+        // `borrow.deviceCategoryId` 条件永远不命中 → 预览路径与实际路径不一致。
+        return borrowFlowPreviewer.preview(useType, expectedReturnDate, primaryCategoryId);
     }
 
     @Override
@@ -750,13 +756,18 @@ public class OrderServiceImpl implements OrderService {
                     "最终处理部门「" + handlerDepartment.getDeptName() + "」暂无在职可用成员，请联系管理员");
         }
 
-        // 4) 设备必须由本人持有有效临时锁
-        Device device = requireDevice(request.getDeviceId());
-        if (DeviceStatus.of(device.getStatus()) != DeviceStatus.LOCKED
-                || !Objects.equals(device.getLockedBy(), applicantId)
-                || !Objects.equals(device.getLockToken(), request.getLockToken())) {
-            throw new BusinessException(ErrorCode.DEVICE_LOCK_TOKEN_INVALID);
-        }
+        // 4) 借用目标：分类 + 型号（V56 / 第 9 项）
+        //    —— 申请人**不再挑选具体资产**，只声明「借哪一类、什么型号」；
+        //    具体设备由 IT 在交付时扫码录入资产编号绑定（三层校验见 bindDeviceOnDeliver）。
+        assertBorrowTarget(request.getPrimaryCategoryId(), request.getSecondaryCategoryId(), request.getModelId());
+
+        // 4.5) V59 / 批次 3.5：借用表单放开后管理员新增的**自定义字段**。
+        //      按内置借用类型当前绑定的那一版 schema 校验（未知字段一律拒绝，
+        //      与自定义申请同一口径 —— 静默丢弃会让「填了却没存」这种投诉无法排查），
+        //      通过后随工单落 order_form_data（见第 7.5 步）。
+        Long borrowFormVersionId = applyTypeService.borrowBuiltInFormVersionId();
+        Map<String, Object> borrowExtraFormData =
+                resolveBorrowExtraFormData(borrowFormVersionId, request.getFormData());
 
         // 5) 生成审批快照（ /  /  / ）
         //    三种来源，按优先级：
@@ -776,7 +787,7 @@ public class OrderServiceImpl implements OrderService {
         Long builtInFlowVersionId = applyTypeService.borrowBuiltInFlowVersionId();
         if (builtInFlowVersionId != null) {
             frozenFlow = approvalFlowService.requirePublishedDefinition(builtInFlowVersionId);
-            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, device, request);
+            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, request.getPrimaryCategoryId(), request);
             FlowPathResolver.Result path = flowActivationService.resolveForSubmit(
                     frozenFlow, BorrowFieldCatalog.schema(), borrowData);
             nodes = buildFlowNodes(path, applicant, borrowData, Map.of(), leaderNotices);
@@ -786,7 +797,7 @@ public class OrderServiceImpl implements OrderService {
                     .noneMatch(node -> ApprovalNodeStatus.PENDING.name().equals(node.getStatus()));
         } else if (department.getApprovalFlowVersionId() != null) {
             frozenFlow = approvalFlowService.requirePublishedDefinition(department.getApprovalFlowVersionId());
-            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, device, request);
+            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, request.getPrimaryCategoryId(), request);
             // M2：改用 resolveForSubmit —— 开关开启时把「提交时判不了的分支下游」落 INACTIVE；
             // 开关关闭时它等价于原来的三参 resolve（内部传"已知但为空"的上下文，不做延迟判定）。
             FlowPathResolver.Result path = flowActivationService.resolveForSubmit(
@@ -804,7 +815,7 @@ public class OrderServiceImpl implements OrderService {
             // 产出的定义整份写进 orders.approval_flow_json（见下方落库），
             // 因此之后无论阈值怎么改，这笔单的审批口径都不会变：已提交工单走提交时快照。
             frozenFlow = BorrowFlowCatalog.preset(systemConfigService.approvalDeviceAmountThreshold());
-            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, device, request);
+            Map<String, Object> borrowData = buildBorrowFormData(useType, expectedReturnDate, request.getPrimaryCategoryId(), request);
             FlowPathResolver.Result path = flowActivationService.resolveForSubmit(
                     frozenFlow, BorrowFieldCatalog.schema(), borrowData);
             nodes = buildFlowNodes(path, applicant, borrowData, Map.of(), leaderNotices);
@@ -818,7 +829,12 @@ public class OrderServiceImpl implements OrderService {
         // 6) 落库工单（编号唯一索引兜底，遇极端撞号重试）
         Order order = new Order();
         order.setOrderType(OrderType.BORROW.name());
-        order.setDeviceId(device.getId());
+        // V56 / 第 9 项：提交时**不绑定设备**（device_id 留空），只落「借哪一类 + 什么型号」。
+        // 具体资产由 IT 交付时扫码录入资产编号绑定（bindDeviceOnDeliver），
+        // 因此这里不会推进任何设备状态 —— 「填表期间占住设备」的临时锁机制已随之取消。
+        order.setPrimaryCategoryId(request.getPrimaryCategoryId());
+        order.setSecondaryCategoryId(request.getSecondaryCategoryId());
+        order.setModelId(request.getModelId());
         order.setApplicantId(applicantId);
         order.setDepartmentId(department.getId());
         order.setUseType(useType.name());
@@ -856,20 +872,19 @@ public class OrderServiceImpl implements OrderService {
             nodeMapper.insert(node);
         }
 
-        // 8) 设备推进：LOCKED → IN_APPROVAL，并原子清空临时锁三件套
-        int deviceUpdated = deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
-                .eq(Device::getId, device.getId())
-                .eq(Device::getStatus, DeviceStatus.LOCKED.name())
-                .eq(Device::getLockToken, request.getLockToken())
-                .set(Device::getStatus, DeviceStatus.IN_APPROVAL.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
-        if (deviceUpdated == 0) {
-            // 事务回滚：设备已被并发提交抢占或被超时释放，工单不会残留
-            throw new BusinessException(ErrorCode.DEVICE_LOCK_TOKEN_INVALID,
-                    "设备临时锁已失效（可能已超时或被他人占用），请重新选择设备后提交");
+        // 7.5) 表单数据与工单同时落库（V59）：同一事务内，不存在「有工单没表单」的中间态。
+        //      与 submitCustomOrder 的做法一致 —— 版本指针存的是**提交时用的那一版**，
+        //      之后管理员换绑表单不会改写历史工单的回显。
+        if (borrowFormVersionId != null) {
+            OrderFormData form = new OrderFormData();
+            form.setOrderId(orderId);
+            form.setFormTemplateVersionId(borrowFormVersionId);
+            form.setFormDataJson(FormSchemaCodec.write(borrowExtraFormData));
+            orderFormDataMapper.insert(form);
         }
+
+        // 8) V56：不再推进设备状态（提交时没有设备）。
+        //    旧流程在这里做 LOCKED → IN_APPROVAL 并清空锁三件套 —— 那一步与临时锁一起移除了。
 
         // 9) 无需审批的特殊路由（ 最后一行）：直接进入待交付并分配执行人
         if (skipApproval) {
@@ -894,8 +909,9 @@ public class OrderServiceImpl implements OrderService {
             notifyCurrentApprovers(orderId, nodes, saved.getOrderNo(), BORROW_TYPE_NAME);
         }
 
-        log.info("工单已提交 id={} no={} device={} applicant={} useType={} 初始状态={} 快照节点={} 流程={}",
-                orderId, saved.getOrderNo(), device.getId(), applicantId, useType.name(),
+        log.info("工单已提交 id={} no={} 分类={} 型号={} applicant={} useType={} 初始状态={} 快照节点={} 流程={}",
+                orderId, saved.getOrderNo(), request.getPrimaryCategoryId(), request.getModelId(),
+                applicantId, useType.name(),
                 initialStatus.name(), nodes.size(),
                 builtInFlowVersionId != null ? "内置类型自定义流程"
                         : (department.getApprovalFlowVersionId() != null ? "部门自定义流程" : "系统预置流程"));
@@ -904,6 +920,41 @@ public class OrderServiceImpl implements OrderService {
 
     /** 借用单在消息文案里的类型名（无 ApplyType，故用常量而非查库） */
     private static final String BORROW_TYPE_NAME = "设备借用申请";
+
+    /**
+     * 借用单的**自定义字段**值（V59 / 批次 3.5）。
+     *
+     * <h2>为什么单独一个方法而不是内联在 create 里</h2>
+     * 它有一处容易写错的判定：「内置借用类型还没绑表单版本」时该怎么办。
+     * 内联的话这个分支会淹没在 create 的 200 行里，而下一次改 create 的人
+     * 大概率会把它改成「抛异常」—— 那会让**升级未跑播种的存量部署**直接无法提交借用单。
+     *
+     * <p>三条规则：
+     * <ol>
+     *   <li>没绑表单版本 ⇒ 只拒绝**非空**的 formData（明确告诉调用方「暂不支持自定义字段」），
+     *       空 formData 照常放行（存量调用方与回归脚本不传这个字段）；</li>
+     *   <li>绑了 ⇒ 按那一版 schema 逐字段校验，未知字段一律拒绝（与自定义申请同口径）；</li>
+     *   <li>返回的 map 只用于存档，不参与任何业务判定 —— 系统字段的值
+     *       仍以专用入参（primaryCategoryId 等）为准，两处各司其职。</li>
+     * </ol>
+     *
+     * <p>包级可见（而非 private）只为单测能直接驱动这三条规则 —— 与
+     * {@code ApplyTypeServiceImpl#bySortOrder()} 同一做法。驱动整条 {@link #create}
+     * 需要 mock 十几个依赖，为三行判定背那个代价不划算。
+     */
+    Map<String, Object> resolveBorrowExtraFormData(Long formVersionId, Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        if (formVersionId == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "借用申请尚未配置表单版本，暂不支持提交自定义字段");
+        }
+        FormSchema schema = formTemplateService.requirePublishedSchema(formVersionId);
+        Map<String, Object> data = new LinkedHashMap<>(raw);
+        formDataValidator.validate(schema, data);
+        return data;
+    }
 
     // ------------------------------------------------------------------
     // 自定义申请
@@ -1133,11 +1184,10 @@ public class OrderServiceImpl implements OrderService {
         Order order = requireOrder(orderId);
         // 可见性与工单详情完全同一套判定：申请人 / 审批人 / 实际执行人 / admin 以上
         assertCanView(order, currentUserId, role);
-        // 表单驱动的单据（自定义申请 / V53 的出差申请）才有 order_form_data；
-        // 借用单的「表单」是 orders 上的固定列，另走详情接口。
-        if (!OrderType.isFormDriven(order.getOrderType())) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_CUSTOM);
-        }
+        // V59 / 批次 3.5：判据从「是不是表单驱动类型」改成「有没有表单数据行」。
+        // 改造前借用单确实没有 order_form_data（表单是固定列），靠类型判定快捷短路；
+        // 现在借用单也落表单数据了，再用 isFormDriven 拦它会出现「明明存了却取不到」。
+        // 没有数据行时统一按「无表单数据」处理（借用单改造前的工单正是这种，属正常情况）。
         OrderFormData row = orderFormDataMapper.selectOne(Wrappers.<OrderFormData>lambdaQuery()
                 .eq(OrderFormData::getOrderId, orderId));
         if (row == null) {
@@ -1200,17 +1250,21 @@ public class OrderServiceImpl implements OrderService {
      * 且与自定义申请共用同一份实现（一份规则，不会漂移）。
      */
     private Map<String, Object> buildBorrowFormData(UseType useType, LocalDate expectedReturnDate,
-                                                    Device device, OrderCreateRequest request) {
+                                                    Long primaryCategoryId, OrderCreateRequest request) {
         Integer expectedDays = BorrowFieldCatalog.expectedDays(LocalDate.now(), expectedReturnDate);
         return BorrowFieldCatalog.formData(
                 useType == null ? null : useType.name(),
                 expectedDays,
-                device == null ? null : device.getPrimaryCategoryId(),
+                primaryCategoryId,
                 request.getReason(),
-                // 设备金额：取自资产台账，是金额分档条件的唯一依据。
-                // 未录入时为 null，formData 会**不放入**该 key，于是数值比较不成立 → 走三级分支
-                // （需求口径：未录入金额按 ≤ 阈值处理）。
-                device == null ? null : device.getAmount());
+                // 设备金额：V56 起提交时**没有具体设备**（申请人只挑分类与型号，设备由 IT 交付
+                // 扫码绑定）⇒ 金额必然未知 ⇒ 恒为 null，formData 不放入该 key，
+                // 数值比较不成立 → 金额分档条件一律走默认分支。
+                //
+                // ⚠️ 这是「不挑资产」的必然结果，不是遗漏：审批发生在绑定设备之前，
+                // 那时系统无法知道会发出哪一台。若业务上仍要按金额分档，只能在交付环节
+                // 由 IT 线下判断（或改成「先由 IT 挑设备再走审批」的老流程）。
+                null);
     }
 
     /**
@@ -2011,7 +2065,7 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deliver(Long orderId) {
+    public void deliver(Long orderId, OrderDeliverRequest request) {
         Long currentUserId = requireCurrentUserId();
         Order order = requireOrder(orderId);
         OrderStatus status = OrderStatus.of(order.getStatus());
@@ -2023,33 +2077,160 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ErrorCode.OPERATOR_NOT_ACTUAL_FINAL_HANDLER,
                     "仅本工单实际执行人可确认交付");
         }
-        Device device = requireDevice(order.getDeviceId());
-        if (DeviceStatus.of(device.getStatus()) != DeviceStatus.IN_APPROVAL) {
+
+        // 两条路径（V56 / 第 9 项）：
+        //   · 新单：提交时没有设备 ⇒ 交付时扫码录入资产编号，做三层校验后绑定；
+        //   · 历史单（V56 之前）：提交时就绑定了设备，设备已在「审批中」⇒ 只需确认，不扫码。
+        // 判断依据只看 device_id 是否为空，前端无需感知这个分支。
+        boolean scanBinding = order.getDeviceId() == null;
+        Device device = scanBinding ? resolveDeviceForDelivery(order, request) : requireDevice(order.getDeviceId());
+        DeviceStatus expectedDeviceStatus = scanBinding ? DeviceStatus.AVAILABLE : DeviceStatus.IN_APPROVAL;
+        if (DeviceStatus.of(device.getStatus()) != expectedDeviceStatus) {
             throw new BusinessException(ErrorCode.DEVICE_STATUS_TRANSITION_INVALID,
                     "设备当前状态为「" + DeviceStatus.labelOf(device.getStatus()) + "」，不可交付");
         }
 
         LocalDateTime now = LocalDateTime.now();
         // 工单 → 使用中（ / ），并记录交付时间与交付人
-        orderMapper.update(null, Wrappers.<Order>lambdaUpdate()
+        var orderUpdate = Wrappers.<Order>lambdaUpdate()
                 .eq(Order::getId, orderId)
                 .eq(Order::getStatus, OrderStatus.PENDING_DELIVERY.name())
                 .set(Order::getStatus, OrderStatus.BORROWED.name())
                 .set(Order::getDeliveredAt, now)
                 .set(Order::getDeliveredBy, currentUserId)
-                .set(Order::getPlannedEndTime, plannedEndTime(order)));
-        // 设备 → 使用中（：IN_APPROVAL →（最终处理人交付确认）→ IN_USE）
+                .set(Order::getPlannedEndTime, plannedEndTime(order));
+        if (scanBinding) {
+            // 设备绑定与工单流转在同一次写库落定：不会出现「工单说借了某台、表里却没绑定」
+            orderUpdate.set(Order::getDeviceId, device.getId());
+        }
+        if (orderMapper.update(null, orderUpdate) == 0) {
+            throw new BusinessException(ErrorCode.ORDER_STATUS_TRANSITION_INVALID, "工单状态已变化，请刷新后重试");
+        }
+        // 设备 → 使用中。V56 起是 AVAILABLE →（交付扫码）→ IN_USE，一步到位，
+        // 不再经过 LOCKED / IN_APPROVAL（临时锁机制已移除）。
         int deviceUpdated = deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
                 .eq(Device::getId, device.getId())
-                .eq(Device::getStatus, DeviceStatus.IN_APPROVAL.name())
-                .set(Device::getStatus, DeviceStatus.IN_USE.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
+                .eq(Device::getStatus, expectedDeviceStatus.name())
+                .set(Device::getStatus, DeviceStatus.IN_USE.name()));
         if (deviceUpdated == 0) {
-            throw new BusinessException(ErrorCode.DEVICE_STATUS_TRANSITION_INVALID, "设备状态已变化，请刷新后重试");
+            // 并发：另一笔工单刚把同一台设备发出去 ⇒ 整单回滚，工单仍停在「待交付」
+            throw new BusinessException(ErrorCode.DEVICE_STATUS_TRANSITION_INVALID,
+                    "设备刚被其它工单占用，请换一台设备后重试");
         }
-        log.info("工单 {} 已由 {} 确认交付，设备 {} 进入使用中", order.getOrderNo(), currentUserId, device.getId());
+        log.info("工单 {} 已由 {} 确认交付，设备 {}（{}）进入使用中；绑定方式={}",
+                order.getOrderNo(), currentUserId, device.getId(), device.getAssetNo(),
+                scanBinding ? "交付扫码绑定" : "提交时已绑定");
+    }
+
+    /**
+     * 校验「借什么」（V56 / 第 9 项）：一级分类必填且必须是一级，二级（可选）必须归属所选一级，
+     * 型号（可选）必须真实存在。
+     *
+     * <p>为什么不在这里校验「分类/型号是否启用」：分类停用只影响「新建设备时能不能选」，
+     * 借用单按分类申请的逻辑与分类启停无关 —— 强行拦截会出现「某类设备被停用后再也借不到」
+     * 的死结。型号同理（停用型号下仍有旧设备在用）。
+     */
+    private void assertBorrowTarget(Long primaryCategoryId, Long secondaryCategoryId, Long modelId) {
+        if (primaryCategoryId == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "请选择要借用的设备类别");
+        }
+        DeviceCategory primary = categoryMapper.selectById(primaryCategoryId);
+        if (primary == null) {
+            throw new BusinessException(ErrorCode.DEVICE_CATEGORY_NOT_FOUND, "所选一级分类不存在，请刷新后重试");
+        }
+        if (primary.getLevel() == null || primary.getLevel() != DeviceCategory.LEVEL_PRIMARY) {
+            throw new BusinessException(ErrorCode.DEVICE_CATEGORY_LEVEL_INVALID, "所选一级分类层级不正确");
+        }
+        if (secondaryCategoryId != null) {
+            DeviceCategory secondary = categoryMapper.selectById(secondaryCategoryId);
+            if (secondary == null) {
+                throw new BusinessException(ErrorCode.DEVICE_CATEGORY_NOT_FOUND, "所选二级分类不存在，请刷新后重试");
+            }
+            if (secondary.getLevel() == null || secondary.getLevel() != DeviceCategory.LEVEL_SECONDARY) {
+                throw new BusinessException(ErrorCode.DEVICE_CATEGORY_LEVEL_INVALID, "所选二级分类层级不正确");
+            }
+            if (!Objects.equals(secondary.getParentId(), primary.getId())) {
+                throw new BusinessException(ErrorCode.DEVICE_CATEGORY_MISMATCH, "所选二级分类不属于所选的设备类别");
+            }
+        }
+        if (modelId != null && deviceModelMapper.selectById(modelId) == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "所选型号不存在，请刷新后重试");
+        }
+    }
+
+    /**
+     * 交付时按资产编号定位设备，并做<b>三层校验</b>（V56 / 第 9 项）。
+     *
+     * <p>需求原文的校验顺序是「分类匹配 → 型号匹配（填了才校验）→ 资产空闲」，
+     * 这里严格按此顺序——因为它同时是<b>提示语的优先级</b>：IT 站在货架前，
+     * 先要知道「这台不是借的那种」，还是「这台正被占用」，两者的下一步动作完全不同。
+     *
+     * <p>型号按 {@code model_id} 比对而不是文本：这正是 R3 建字典的理由，
+     * 「ThinkPad X1 / thinkpad x1」不能再被当成两种型号。
+     */
+    private Device resolveDeviceForDelivery(Order order, OrderDeliverRequest request) {
+        String assetNo = request == null ? null : trimToNull(request.getAssetNo());
+        if (assetNo == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "请先扫描或输入要交付的设备资产编号（本合同未绑定具体资产）");
+        }
+        Device device = deviceMapper.selectOne(Wrappers.<Device>lambdaQuery()
+                .eq(Device::getAssetNo, assetNo)
+                .last("LIMIT 1"));
+        if (device == null) {
+            throw new BusinessException(ErrorCode.DEVICE_NOT_FOUND,
+                    "没有找到资产编号为「" + assetNo + "」的设备，请核对后重新扫描");
+        }
+
+        // ① 分类匹配：一级必须一致；申请填了二级时二级也必须一致
+        if (!Objects.equals(device.getPrimaryCategoryId(), order.getPrimaryCategoryId())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "该设备的一级分类与申请不一致（申请：" + categoryName(order.getPrimaryCategoryId())
+                            + "，设备：" + categoryName(device.getPrimaryCategoryId()) + "），请换一台");
+        }
+        if (order.getSecondaryCategoryId() != null
+                && !Objects.equals(device.getSecondaryCategoryId(), order.getSecondaryCategoryId())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "该设备的二级分类与申请不一致（申请：" + categoryName(order.getSecondaryCategoryId())
+                            + "，设备：" + categoryName(device.getSecondaryCategoryId()) + "），请换一台");
+        }
+
+        // ② 型号匹配：**申请填了型号才校验**（型号本身可选）
+        if (order.getModelId() != null && !Objects.equals(device.getModelId(), order.getModelId())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "该设备的型号与申请不一致（申请：" + modelName(order.getModelId())
+                            + "，设备：" + (device.getModelId() == null
+                                    ? "未登记型号（台账待整理）" : modelName(device.getModelId()))
+                            + "），请换一台");
+        }
+
+        // ③ 资产空闲
+        DeviceStatus deviceStatus = DeviceStatus.of(device.getStatus());
+        if (deviceStatus != DeviceStatus.AVAILABLE) {
+            throw new BusinessException(ErrorCode.DEVICE_UNAVAILABLE,
+                    "该设备当前状态为「" + DeviceStatus.labelOf(device.getStatus()) + "」，不可交付，请换一台");
+        }
+        return device;
+    }
+
+    /** 分类名（交付校验的提示语用；一次查库，失败回落成 id） */
+    private String categoryName(Long categoryId) {
+        if (categoryId == null) {
+            return "未指定";
+        }
+        DeviceCategory category = categoryMapper.selectById(categoryId);
+        return category == null || category.getCategoryName() == null
+                ? ("#" + categoryId) : category.getCategoryName();
+    }
+
+    /** 型号名（交付校验的提示语用；一次查库，失败回落成 id） */
+    private String modelName(Long modelId) {
+        if (modelId == null) {
+            return "未指定";
+        }
+        DeviceModel model = deviceModelMapper.selectById(modelId);
+        return model == null || model.getModelName() == null
+                ? ("#" + modelId) : model.getModelName();
     }
 
     // ------------------------------------------------------------------
@@ -2570,15 +2751,21 @@ public class OrderServiceImpl implements OrderService {
         return null;
     }
 
-    /** 释放设备（驳回 / 撤回）：LOCKED 或 IN_APPROVAL 一律回到 AVAILABLE，并清空临时锁 */
+    /**
+     * 释放设备（驳回 / 撤回）。
+     *
+     * <p>V56 起借用单提交时<b>不绑定设备</b>（交付扫码才绑定），因此 {@code deviceId}
+     * 可能为空 —— 此时没有任何设备被占用，直接返回。
+     * {@code LOCKED / IN_APPROVAL} 仍留在条件里，只为兼容 V56 之前的历史行。
+     */
     private void releaseDevice(Long deviceId) {
+        if (deviceId == null) {
+            return;
+        }
         deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
                 .eq(Device::getId, deviceId)
                 .in(Device::getStatus, List.of(DeviceStatus.LOCKED.name(), DeviceStatus.IN_APPROVAL.name()))
-                .set(Device::getStatus, DeviceStatus.AVAILABLE.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
+                .set(Device::getStatus, DeviceStatus.AVAILABLE.name()));
     }
 
     /**

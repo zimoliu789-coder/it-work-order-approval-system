@@ -19,9 +19,25 @@ public class DeviceOptionVO {
 
     private String assetNo;
 
+    /**
+     * 一级分类 id（V56 起下发）。
+     *
+     * <p><b>为什么原来没有、现在要有</b>：V56 起借用申请不再挑具体资产，
+     * 改为「挑一级分类 → 二级分类 → 型号」。而扫码页扫到一台可用设备后，
+     * 能替申请人预填的就只剩「这类设备」—— 没有 id 就只能传个分类**名字**，
+     * 前端再按名字猜 id，一旦重名就静默选错。名称与 id 一起下发，前端不必猜。
+     */
+    private Long primaryCategoryId;
+
     private String primaryCategoryName;
 
+    /** 二级分类 id（可为 null） */
+    private Long secondaryCategoryId;
+
     private String secondaryCategoryName;
+
+    /** 型号字典 id（V56 / R3）；为空表示该设备型号尚未整理 */
+    private Long modelId;
 
     private String brand;
 

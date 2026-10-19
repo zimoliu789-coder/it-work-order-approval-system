@@ -27,11 +27,12 @@ import java.util.List;
  * 与「设备行 ↔ 单元格」的映射，业务校验仍在 {@code DeviceImportServiceImpl} —
  * 与「单条新增设备」复用同一套规则，不在此处另立一份。
  *
- * <h2>「设备金额」为什么放在最后一列</h2>
+ * <h2>「设备金额」「负责人账号」为什么放在最后两列</h2>
  * <p>基类明确采用<b>按位置解析</b>（见 {@link ExcelImportSupport} 类注释：用户常改表头文案，
  * 按名匹配会让整列静默丢失）。因此插入一列会让「用旧模板填好的文件」把备注写进金额列、
  * 金额写进不存在的列 —— 不报错，只是数据错位。追加到末尾则旧文件仍然逐列正确，
- * 金额读不到就是 NULL（= 未录入），正是期望的降级行为。
+ * 金额读不到就是 NULL（= 未录入）、负责人读不到就是 NULL（= 未指定），
+ * 正是期望的降级行为。
  */
 @Component
 public class DeviceImportExcelSupport extends ExcelImportSupport {
@@ -39,12 +40,12 @@ public class DeviceImportExcelSupport extends ExcelImportSupport {
     /** 模板/明细列顺序（解析与生成共用同一份定义）；新增列只能追加在末尾 */
     public static final String[] HEADERS = {
             "设备名称", "资产编号", "一级分类", "二级分类", "品牌",
-            "型号", "序列号", "存放位置", "购置日期", "备注", "设备金额"
+            "型号", "序列号", "存放位置", "购置日期", "备注", "设备金额", "负责人账号"
     };
 
     /** 各列建议宽度（单位：1/256 个字符宽） */
     private static final int[] COLUMN_WIDTHS = {
-            22, 18, 14, 14, 12, 16, 20, 20, 16, 24, 14
+            22, 18, 14, 14, 12, 16, 20, 20, 16, 24, 14, 18
     };
 
     /** 失败明细在模板列之后追加的列 */
@@ -61,6 +62,8 @@ public class DeviceImportExcelSupport extends ExcelImportSupport {
     private static final int COL_PURCHASE_DATE = 8;
     private static final int COL_REMARK = 9;
     private static final int COL_AMOUNT = 10;
+    /** 负责人账号（V57 / 第 10 项）：填<b>登录账号</b>而不是姓名 —— 重名会静默指向错人 */
+    private static final int COL_OWNER_USERNAME = 11;
 
     @Override
     protected String[] headers() {
@@ -89,7 +92,10 @@ public class DeviceImportExcelSupport extends ExcelImportSupport {
                     "ThinkPad X1 Carbon", "IT-2026-9999", "电脑", "笔记本", "联想",
                     "21CB0000CD", "PF3EXAMPLE", "A座3F研发区", "2026-01-15",
                     "示例数据，导入前请删除本行（" + EXAMPLE_MARKER + "）",
-                    "6999"
+                    "6999",
+                    // 负责人填登录账号（不是姓名）；留空表示「未指定负责人」，
+                    // 这类设备只能从「公共设备 / 扫码」入口报修
+                    "zhangsan"
             };
             for (int i = 0; i < sample.length; i++) {
                 example.createCell(i).setCellValue(sample[i]);
@@ -147,6 +153,8 @@ public class DeviceImportExcelSupport extends ExcelImportSupport {
         result.setRemark(values[COL_REMARK]);
         // 旧模板（无此列）读不到值即为 null —— 与"未录入金额"同义，是可接受的降级
         result.setAmount(values[COL_AMOUNT]);
+        // 旧模板同样读不到负责人，降级为「未指定负责人」（可后续在台账里批量设置）
+        result.setOwnerUsername(values[COL_OWNER_USERNAME]);
         return result;
     }
 
@@ -190,6 +198,7 @@ public class DeviceImportExcelSupport extends ExcelImportSupport {
                 row.createCell(COL_PURCHASE_DATE).setCellValue(nullToEmpty(failure.getPurchaseDate()));
                 row.createCell(COL_REMARK).setCellValue(nullToEmpty(failure.getRemark()));
                 row.createCell(COL_AMOUNT).setCellValue(nullToEmpty(failure.getAmount()));
+                row.createCell(COL_OWNER_USERNAME).setCellValue(nullToEmpty(failure.getOwnerUsername()));
                 // 失败原因由后端生成（非用户输入），同样以字符串写入
                 Cell reasonCell = row.createCell(HEADERS.length);
                 reasonCell.setCellValue(nullToEmpty(failure.getReason()));

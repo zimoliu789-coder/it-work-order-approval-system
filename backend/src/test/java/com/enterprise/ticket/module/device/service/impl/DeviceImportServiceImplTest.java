@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -51,6 +52,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+
 /**
  * 设备批量导入规则单元测试（规范 §8）
  *
@@ -77,7 +79,7 @@ class DeviceImportServiceImplTest {
     /** MyBatis-Plus 的方法引用 Wrapper 依赖实体元数据缓存，无 Spring 上下文时需手动注册 */
     @BeforeAll
     static void initMyBatisLambdaCache() {
-        MyBatisLambdaCache.init(DeviceCategory.class);
+        MyBatisLambdaCache.init(DeviceCategory.class, com.enterprise.ticket.module.user.entity.User.class);
     }
 
     @Mock
@@ -90,6 +92,9 @@ class DeviceImportServiceImplTest {
     private PlatformTransactionManager transactionManager;
     @Mock
     private OperationLogService operationLogService;
+    /** V57 / 第 10 项：模板新增「负责人账号」列，导入时按账号匹配用户 */
+    @Mock
+    private com.enterprise.ticket.module.user.mapper.UserMapper userMapper;
 
     /** 真实校验器：用于验证「导入复用单条新增的 Bean Validation 注解」 */
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
@@ -99,10 +104,22 @@ class DeviceImportServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new DeviceImportServiceImpl(excelSupport, deviceService, categoryMapper,
-                validator, transactionManager, operationLogService);
+                validator, transactionManager, operationLogService, userMapper);
         when(transactionManager.getTransaction(any(TransactionDefinition.class)))
                 .thenReturn(new SimpleTransactionStatus());
         when(categoryMapper.selectList(any())).thenReturn(categories());
+        // 负责人账号默认一个可用用户：没填负责人的行不查它，填了的要能命中
+        when(userMapper.selectList(any())).thenReturn(List.of(activeUser(21L, "zhangsan")));
+    }
+
+    private com.enterprise.ticket.module.user.entity.User activeUser(Long id, String username) {
+        com.enterprise.ticket.module.user.entity.User user = new com.enterprise.ticket.module.user.entity.User();
+        user.setId(id);
+        user.setUsername(username);
+        user.setDisplayName("用户" + id);
+        user.setEnabled(true);
+        user.setDimission(false);
+        return user;
     }
 
     // ------------------------------------------------------------------
@@ -156,6 +173,39 @@ class DeviceImportServiceImplTest {
     @FunctionalInterface
     private interface ThrowingRunnable {
         void run();
+    }
+
+    // ------------------------------------------------------------------
+    // 负责人账号列（V57 / 第 10 项）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("负责人：账号命中在职用户 → 导入时把 ownerId 交给「单条新增」，不另写一套规则")
+    void execute_ownerUsername_passesOwnerIdToCreate() {
+        DeviceImportRow row = row(2, "设备A", "IMP-A");
+        row.setOwnerUsername("ZhangSan"); // 大小写不敏感：用户名列同样是 utf8mb4_general_ci
+
+        service.execute(executeRequest(List.of(row)));
+
+        ArgumentCaptor<DeviceSaveRequest> captor = ArgumentCaptor.forClass(DeviceSaveRequest.class);
+        verify(deviceService).create(captor.capture());
+        assertEquals(21L, captor.getValue().getOwnerId(), "账号应被解析成 user id 再落库");
+    }
+
+    @Test
+    @DisplayName("★ 负责人：账号不存在（例如填了姓名）→ 该行失败并说明要填登录账号，绝不静默忽略")
+    void preview_ownerUsernameNotFound_failsRow() {
+        DeviceImportRow row = row(2, "设备A", "IMP-A");
+        row.setOwnerUsername("张三");
+        when(excelSupport.parse(any(InputStream.class), anyInt())).thenReturn(List.of(row));
+
+        DeviceImportPreviewVO preview = service.preview(
+                upload("设备清单.xlsx", "x".getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals(0, preview.getSuccessCount());
+        assertTrue(preview.getRows().get(0).getReason().contains("不存在"),
+                "必须说明账号不存在，实际：" + preview.getRows().get(0).getReason());
+        verify(deviceService, never()).create(any());
     }
 
     // ------------------------------------------------------------------

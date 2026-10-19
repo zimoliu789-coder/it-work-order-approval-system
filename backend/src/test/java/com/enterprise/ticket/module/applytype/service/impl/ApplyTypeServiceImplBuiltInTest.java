@@ -149,12 +149,74 @@ class ApplyTypeServiceImplBuiltInTest {
     }
 
     @Test
-    @DisplayName("内置类型走整体覆盖（update）：拒绝 —— 它没有表单模板，覆盖会写坏记录")
+    @DisplayName("内置类型走整体覆盖（update）：放开为「改表单 / 改流程」，但编码不可改（V59 / D3）")
     void updateBuiltInRejected() {
         when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_BORROW));
 
+        com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest request =
+                new com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest();
+        // 改编码 = 后端认不出这张卡（typeCode 同时是 OrderType 取值）⇒ 一律拒绝
+        request.setTypeCode("SOMETHING_ELSE");
+
         assertEquals(ErrorCode.PARAM_INVALID,
-                codeOf(() -> service.update(BUILT_IN_ID, new com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest())));
+                codeOf(() -> service.update(BUILT_IN_ID, request)));
+        verify(applyTypeMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 内置类型整体覆盖：原样回传编码 + 绑已发布表单版本 → 放行（表单放开的核心写入侧）")
+    void updateBuiltInAllowsFormAndFlowChange() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_BORROW));
+        when(formTemplateService.isPublishedVersion(9L)).thenReturn(true);
+
+        com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest request =
+                new com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest();
+        request.setTypeCode(BuiltInApplyCatalog.CODE_BORROW);
+        request.setTypeName("借用设备");
+        request.setFormTemplateVersionId(9L);
+        request.setApprovalMode("GROUP");
+        request.setSubmitPermissionType("ALL");
+
+        service.update(BUILT_IN_ID, request);
+
+        verify(applyTypeMapper).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 内置类型整体覆盖：不绑表单版本 → 拒绝（放开的是「改表单」，不是「去掉表单」）")
+    void updateBuiltInRequiresFormVersion() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_BORROW));
+
+        com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest request =
+                new com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest();
+        request.setTypeCode(BuiltInApplyCatalog.CODE_BORROW);
+        request.setTypeName("借用设备");
+        request.setApprovalMode("GROUP");
+        request.setSubmitPermissionType("ALL");
+
+        assertEquals(ErrorCode.FORM_TEMPLATE_NO_PUBLISHED_VERSION,
+                codeOf(() -> service.update(BUILT_IN_ID, request)));
+        verify(applyTypeMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 内置类型整体覆盖：给报修绑审批流 → 拒绝（与内置配置面板同一口径，D2）")
+    void updateBuiltInRejectsFlowForFaultReport() {
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(builtIn(BuiltInApplyCatalog.CODE_FAULT_REPORT));
+        when(formTemplateService.isPublishedVersion(9L)).thenReturn(true);
+        when(approvalFlowService.isPublishedVersion(FLOW_VERSION_ID)).thenReturn(true);
+
+        com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest request =
+                new com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest();
+        request.setTypeCode(BuiltInApplyCatalog.CODE_FAULT_REPORT);
+        request.setTypeName("故障报修");
+        request.setFormTemplateVersionId(9L);
+        request.setApprovalMode("FLOW");
+        request.setApprovalFlowVersionId(FLOW_VERSION_ID);
+        request.setSubmitPermissionType("ALL");
+
+        assertEquals(ErrorCode.APPLY_TYPE_BUILT_IN_FLOW_FIXED,
+                codeOf(() -> service.update(BUILT_IN_ID, request)));
         verify(applyTypeMapper, never()).update(any(), any());
     }
 
@@ -310,6 +372,27 @@ class ApplyTypeServiceImplBuiltInTest {
         when(applyTypeMapper.selectOne(any())).thenReturn(null);
 
         assertNull(service.borrowBuiltInFlowVersionId());
+    }
+
+    @Test
+    @DisplayName("borrowBuiltInFormVersionId：读出内置借用类型绑定的表单版本（V59 提交侧按它校验自定义字段）")
+    void borrowFormVersionReadable() {
+        ApplyType borrow = builtIn(BuiltInApplyCatalog.CODE_BORROW);
+        borrow.setFormTemplateVersionId(88L);
+        when(applyTypeMapper.selectOne(any())).thenReturn(borrow);
+
+        assertEquals(88L, service.borrowBuiltInFormVersionId());
+        assertEquals(88L, service.builtInFormVersionId(BuiltInApplyCatalog.CODE_BORROW));
+    }
+
+    @Test
+    @DisplayName("builtInFormVersionId：非内置编码 / 空值一律返回 null（按「没有表单」处理，不暴露可枚举口径）")
+    void builtInFormVersionNullForUnknownCode() {
+        when(applyTypeMapper.selectOne(any())).thenReturn(null);
+
+        assertNull(service.builtInFormVersionId("SOMETHING_ELSE"));
+        assertNull(service.builtInFormVersionId(null));
+        assertNull(service.builtInFormVersionId("  "));
     }
 
     // ------------------------------------------------------------------

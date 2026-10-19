@@ -37,7 +37,7 @@ function field(partial: Partial<FormField> & Pick<FormField, 'type'>): FormField
 }
 
 describe('字段类型元数据 FIELD_TYPE_META', () => {
-  it('17 种类型齐全且不重复，覆盖后端 FormFieldType 全部枚举', () => {
+  it('20 种类型齐全且不重复，覆盖后端 FormFieldType 全部枚举', () => {
     const types = FIELD_TYPE_META.map((m) => m.type)
     expect(new Set(types).size).toBe(types.length)
     expect(types.sort()).toEqual(
@@ -48,6 +48,9 @@ describe('字段类型元数据 FIELD_TYPE_META', () => {
         'DATETIME',
         'DESCRIPTION',
         'DEVICE',
+        'DEVICE_CATEGORY',
+        'DEVICE_MODEL',
+        'DEVICE_SUBCATEGORY',
         'DIVIDER',
         'FILE',
         'IMAGE',
@@ -76,7 +79,9 @@ describe('字段类型元数据 FIELD_TYPE_META', () => {
       'FILE',
       'USER_REF',
       'DEVICE_REF',
-      'GROUP_REF'
+      'GROUP_REF',
+      'CATEGORY_REF',
+      'MODEL_REF'
     ])
     for (const meta of FIELD_TYPE_META) {
       expect(categories.has(meta.category)).toBe(true)
@@ -277,10 +282,18 @@ describe('validateField（前端即时校验，与后端同口径）', () => {
     expect(validateField(f, [1])).toBeNull()
   })
 
-  it('引用类（人员 / 设备 / 分组）前端不做存在性判定', () => {
+  it('引用类（人员 / 设备 / 分组 / 分类 / 型号）前端不做存在性判定', () => {
     expect(validateField(field({ type: 'USER', key: 'u', label: '负责人' }), 99999)).toBeNull()
     expect(validateField(field({ type: 'DEVICE', key: 'd', label: '设备' }), 99999)).toBeNull()
     expect(validateField(field({ type: 'BIZ_GROUP', key: 'g', label: '分组' }), 99999)).toBeNull()
+    expect(validateField(field({ type: 'ROOT_DEPT', key: 'r', label: '分部' }), 99999)).toBeNull()
+    expect(
+      validateField(field({ type: 'DEVICE_CATEGORY', key: 'c', label: '设备类别' }), 99999)
+    ).toBeNull()
+    expect(
+      validateField(field({ type: 'DEVICE_SUBCATEGORY', key: 'c2', label: '二级分类' }), 99999)
+    ).toBeNull()
+    expect(validateField(field({ type: 'DEVICE_MODEL', key: 'm', label: '型号' }), 99999)).toBeNull()
   })
 })
 

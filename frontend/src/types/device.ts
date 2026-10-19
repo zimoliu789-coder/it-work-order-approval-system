@@ -36,6 +36,21 @@ export interface DeviceCategory {
 }
 
 /**
+ * 设备分类下拉项（V59：普通员工借用单要选分类）。
+ *
+ * <p>与 {@link DeviceCategory} 的区别：**没有 deviceCount 与 remark** ——
+ * 那两个是管理面信息，提交页不该看到「这个分类下有多少台设备」。
+ */
+export interface DeviceCategoryOption {
+  id: number
+  categoryName: string
+  /** 父分类ID；0 表示一级分类 */
+  parentId: number
+  /** 1 一级 / 2 二级 */
+  level: 1 | 2
+}
+
+/**
  * 设备当前使用信息（需求方 ）
  *
  * 数据来自「占用中的工单」，因此 `orderStatus` 可能处于审批中/待交付/使用中。
@@ -69,7 +84,12 @@ export interface DeviceItem {
   secondaryCategoryId?: number | null
   secondaryCategoryName?: string | null
   brand?: string | null
+  /** 型号原始文本（历史/可读原文；V56 起不参与任何比对） */
   model?: string | null
+  /** 型号字典 id（V56 / R3）；为空表示「型号待整理」 */
+  modelId?: number | null
+  /** 型号字典名称（modelId 有值时才下发） */
+  modelName?: string | null
   serialNo?: string | null
   storageLocation?: string | null
   /** yyyy-MM-dd */
@@ -81,16 +101,20 @@ export interface DeviceItem {
    * 而不是当作 0 或无穷大：这是需求的明确口径，不要在前端把 null 兜成 0。
    */
   amount?: number | null
+  /**
+   * 负责人（V57 / 第 10 项）：资产归属责任人，长期固定，由资产管理员维护。
+   *
+   * ⚠️ 与「借用人」是两件事：借用人见 `usage.userName`（来自占用中的工单）。
+   * 报修页「我名下的设备」按 `ownerId` 过滤；为空表示未指定，只能走「公共设备」入口。
+   */
+  ownerId?: number | null
+  ownerName?: string | null
   status: DeviceStatusCode
   statusLabel: string
   /** 是否可被新建借用申请（仅 AVAILABLE 为 true） */
   applicable: boolean
   /** 当前使用信息（占用中的工单） */
   usage?: DeviceUsage | null
-  /** 临时锁持有人姓名（仅 LOCKED 状态有值） */
-  lockedByName?: string | null
-  /** 临时锁到期时间（仅 LOCKED 状态有值） */
-  lockExpiresAt?: string | null
   remark?: string | null
   createdAt: string
   updatedAt: string
@@ -103,12 +127,17 @@ export interface DevicePayload {
   primaryCategoryId: number
   secondaryCategoryId: number | null
   brand: string | null
+  /** 型号原始文本（历史字段；新逻辑请用 modelId） */
   model: string | null
+  /** 型号字典 id（V56 / R3）；传了就以字典为准，服务端会把 model 文本一并写成字典名 */
+  modelId?: number | null
   serialNo: string | null
   storageLocation: string | null
   purchaseDate: string | null
   /** 设备金额（元）；null = 未录入（服务端按不超过阈值处理） */
   amount: number | null
+  /** 负责人 user_id（V57 / 第 10 项）；null = 未指定 */
+  ownerId?: number | null
   remark: string | null
 }
 
@@ -129,15 +158,53 @@ export interface DeviceCategoryPayload {
   remark: string | null
 }
 
-/** 临时锁信息 */
-export interface DeviceLockInfo {
-  deviceId: number
-  deviceName: string
-  lockToken: string
-  lockedAt: string
-  expiresAt: string
-  timeoutMinutes: number
+// ---------------------------------------------------------------------------
+// 设备型号字典（V56 / R3）
+// ---------------------------------------------------------------------------
+
+/** 型号状态（停用 ≠ 删除：既有设备与历史工单的关联保持不变） */
+export type DeviceModelStatusCode = 'ENABLED' | 'DISABLED'
+
+/** 型号管理列表项 */
+export interface DeviceModelItem {
+  id: number
+  modelName: string
+  brand?: string | null
+  status: DeviceModelStatusCode
+  statusLabel: string
+  /** 当前关联该型号的设备台数（停用前的影响面参考，不构成阻断） */
+  deviceCount?: number
+  remark?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
+
+/** 型号下拉项（只含启用型号；借用表单与台账共用） */
+export interface DeviceModelOption {
+  id: number
+  modelName: string
+  brand?: string | null
+}
+
+/** 型号新增 / 编辑请求（不含状态，启停走独立接口） */
+export interface DeviceModelPayload {
+  modelName: string
+  brand: string | null
+  remark: string | null
+}
+
+/** 「从台账补齐型号字典」的执行结果 */
+export interface DeviceModelSyncResult {
+  createdCount: number
+  boundCount: number
+  skippedCount: number
+}
+
+/** 型号状态筛选选项 */
+export const DEVICE_MODEL_STATUS_OPTIONS: Array<{ value: DeviceModelStatusCode; label: string }> = [
+  { value: 'ENABLED', label: '启用' },
+  { value: 'DISABLED', label: '停用' }
+]
 
 /** 状态筛选与展示选项（ 六态） */
 export const DEVICE_STATUS_OPTIONS: Array<{ value: DeviceStatusCode; label: string }> = [
@@ -349,8 +416,41 @@ export interface DeviceFaultSelectable {
   label: string
 }
 
-/** 故障上报请求 */
-export interface DeviceFaultPayload {
+/**
+ * 报修设备的「能不能报 / 关联哪张单」统一答案（V57 / 第 10 项）。
+ *
+ * <h2>为什么两个填报模式共用一个类型</h2>
+ * 「我的设备」下拉与「公共设备」扫码看着不同，要回答的问题完全一样：
+ * 这台设备叫什么、属于什么分类、当前能不能报修、报修时绑定哪张工单。
+ * 各写一份类型，两边的「可报修」判定迟早分叉 ——
+ * 表现是「下拉里能选、提交却被拒」这种最难解释的错。
+ *
+ * <h2>三个字段决定表单怎么走</h2>
+ * - `reportable === false` ⇒ 直接禁用提交并展示 `reason`（后端已给出能照做的原因）；
+ * - `orderId != null` ⇒ 我在用这台设备，提交时带上它走工单路径；
+ * - `found === false` ⇒ 仅扫码查询会为 false（编号输错 / 扫空），不是错误。
+ */
+export interface FaultDeviceLookup {
+  /** 是否查到设备（仅按资产编号查询时可能为 false） */
+  found: boolean
+  deviceId: number | null
+  deviceName: string | null
+  assetNo: string | null
+  /** 一级分类名（确认「扫到的是不是那一类东西」的最短依据） */
+  primaryCategoryName: string | null
+  secondaryCategoryName: string | null
+  deviceStatus: DeviceStatusCode | null
+  deviceStatusLabel: string | null
+  /** 只在「该设备正被我本人使用中」时有值 */
+  orderId: number | null
+  orderNo: string | null
+  /** 当前登录用户能否就此设备提交报修 */
+  reportable: boolean
+  /** 不可报修的原因（可直接展示；可报修时为 null） */
+  reason: string | null
+}
+
+/** 故障上报请求 */export interface DeviceFaultPayload {
   deviceId: number
   /** 工单内上报时携带；台账直接登记传 null */
   orderId: number | null

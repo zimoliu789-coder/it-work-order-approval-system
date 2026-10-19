@@ -117,7 +117,6 @@ public class JobAdminController {
                 List<JobResult> all = new ArrayList<>(borrowJobService.runAll());
                 all.add(approvalTimeoutJobService.remindOverdueApprovals());
                 all.add(deviceReconcileService.reconcile());
-                all.add(runLockRelease());
                 yield all;
             }
             case JOB_EXPIRE_WARNING -> List.of(borrowJobService.warnExpiringBorrows());
@@ -125,27 +124,17 @@ public class JobAdminController {
             case JOB_TIMEOUT_ALERT -> List.of(borrowJobService.alertTimeoutBorrows());
             case JOB_APPROVAL_TIMEOUT_REMIND -> List.of(approvalTimeoutJobService.remindOverdueApprovals());
             case JOB_DEVICE_RECONCILE -> List.of(deviceReconcileService.reconcile());
-            case JOB_LOCK_RELEASE -> List.of(runLockRelease());
+            // V56：临时锁机制整体移除（设备绑定改由 IT 交付扫码完成）。
+            // 保留任务名只为让前端下拉不出现 JOB_NOT_FOUND —— 调到时如实回答「已下线」，
+            // 而不是抛 400 让运维以为系统坏了。
+            case JOB_LOCK_RELEASE -> List.of(JobResult.of(JOB_LOCK_RELEASE, 0, 0,
+                    "临时锁机制已在 V56 移除，该任务不再执行"));
             case JOB_ATTACHMENT_RETENTION -> List.of(runAttachmentRetention());
             case JOB_DATABASE_BACKUP -> List.of(runDatabaseBackup());
             default -> throw new BusinessException(ErrorCode.JOB_NOT_FOUND,
                     "不支持的定时任务：" + job + JOB_HINT);
         };
         return ApiResponse.success("定时任务执行完成", results);
-    }
-
-    /**
-     * 执行一次临时锁超时释放，并把「释放了几台」包装成 {@link JobResult}。
-     *
-     * <p>包一层而不是直接调 {@code deviceService}：手动触发接口对外的返回结构是统一的
-     * {@code List<JobResult>}，若这里单独回一个裸数字，前端就要为「这一个任务」写特殊分支。
-     */
-    private JobResult runLockRelease() {
-        int released = deviceService.releaseExpiredLocks();
-        return JobResult.of(JOB_LOCK_RELEASE, released, 0,
-                released == 0 ? "没有超时的临时锁需要释放"
-                        : "已释放 " + released + " 台超时锁定的设备（阈值 "
-                                + systemConfigService.lockTimeoutMinutes() + " 分钟）");
     }
 
     /**

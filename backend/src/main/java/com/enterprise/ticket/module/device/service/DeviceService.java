@@ -3,10 +3,10 @@ package com.enterprise.ticket.module.device.service;
 import com.enterprise.ticket.common.api.BatchResultVO;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.module.device.dto.DeviceBatchCategoryRequest;
+import com.enterprise.ticket.module.device.dto.DeviceBatchOwnerRequest;
 import com.enterprise.ticket.module.device.dto.DeviceBatchStatusRequest;
 import com.enterprise.ticket.module.device.dto.DeviceSaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceStatusRequest;
-import com.enterprise.ticket.module.device.dto.vo.DeviceLockVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceVO;
 
 /**
@@ -52,29 +52,8 @@ public interface DeviceService {
     void changeStatus(Long id, DeviceStatusRequest request);
 
     // ------------------------------------------------------------------
-    // 临时锁（， 交付）
+    // 批量操作（P3）
     // ------------------------------------------------------------------
-
-    /**
-     * 申请人选定设备后加临时锁：AVAILABLE → LOCKED，写入 locked_by / locked_at / lock_token。
-     *
-     * <p>幂等：本人重复锁定同一设备返回原令牌并顺延计时，不报错。
-     * 他人持有效锁时返回 {@code DEVICE_UNAVAILABLE}；他人锁已超时则直接接管（ 超时释放）。
-     */
-    DeviceLockVO lock(Long deviceId);
-
-    /** 释放本人持有的临时锁（令牌必须匹配，） */
-    void unlock(Long deviceId, String lockToken);
-
-    /** 管理员强制解除临时锁（；高风险操作，由控制层按 HIGH 同步留痕） */
-    void forceUnlock(Long deviceId);
-
-    /**
-     * 释放全部超时的临时锁（ / 「临时锁超时释放，每 5 分钟」）
-     *
-     * @return 实际释放的设备数量
-     */
-    int releaseExpiredLocks();
 
     /**
      * 批量变更设备状态（P3）
@@ -86,4 +65,13 @@ public interface DeviceService {
 
     /** 批量修改一级分类（P3）：只改主分类，不动其它字段 */
     BatchResultVO batchChangeCategory(DeviceBatchCategoryRequest request);
+
+    /**
+     * 批量设置负责人（V57 / 第 10 项）：只改 {@code owner_id}，不动其它字段。
+     *
+     * <p>负责人是报修页「我名下的设备」的唯一数据来源。存量台账全部为空，
+     * 必须能批量补齐，否则那个入口对绝大多数人永远是空的。
+     * {@code ownerId} 传 null 表示清空（转为公共设备，只能扫码报修）。
+     */
+    BatchResultVO batchAssignOwner(DeviceBatchOwnerRequest request);
 }

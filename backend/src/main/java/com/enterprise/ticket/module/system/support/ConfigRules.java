@@ -104,7 +104,9 @@ public final class ConfigRules {
     private static Map<String, Rule> buildRules() {
         Map<String, Rule> rules = new LinkedHashMap<>();
 
-        // 临时锁（；锁时长上下限本身也是可配项，此处用其默认上限 60 / 240 兜底）
+        // 临时锁（V56 起临时锁机制已整体移除，配置页也不再展示这三项）。
+        // 规则保留不删：库里仍有这三行历史配置，保留范围校验可防止旧脚本/旧客户端
+        // 写入非法值；新代码不得再读取它们。
         rules.put("lock_timeout_minutes", Rule.intRange(1, 60));
         rules.put("lock_timeout_min_minutes", Rule.intRange(1, 60));
         rules.put("lock_timeout_max_minutes", Rule.intRange(1, 240));
@@ -284,6 +286,12 @@ public final class ConfigRules {
         // 下限 1 天：见 StorageSettings 类注释第二段（删除与落盘之间的时间窗）
         rules.put(StorageSettings.KEY_ATTACHMENT_RETENTION_DAYS, Rule.intRange(1, 3650));
         rules.put(StorageSettings.KEY_EXPORT_RETENTION_DAYS, Rule.intRange(1, 3650));
+        // 附件单张上限按业务类型拆分（V58 / 第 10 项 R2）。
+        // 下限 1MB：0 会把**所有**上传都拒掉，那是服务不可用级的手滑，不是策略收紧。
+        // 上限 100MB：Cloudflare 免费版隧道单请求上限就是 100MB（见 R2 定稿），
+        // 配得比它大只会造出「参数说能传、网关先拒了」的假配置。
+        rules.put(StorageSettings.KEY_FAULT_PHOTO_MAX_MB, Rule.intRange(1, 100));
+        rules.put(StorageSettings.KEY_APPLY_ATTACHMENT_MAX_MB, Rule.intRange(1, 100));
 
         return rules;
     }

@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, Download, Plus, Setting } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowUp, Delete, Download, Plus, Setting } from '@element-plus/icons-vue'
 import { applyTypeApi } from '@/api/applyType'
 import { formTemplateApi } from '@/api/form'
 import { approvalFlowApi } from '@/api/approvalFlow'
@@ -12,9 +12,11 @@ import LinearFlowEditor from '@/components/LinearFlowEditor.vue'
 import UserSelectDialog from '@/components/UserSelectDialog.vue'
 import { useResponsive } from '@/composables/useResponsive'
 import { useUserStore } from '@/store/user'
+import { reorderList } from '@/utils/listReorder'
 import {
   applyTypeStatusTagType,
   type ApplyTypeItem,
+  type ApplyTypePayload,
   type BuiltInApplyConfig,
   type BuiltInApplyConfigPayload,
   type FaultAssigneeTypeCode
@@ -498,6 +500,11 @@ function applyBuiltInCfg(cfg: BuiltInApplyConfig): void {
   builtInFlow.value = cfg.flowDefinition
     ? (JSON.parse(JSON.stringify(cfg.flowDefinition)) as FlowDefinition)
     : null
+  // V59 / D3：内置类型的表单字段也铺进来（同样深拷贝，理由同上）
+  builtInFormFields.value = (cfg.formSchema?.fields ?? []).map((field) => ({
+    ...field,
+    options: field.options ? field.options.map((option) => ({ ...option })) : null
+  }))
   const handler = cfg.handler ?? null
   builtInAssigneeType.value = handler?.assigneeType ?? 'DEPARTMENT'
   builtInAssigneeValue.value = handler?.assigneeValue ?? ''
@@ -518,6 +525,47 @@ const builtInFieldOptions = computed<FlowFieldOption[]>(() =>
     }))
 )
 
+/**
+ * 内置类型的表单字段（V59 / D3「表单、审批流程完全放开可自定义」）。
+ *
+ * <p>改造前这里只有「表单说明」一项 —— 内置类型的表单是提交页里的硬编码页面，
+ * 管理员改不了。现在借用 / 报修都播下了真实的表单模板，字段面与自定义类型同权：
+ * 可增删、可改必填与顺序；只有 systemField 标记的字段禁删（后端发布时强制）。
+ */
+const builtInFormFields = ref<FormField[]>([])
+const builtInFormEditorRef = ref<InstanceType<typeof ApplyFieldEditor> | null>(null)
+
+/**
+ * 内置类型的整组更新载荷。
+ *
+ * <p>刻意**原样带回**编码 / 提交权限 / 单据前缀：后端对内置类型的 update 是收窄的
+ * （只放开表单与流程），这三项是后端链路的定位符，改一个就静默失联。
+ * 前端在这里把它们带回，只是为了让请求完整 —— 后端仍会再校验一遍。
+ */
+function builtInTypePayload(
+  item: ApplyTypeItem,
+  cfg: BuiltInApplyConfig,
+  formVersionId: number,
+  description: string | null,
+  flowVersionId: number | null
+): ApplyTypePayload {
+  const boundFlow = flowVersionId ?? cfg.approvalFlowVersionId ?? null
+  return {
+    typeCode: item.typeCode,
+    typeName: item.typeName,
+    icon: item.icon ?? null,
+    description,
+    sortOrder: item.sortOrder ?? null,
+    formTemplateVersionId: formVersionId,
+    orderPrefix: item.orderPrefix ?? null,
+    // 有绑定流程才是 FLOW；否则沿用库里当下的审批方式（借用 = GROUP、报修 = NONE）
+    approvalMode: boundFlow ? 'FLOW' : item.approvalMode,
+    approvalFlowVersionId: boundFlow,
+    submitPermissionType: item.submitPermissionType,
+    submitPermissionValues: item.submitPermissionValues ?? []
+  }
+}
+
 const builtInFieldLabelOf = (key: string): string =>
   builtInCfg.value?.fieldSchema?.fields?.find((field) => field.key === key)?.label ?? key
 
@@ -526,6 +574,7 @@ async function openBuiltInConfig(item: ApplyTypeItem): Promise<void> {
   builtInCfg.value = null
   builtInDescription.value = ''
   builtInFlow.value = null
+  builtInFormFields.value = []
   resetBuiltInHandler()
   builtInVisible.value = true
   builtInLoading.value = true
@@ -546,11 +595,36 @@ async function saveBuiltInConfig(): Promise<void> {
   }
   const description = builtInDescription.value.trim() || null
 
-  // 流程不可编辑（故障报修）：提交说明，流程版本原样带回；
-  // 有处理流程的类型再带上「通知给谁」。
-  if (!cfg.flowEditable) {
-    builtInSaving.value = true
-    try {
+  // V59：表单字段先过一遍发布预检（选项为空 / 名称缺失这类问题在这里就该拦住，
+  // 等到后端发布校验才报错，错误信息离操作现场更远）。
+  if (cfg.formTemplateId != null) {
+    const formProblems = builtInFormEditorRef.value?.incompleteProblems() ?? []
+    if (formProblems.length > 0) {
+      ElMessage.warning(formProblems[0])
+      return
+    }
+  }
+
+  builtInSaving.value = true
+  try {
+    // ① 表单：存草稿 → 发布出新版本 → 把类型重绑过去（老版本仍被历史工单引用）
+    let newFormVersionId: number | null = null
+    if (cfg.formTemplateId != null) {
+      await formTemplateApi.update(cfg.formTemplateId, {
+        templateName: `${item.typeName} · 表单`,
+        description: null,
+        schema: { fields: builtInFormFields.value }
+      })
+      newFormVersionId = await formTemplateApi.publish(cfg.formTemplateId)
+      await applyTypeApi.update(
+        item.id,
+        builtInTypePayload(item, cfg, newFormVersionId, description, null)
+      )
+    }
+
+    // 流程不可编辑（故障报修）：提交说明，流程版本原样带回；
+    // 有处理流程的类型再带上「通知给谁」。
+    if (!cfg.flowEditable) {
       const payload: BuiltInApplyConfigPayload = {
         description,
         approvalFlowVersionId: cfg.approvalFlowVersionId ?? null
@@ -571,26 +645,19 @@ async function saveBuiltInConfig(): Promise<void> {
         builtInVisible.value = false
         await loadTypes()
       }
-    } catch {
-      // 由请求层统一提示
-    } finally {
-      builtInSaving.value = false
+      return
     }
-    return
-  }
 
-  if (!builtInFlow.value) {
-    ElMessage.warning('请至少配置一个审批节点')
-    return
-  }
-  const problems = builtInFlowRef.value?.incompleteProblems() ?? []
-  if (problems.length > 0) {
-    ElMessage.warning(problems[0])
-    return
-  }
+    if (!builtInFlow.value) {
+      ElMessage.warning('请至少配置一个审批节点')
+      return
+    }
+    const problems = builtInFlowRef.value?.incompleteProblems() ?? []
+    if (problems.length > 0) {
+      ElMessage.warning(problems[0])
+      return
+    }
 
-  builtInSaving.value = true
-  try {
     // 与自定义类型同一条口径：存草稿 → 发布新版本 → 把类型重绑到新版本。
     // 老版本仍被历史工单引用，因此**改流程改不到已提交的单**。
     let flowVersionId: number
@@ -614,6 +681,13 @@ async function saveBuiltInConfig(): Promise<void> {
       flowVersionId = await approvalFlowApi.publish(flowId)
     }
     await applyTypeApi.updateBuiltInConfig(item.id, { description, approvalFlowVersionId: flowVersionId })
+    // ② 表单也改过的话，把新流程版本一并写进类型（上面那次只带了流程为 null 的载荷）
+    if (newFormVersionId != null) {
+      await applyTypeApi.update(
+        item.id,
+        builtInTypePayload(item, cfg, newFormVersionId, description, flowVersionId)
+      )
+    }
     ElMessage.success('已保存，之后新提交的借用单将按新流程审批（历史工单不受影响）')
     builtInVisible.value = false
     await loadTypes()
@@ -672,6 +746,73 @@ function openExport(item: ApplyTypeItem): void {
   exportVisible.value = true
 }
 
+// ---------------------------------------------------------------------
+// 排序：拖拽（桌面）+ 上移/下移（触屏与键盘）
+// ---------------------------------------------------------------------
+
+/**
+ * 为什么两种交互都要留。
+ *
+ * <p>HTML5 draggable 在触屏上基本不可用（移动端浏览器不派发 dragstart），
+ * 而项目要求单套响应式前端（V1.1 §79/§98）—— 不能给移动端另做一套。
+ * 因此桌面用拖拽（快），同时给每张卡片配一对上移/下移按钮：
+ * 触屏能点、键盘能Tab、排序结果也更好复核。
+ *
+ * <p>保存语义是「整组提交」：后端拿它与库里全量 ID 集合比对，少一个就 400。
+ * 失败后重新拉列表 —— 宁可回退到服务器顺序，也不留着一份「拖了但没存上」的假顺序。
+ */
+const dragIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+const sortSaving = ref(false)
+
+function onDragStart(index: number): void {
+  if (!canManage.value) return
+  dragIndex.value = index
+}
+
+function onDragOver(index: number): void {
+  if (dragIndex.value === null) return
+  dragOverIndex.value = index
+}
+
+function onDragEnd(): void {
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+async function onDrop(index: number): Promise<void> {
+  const from = dragIndex.value
+  onDragEnd()
+  if (from === null || from === index) return
+  await reorder(from, index)
+}
+
+/** 上移/下移按钮：与拖拽共用同一条「本地重排 → 整组保存」链路 */
+async function moveType(index: number, delta: number): Promise<void> {
+  const target = index + delta
+  if (target < 0 || target >= types.value.length) return
+  await reorder(index, target)
+}
+
+async function reorder(from: number, to: number): Promise<void> {
+  // 先改本地再请求：拖拽是连续动作，等接口返回会让卡片「跳回去再跳回来」
+  types.value = reorderList(types.value, from, to)
+  await persistSort()
+}
+
+async function persistSort(): Promise<void> {
+  sortSaving.value = true
+  try {
+    await applyTypeApi.sort(types.value.map((item) => item.id))
+    ElMessage.success('排序已保存')
+  } catch {
+    // 由请求层提示；失败后重拉，避免本地顺序与库里不一致（后续每次加载都会「跳」）
+    await loadTypes()
+  } finally {
+    sortSaving.value = false
+  }
+}
+
 onMounted(loadTypes)
 </script>
 
@@ -684,13 +825,26 @@ onMounted(loadTypes)
           <p class="ts-text-secondary ts-applycfg__desc">
             每个申请类型一张卡片，点进去左边配表单、右边配审批流程。员工在「提交申请」页看到的卡片就来自这里。
           </p>
+          <p v-if="canManage" class="ts-text-hint ts-applycfg__sort-hint">
+            拖动卡片可调整顺序（系统内置类型也可调，只是不能删）；触屏可用每张卡片的上移 / 下移按钮。
+          </p>
         </div>
         <el-button v-if="canManage" type="primary" :icon="Plus" @click="openWizard">新建申请</el-button>
       </div>
 
-      <div v-loading="loading" class="ts-applycfg__grid">
+      <div v-loading="loading || sortSaving" class="ts-applycfg__grid">
         <el-empty v-if="!loading && types.length === 0" description="还没有申请类型，点右上角「新建申请」开始" />
-        <div v-for="item in types" :key="item.id" class="ts-applycfg__card">
+        <div
+          v-for="(item, index) in types"
+          :key="item.id"
+          class="ts-applycfg__card"
+          :class="{ 'is-dragging': dragIndex === index, 'is-drag-over': dragOverIndex === index && dragIndex !== index }"
+          :draggable="canManage"
+          @dragstart="onDragStart(index)"
+          @dragover.prevent="onDragOver(index)"
+          @drop.prevent="onDrop(index)"
+          @dragend="onDragEnd"
+        >
           <div class="ts-applycfg__card-head">
             <span class="ts-applycfg__icon">
               <component :is="iconOf(item)" />
@@ -711,6 +865,27 @@ onMounted(loadTypes)
           </div>
 
           <div class="ts-applycfg__card-foot">
+            <!-- 排序按钮：与拖拽等价，供触屏 / 键盘使用（桌面拖拽更快，两种都留） -->
+            <template v-if="canManage">
+              <el-button
+                link
+                size="small"
+                :icon="ArrowUp"
+                title="上移一位"
+                aria-label="上移一位"
+                :disabled="index === 0"
+                @click="moveType(index, -1)"
+              />
+              <el-button
+                link
+                size="small"
+                :icon="ArrowDown"
+                title="下移一位"
+                aria-label="下移一位"
+                :disabled="index === types.length - 1"
+                @click="moveType(index, 1)"
+              />
+            </template>
             <el-button link type="primary" size="small" :icon="Setting" @click="openConfig(item)">配置</el-button>
             <el-button
               v-if="canManage"
@@ -887,6 +1062,32 @@ onMounted(loadTypes)
           </el-form-item>
         </el-form>
 
+        <!--
+          表单字段（V59 / D3「表单完全放开」）。
+          改造前内置类型的表单是提交页里的硬编码页面，这里只有一句「不可改」的说明；
+          现在它们与自定义类型同权：可增删字段、改必填、调顺序。
+          带「系统内置」标记的字段禁删 —— 那是业务逻辑的读取依据（分类 / 型号 / 分部 /
+          归还日期 / 故障设备…），删了不会报错，只会让对应链路静默失效。
+        -->
+        <template v-if="builtInCfg?.formTemplateId != null">
+          <h4 class="ts-applycfg__pane-title">表单字段（员工提交时填什么）</h4>
+          <ApplyFieldEditor
+            ref="builtInFormEditorRef"
+            v-model="builtInFormFields"
+            :readonly="!canManage"
+          />
+        </template>
+        <el-alert
+          v-else-if="!builtInLoading"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="该内置类型尚未绑定表单模板"
+        >
+          表单字段暂不可编辑（播种未完成或配置被改坏）。提交页仍按内置逻辑渲染，
+          但管理员新增的字段不会生效。
+        </el-alert>
+
         <template v-if="builtInCfg?.flowEditable">
           <el-alert
             :type="builtInCfg?.flowBound ? 'success' : 'warning'"
@@ -1045,6 +1246,11 @@ onMounted(loadTypes)
   margin: 6px 0 0;
 }
 
+.ts-applycfg__sort-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
 .ts-applycfg__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1062,6 +1268,23 @@ onMounted(loadTypes)
   border-radius: 10px;
   background: var(--el-bg-color);
   transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+/* 只有管理员能排序：不可拖的卡片不给抓手光标，避免「拖了没反应」的误解 */
+.ts-applycfg__card[draggable='true'] {
+  cursor: grab;
+}
+
+/* 正在被拖的那张：半透明 + 主色描边，让「我从哪儿来」一眼可见 */
+.ts-applycfg__card.is-dragging {
+  opacity: 0.55;
+  border-color: var(--el-color-primary);
+}
+
+/* 拖经的目标位：左侧主色竖线，提示「松手会插到这里」 */
+.ts-applycfg__card.is-drag-over {
+  border-color: var(--el-color-primary);
+  box-shadow: inset 3px 0 0 var(--el-color-primary);
 }
 
 .ts-applycfg__card:hover {

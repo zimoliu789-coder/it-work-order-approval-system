@@ -7,7 +7,11 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
 import com.enterprise.ticket.module.device.entity.Device;
+import com.enterprise.ticket.module.device.entity.DeviceCategory;
+import com.enterprise.ticket.module.device.entity.DeviceModel;
+import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +45,7 @@ import java.util.regex.Pattern;
  *
  * <h2>引用类字段要查库</h2>
  * <p>{@link FormFieldType.ValueKind#USER_REF} / {@code DEVICE_REF} / {@code GROUP_REF}
+ * / {@code CATEGORY_REF} / {@code MODEL_REF}
  * 存的只是 id。若不校验存在性，任何客户端都能提交 {@code "approver": 999999} 这种
  * 指向不存在实体的数据 —— 而这类脏数据在详情页回显时会变成空白或报错，
  * 排查时又找不到来源。故此处逐条查库确认（表单字段数量有限，不构成性能问题）。
@@ -56,6 +61,10 @@ public class FormDataValidator {
     private final UserMapper userMapper;
     private final DeviceMapper deviceMapper;
     private final DepartmentMapper departmentMapper;
+    /** 设备分类引用校验（借用单的「一级 / 二级分类」系统内置字段，V59） */
+    private final DeviceCategoryMapper deviceCategoryMapper;
+    /** 设备型号引用校验（借用单的「型号」系统内置字段，V59 / R3） */
+    private final DeviceModelMapper deviceModelMapper;
 
     /**
      * 校验表单数据，失败即抛 {@link ErrorCode#FORM_DATA_INVALID}（message 含字段级明细）。
@@ -135,6 +144,10 @@ public class FormDataValidator {
             // GROUP_REF 有两种语义：部门选择（任意层级）与一级分部选择（只能选一级）。
             // 两者取值相同（都是部门 id），故在此按**字段类型**分流，而不是再开一个 ValueKind。
             case GROUP_REF -> validateGroupRef(field, type, label, value, errors);
+            // CATEGORY_REF 有两种语义：一级分类（借用单的归类依据）与二级分类（选填细化）。
+            // 与 GROUP_REF 同一处理原则：取值都是分类 id，按**字段类型**区分层级。
+            case CATEGORY_REF -> validateCategoryRef(field, type, label, value, errors);
+            case MODEL_REF -> validateModelRef(field, label, value, errors);
             default -> {
                 // NONE（布局类）已在上游过滤，不会走到这里
             }
@@ -304,6 +317,51 @@ public class FormDataValidator {
         if (type == FormFieldType.ROOT_DEPT && group.getParentId() != null) {
             String name = group.getDeptName() == null ? String.valueOf(groupId) : group.getDeptName();
             errors.add("「" + label + "」只能选择一级分部（「" + name + "」不是一级部门）");
+        }
+    }
+
+    /**
+     * 设备分类引用校验（V59）。
+     *
+     * <h2>为什么必须校验层级，而不只是「存在」</h2>
+     * 一级 / 二级分类的值都是 {@code device_category.id}，只查存在性的话，
+     * 往「一级分类」字段里塞一个二级分类 id 也能通过 —— 而借用单交付时的
+     * 三层校验（分类 → 型号 → 空闲）拿它去比对设备的一级分类，**永远匹配不上**，
+     * 表现是「选了的类别，IT 扫什么都提示类别不符」，且不会报错。
+     *
+     * <p>二级归属一级的**父子关系**不在此处校验：那是提交链路的业务规则
+     * （{@code OrderServiceImpl} 对 {@code secondaryCategoryId} 已有校验），
+     * 通用表单校验器只保证「这个 id 是某一级的分类」，越界校验留给业务层，避免两处口径漂移。
+     */
+    private void validateCategoryRef(FormField field, FormFieldType type,
+                                     String label, Object value, List<String> errors) {
+        Long categoryId = longValue(value);
+        if (categoryId == null) {
+            errors.add("「" + label + "」必须是设备分类 id");
+            return;
+        }
+        DeviceCategory category = deviceCategoryMapper.selectById(categoryId);
+        if (category == null) {
+            errors.add("「" + label + "」所选设备分类不存在");
+            return;
+        }
+        int expectedLevel = type == FormFieldType.DEVICE_CATEGORY
+                ? DeviceCategory.LEVEL_PRIMARY : DeviceCategory.LEVEL_SECONDARY;
+        if (category.getLevel() == null || category.getLevel() != expectedLevel) {
+            errors.add("「" + label + "」只能选择"
+                    + (expectedLevel == DeviceCategory.LEVEL_PRIMARY ? "一级" : "二级") + "设备分类");
+        }
+    }
+
+    /** 设备型号引用校验（V59 / R3）：值必须是型号字典里存在的行 */
+    private void validateModelRef(FormField field, String label, Object value, List<String> errors) {
+        Long modelId = longValue(value);
+        if (modelId == null) {
+            errors.add("「" + label + "」必须是设备型号 id");
+            return;
+        }
+        if (deviceModelMapper.selectById(modelId) == null) {
+            errors.add("「" + label + "」所选设备型号不存在");
         }
     }
 

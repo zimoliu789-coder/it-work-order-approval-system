@@ -6,11 +6,10 @@ import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.common.log.AuditLog;
 import com.enterprise.ticket.common.log.RiskLevel;
 import com.enterprise.ticket.module.device.dto.DeviceBatchCategoryRequest;
+import com.enterprise.ticket.module.device.dto.DeviceBatchOwnerRequest;
 import com.enterprise.ticket.module.device.dto.DeviceBatchStatusRequest;
 import com.enterprise.ticket.module.device.dto.DeviceSaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceStatusRequest;
-import com.enterprise.ticket.module.device.dto.DeviceUnlockRequest;
-import com.enterprise.ticket.module.device.dto.vo.DeviceLockVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceVO;
 import com.enterprise.ticket.module.device.service.DeviceService;
 import jakarta.validation.Valid;
@@ -124,6 +123,21 @@ public class DeviceController {
         return ApiResponse.success(deviceService.batchChangeCategory(request));
     }
 
+    /**
+     * 批量设置负责人（V57 / 第 10 项）。
+     *
+     * <p>负责人是报修页「我名下的设备」的唯一数据来源；存量台账全为空，必须能批量补齐，
+     * 否则那个入口对绝大多数员工永远是空的。传 {@code ownerId=null} 表示清空
+     * （设备转为公共设备，只能扫码报修），因此本端点同时承担「取消负责人」。
+     */
+    @PostMapping("/batch/owner")
+    @PreAuthorize("@perm.has('device:ledger:manage')")
+    @AuditLog(module = "DEVICE", action = "DEVICE_BATCH_OWNER",
+            description = "批量设置设备负责人", risk = RiskLevel.NORMAL)
+    public ApiResponse<BatchResultVO> batchAssignOwner(
+            @Valid @RequestBody DeviceBatchOwnerRequest request) {
+        return ApiResponse.success(deviceService.batchAssignOwner(request));
+    }
 
     @DeleteMapping("/{id}")
     @PreAuthorize("@perm.has('device:ledger:manage')")
@@ -135,43 +149,10 @@ public class DeviceController {
     }
 
     // ------------------------------------------------------------------
-    // 临时锁
+    // 临时锁端点已整体移除（V56 / 第 9 项）
+    //
+    // 原 POST /{id}/lock、POST /{id}/unlock、POST /{id}/force-unlock 三个端点删除：
+    // 申请人不再挑选具体资产，设备由 IT 交付扫码一步占用。
+    // 前端若仍调用这三个路径会得到 404 —— 这是有意的，避免旧页面对不存在的锁做操作。
     // ------------------------------------------------------------------
-
-    /**
-     * 临时锁定设备（申请人在申请页选定设备时调用）
-     *
-     * <p>测试路径：POST http://localhost:8080/api/devices/1/lock
-     */
-    @PostMapping("/{id}/lock")
-    @PreAuthorize("isAuthenticated()")
-    public ApiResponse<DeviceLockVO> lock(@PathVariable Long id) {
-        return ApiResponse.success("设备已临时锁定，请在有效期内提交申请", deviceService.lock(id));
-    }
-
-    /**
-     * 释放本人持有的临时锁（切换设备 / 取消填表 / 页面卸载时调用）
-     *
-     * <p>测试路径：POST http://localhost:8080/api/devices/1/unlock  body: {"lockToken":"..."}
-     */
-    @PostMapping("/{id}/unlock")
-    @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Void> unlock(@PathVariable Long id, @Valid @RequestBody DeviceUnlockRequest request) {
-        deviceService.unlock(id, request.getLockToken());
-        return ApiResponse.success("临时锁已释放", null);
-    }
-
-    /**
-     * 管理员强制解除临时锁（；高风险操作，同步留痕）
-     *
-     * <p>测试路径：POST http://localhost:8080/api/devices/1/force-unlock
-     */
-    @PostMapping("/{id}/force-unlock")
-    @PreAuthorize("@perm.has('device:ledger:manage')")
-    @AuditLog(module = "DEVICE", action = "DEVICE_FORCE_UNLOCK",
-            description = "强制解除设备临时锁", risk = RiskLevel.HIGH)
-    public ApiResponse<Void> forceUnlock(@PathVariable Long id) {
-        deviceService.forceUnlock(id);
-        return ApiResponse.success("临时锁已强制解除，设备已恢复可用", null);
-    }
 }

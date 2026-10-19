@@ -76,6 +76,27 @@ public class BuiltInConfigVO {
     private FormSchema fieldSchema;
 
     /**
+     * 内置类型当前绑定的表单模板版本 id（V59 / D3「表单完全放开」）。
+     *
+     * <p>改造前内置类型没有表单模板，这一项恒为 null，面板上也因此没有表单编辑区。
+     * 现在借用 / 报修都播下了真实模板，管理员要能改它们的字段 ——
+     * {@link #formSchema} 就是那一版的字段定义（快照语义：读的是**绑定的版本**，
+     * 不是模板的最新草稿）。
+     */
+    private Long formTemplateVersionId;
+
+    /** 已绑定表单版本的 schema（字段清单）；未绑定时为 null */
+    private FormSchema formSchema;
+
+    /**
+     * 表单模板 id（V59）。
+     *
+     * <p>与 {@link #flowTemplateId} 同一理由：改表单要走「模板改草稿 → 发布新版本」，
+     * 而模板级操作需要模板 id。版本 → 模板的反查在服务端做。
+     */
+    private Long formTemplateId;
+
+    /**
      * 「处理流程」配置（V50）：通知给谁 / 实际会通知到几个人 / 三个下拉的候选。
      *
      * <p>只有 {@link #hasHandler} 为 true 的内置类型（当前即「故障报修」）才有这一块，

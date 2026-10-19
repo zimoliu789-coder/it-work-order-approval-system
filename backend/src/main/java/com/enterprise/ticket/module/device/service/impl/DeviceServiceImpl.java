@@ -14,20 +14,21 @@ import com.enterprise.ticket.common.constant.UseType;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.device.dto.DeviceBatchCategoryRequest;
+import com.enterprise.ticket.module.device.dto.DeviceBatchOwnerRequest;
 import com.enterprise.ticket.module.device.dto.DeviceBatchStatusRequest;
 import com.enterprise.ticket.module.device.dto.DeviceSaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceStatusRequest;
-import com.enterprise.ticket.module.device.dto.vo.DeviceLockVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceUsageVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceVO;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.entity.DeviceCategory;
+import com.enterprise.ticket.module.device.entity.DeviceModel;
 import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.device.service.DeviceService;
 import com.enterprise.ticket.module.order.entity.Order;
 import com.enterprise.ticket.module.order.mapper.OrderMapper;
-import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
 import java.util.ArrayList;
@@ -61,9 +62,9 @@ import java.util.stream.Collectors;
  *   <li>管理员手动状态变更只认「报废 / 维修完成」两类，其余流转由工单模块驱动，
  *       避免台账界面成为绕过状态机的后门；操作理由只进审计日志，不写回设备备注；</li>
  *   <li>软删除用 {@code deleteById}（{@code @TableLogic} 自动改写成 UPDATE deleted = 1）；</li>
- *   <li><b>临时锁</b>：写操作全部带状态前置条件（乐观并发），
- *       并发下只有一个请求能把 AVAILABLE 改成 LOCKED；释放必须比对 {@code lockToken}，
- *       防止旧页面释放后来属于其他用户的新锁。</li>
+ *   <li><b>临时锁已整体移除（V56 / 第 9 项）</b>：申请人不再挑选具体资产，
+ *       「填表期间占住设备」这件事不存在，锁三件套与超时释放任务随之删除。
+ *       设备由交付扫码一步从 AVAILABLE 推进到 IN_USE。</li>
  * </ul>
  *
  * <p><b>跨模块约定</b>：本类读取工单占用信息时直接注入 {@link OrderMapper}，
@@ -90,9 +91,10 @@ public class DeviceServiceImpl implements DeviceService {
 
     private final DeviceMapper deviceMapper;
     private final DeviceCategoryMapper categoryMapper;
+    /** V56 / R3：型号字典（台账的 modelId 校验与型号名解析） */
+    private final DeviceModelMapper deviceModelMapper;
     private final OrderMapper orderMapper;
     private final UserMapper userMapper;
-    private final SystemConfigService systemConfigService;
 
     @Override
     public PageResult<DeviceVO> page(long page, long size, String keyword,
@@ -119,22 +121,26 @@ public class DeviceServiceImpl implements DeviceService {
 
         Map<Long, String> categoryNames = categoryNameMap();
         Map<Long, DeviceUsageVO> usages = usageMap(resultPage.getRecords());
-        Map<Long, String> lockHolders = lockHolderNameMap(resultPage.getRecords());
-        return PageResult.of(resultPage, device -> toVO(device, categoryNames,
-                usages.get(device.getId()), lockHolders.get(device.getId())));
+        // 型号字典名与负责人姓名都按「页内 id 集合」一次批量查，避免逐行查库造成 N+1
+        Map<Long, String> modelNames = modelNameMap(resultPage.getRecords());
+        Map<Long, String> ownerNames = ownerNameMap(resultPage.getRecords());
+        return PageResult.of(resultPage, device -> toVO(device, categoryNames, modelNames, ownerNames,
+                usages.get(device.getId())));
     }
 
     @Override
     public DeviceVO getDetail(Long id) {
         Device device = requireDevice(id);
         List<Device> single = List.of(device);
-        return toVO(device, categoryNameMap(), usageMap(single).get(id), lockHolderNameMap(single).get(id));
+        return toVO(device, categoryNameMap(), modelNameMap(single), ownerNameMap(single),
+                usageMap(single).get(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(DeviceSaveRequest request) {
         CategoryRef ref = assertCreatable(request);
+        assertOwnerExists(request.getOwnerId());
         String assetNo = request.getAssetNo().trim();
 
         Device device = new Device();
@@ -143,7 +149,9 @@ public class DeviceServiceImpl implements DeviceService {
         device.setPrimaryCategoryId(ref.primary().getId());
         device.setSecondaryCategoryId(ref.secondary() == null ? null : ref.secondary().getId());
         device.setBrand(trimToNull(request.getBrand()));
-        device.setModel(trimToNull(request.getModel()));
+        // 型号：传了 modelId 就以字典名回写 model 文本，让「规范型号 / 可读原文」两列一致
+        device.setModel(resolveModelName(request));
+        device.setModelId(request.getModelId());
         device.setSerialNo(trimToNull(request.getSerialNo()));
         device.setStorageLocation(trimToNull(request.getStorageLocation()));
         device.setPurchaseDate(request.getPurchaseDate());
@@ -151,6 +159,8 @@ public class DeviceServiceImpl implements DeviceService {
         // NULL 与 0 在审批分档里语义不同（未录入 ⇒ 走三级；金额 0 ⇒ 也是小额），
         // 但把 NULL 偷偷变成 0 会让「还没录金额的设备」在台账里查不出来。
         device.setAmount(request.getAmount());
+        // 负责人（V57 / 第 10 项）：资产归属责任人，与借用人无关；选填
+        device.setOwnerId(request.getOwnerId());
         // ：新设备一律从「可用」起步，状态变更只能走状态操作接口或后续工单流程
         device.setStatus(DeviceStatus.AVAILABLE.name());
         device.setRemark(trimToNull(request.getRemark()));
@@ -178,6 +188,19 @@ public class DeviceServiceImpl implements DeviceService {
      *
      * @return 解析后的分类引用，供调用方直接复用，避免重复查库
      */
+    /**
+     * 负责人存在性校验（V57 / 第 10 项）。
+     *
+     * <p>传了 {@code ownerId} 就必须是真实用户。悬空 id 不会报任何错，
+     * 表现是「这台设备在报修页永远不出现」—— 而那正是加这个字段要解决的问题，
+     * 等于白做，且事后极难定位（前端只会看到一个空下拉）。
+     */
+    private void assertOwnerExists(Long ownerId) {
+        if (ownerId != null && userMapper.selectById(ownerId) == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "负责人不存在，请重新选择");
+        }
+    }
+
     private CategoryRef assertCreatable(DeviceSaveRequest request) {
         String assetNo = request.getAssetNo() == null ? "" : request.getAssetNo().trim();
         if (assetNo.isEmpty()) {
@@ -193,6 +216,7 @@ public class DeviceServiceImpl implements DeviceService {
         requireDevice(id);
         String assetNo = request.getAssetNo().trim();
         assertAssetNoAvailable(assetNo, id);
+        assertOwnerExists(request.getOwnerId());
         CategoryRef ref = resolveCategories(request.getPrimaryCategoryId(), request.getSecondaryCategoryId());
 
         // 显式 set 才能把可空字段写回 NULL（实体式 updateById 受 update-strategy=not_null 影响会跳过 null）
@@ -203,11 +227,13 @@ public class DeviceServiceImpl implements DeviceService {
                 .set(Device::getPrimaryCategoryId, ref.primary().getId())
                 .set(Device::getSecondaryCategoryId, ref.secondary() == null ? null : ref.secondary().getId())
                 .set(Device::getBrand, trimToNull(request.getBrand()))
-                .set(Device::getModel, trimToNull(request.getModel()))
+                .set(Device::getModel, resolveModelName(request))
+                .set(Device::getModelId, request.getModelId())
                 .set(Device::getSerialNo, trimToNull(request.getSerialNo()))
                 .set(Device::getStorageLocation, trimToNull(request.getStorageLocation()))
                 .set(Device::getPurchaseDate, request.getPurchaseDate())
                 .set(Device::getAmount, request.getAmount())
+                .set(Device::getOwnerId, request.getOwnerId())
                 .set(Device::getRemark, trimToNull(request.getRemark()));
         try {
             deviceMapper.update(null, update);
@@ -253,149 +279,37 @@ public class DeviceServiceImpl implements DeviceService {
     }
 
     // ------------------------------------------------------------------
-    // 临时锁
+    // 临时锁已整体移除（V56 / 第 9 项）
+    //
+    // 原 lock / unlock / forceUnlock / releaseExpiredLocks 与 clearLock* / isLockExpired
+    // 一并删除：申请人不再挑选具体资产，「填表期间占住设备」这件事不存在了。
+    // 设备状态由交付扫码一步推进 AVAILABLE → IN_USE。
     // ------------------------------------------------------------------
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public DeviceLockVO lock(Long deviceId) {
-        Long currentUserId = requireCurrentUserId();
-        Device device = requireDevice(deviceId);
-        DeviceStatus status = DeviceStatus.of(device.getStatus());
-        if (status == null) {
-            throw new BusinessException(ErrorCode.DEVICE_STATUS_INVALID, "设备状态数据异常：" + device.getStatus());
-        }
-
-        int timeoutMinutes = systemConfigService.lockTimeoutMinutes();
-        LocalDateTime now = LocalDateTime.now();
-
-        if (status == DeviceStatus.LOCKED) {
-            boolean expired = isLockExpired(device, timeoutMinutes, now);
-            boolean mine = Objects.equals(device.getLockedBy(), currentUserId);
-            if (!expired) {
-                if (mine) {
-                    // 本人重复点同一设备：返回原令牌并顺延计时，避免用户切换设备再来回点就报错
-                    return new DeviceLockVO(device.getId(), device.getDeviceName(), device.getLockToken(),
-                            device.getLockedAt(), device.getLockedAt().plusMinutes(timeoutMinutes), timeoutMinutes);
-                }
-                throw new BusinessException(ErrorCode.DEVICE_UNAVAILABLE,
-                        "该设备正被其他同事填写申请，请稍后再试或选择其它设备");
-            }
-            // 已超时：允许接管（「超时 LOCKED → AVAILABLE」，此处直接原地接管，避免中间态）
-            log.info("设备 id={} 的临时锁已超时（lockedBy={}），由 user={} 接管",
-                    deviceId, device.getLockedBy(), currentUserId);
-        } else if (status != DeviceStatus.AVAILABLE) {
-            throw new BusinessException(ErrorCode.DEVICE_UNAVAILABLE,
-                    "设备当前状态为「" + status.getLabel() + "」，不可申请");
-        }
-
-        String token = UUID.randomUUID().toString().replace("-", "");
-        // 条件更新：前置条件 = 读取到的状态 + 读取到的令牌。
-        //
-        // 带令牌条件是让「超时锁接管」也具备原子性：若仅以状态为前置条件，
-        // 两个用户同时接管同一个已超时的锁会**都**更新成功（后写覆盖前写），
-        // 双方都收到「锁定成功」，直到其中一方提交申请时才被令牌校验拒绝 ——
-        // 感知与语义都不正确。加上令牌条件后，只有一个请求能改到该行（受影响行数 = 1），
-        // 另一个得到「设备刚被其他同事锁定」（ / ）。
-        //
-        // 注意：AVAILABLE 设备的 lock_token 为 NULL，而 SQL 里 `lock_token = NULL` 恒不成立，
-        // 因此按旧令牌是否为空分别用 isNull / eq 生成条件。
-        LambdaUpdateWrapper<Device> claim = Wrappers.<Device>lambdaUpdate()
-                .eq(Device::getId, deviceId)
-                .eq(Device::getStatus, device.getStatus());
-        if (device.getLockToken() == null) {
-            claim.isNull(Device::getLockToken);
-        } else {
-            claim.eq(Device::getLockToken, device.getLockToken());
-        }
-        int updated = deviceMapper.update(null, claim
-                .set(Device::getStatus, DeviceStatus.LOCKED.name())
-                .set(Device::getLockedBy, currentUserId)
-                .set(Device::getLockedAt, now)
-                .set(Device::getLockToken, token));
-        if (updated == 0) {
-            throw new BusinessException(ErrorCode.DEVICE_UNAVAILABLE, "设备刚被其他同事锁定，请重新选择设备");
-        }
-        log.info("设备 id={} 已被 user={} 临时锁定，Timeout={} 分钟", deviceId, currentUserId, timeoutMinutes);
-        return new DeviceLockVO(deviceId, device.getDeviceName(), token, now,
-                now.plusMinutes(timeoutMinutes), timeoutMinutes);
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void unlock(Long deviceId, String lockToken) {
-        Long currentUserId = requireCurrentUserId();
-        Device device = requireDevice(deviceId);
-        if (DeviceStatus.of(device.getStatus()) != DeviceStatus.LOCKED) {
-            // 幂等：锁已被提交/超时释放时不再报错，否则前端在页面卸载钩子里释放会误弹提示
-            log.debug("设备 id={} 当前非锁定态（{}），跳过释放", deviceId, device.getStatus());
-            return;
-        }
-        if (!Objects.equals(device.getLockToken(), lockToken) || !Objects.equals(device.getLockedBy(), currentUserId)) {
-            // ：令牌不匹配说明当前锁属于别人的新一轮锁定，绝不能释放
-            throw new BusinessException(ErrorCode.DEVICE_LOCK_TOKEN_INVALID);
-        }
-        clearLock(deviceId, DeviceStatus.LOCKED.name());
-        log.info("设备 id={} 的临时锁已由 user={} 释放", deviceId, currentUserId);
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void forceUnlock(Long deviceId) {
-        Device device = requireDevice(deviceId);
-        if (DeviceStatus.of(device.getStatus()) != DeviceStatus.LOCKED) {
-            throw new BusinessException(ErrorCode.DEVICE_NOT_LOCKED);
-        }
-        clearLock(deviceId, DeviceStatus.LOCKED.name());
-        log.warn("设备 id={} 的临时锁被管理员强制解除（原持有人 lockedBy={}）", deviceId, device.getLockedBy());
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public int releaseExpiredLocks() {
-        int timeoutMinutes = systemConfigService.lockTimeoutMinutes();
-        LocalDateTime threshold = LocalDateTime.now().minusMinutes(timeoutMinutes);
-        return clearLockBatch(threshold);
-    }
-
-    /** 清空临时锁并把设备放回 AVAILABLE（单设备，带状态前置条件） */
-    private void clearLock(Long deviceId, String expectedStatus) {
-        deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
-                .eq(Device::getId, deviceId)
-                .eq(Device::getStatus, expectedStatus)
-                .set(Device::getStatus, DeviceStatus.AVAILABLE.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
-    }
-
-    /** 批量释放超时锁（定时任务，「临时锁超时释放，每 5 分钟」） */
-    private int clearLockBatch(LocalDateTime threshold) {
-        return deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
-                .eq(Device::getStatus, DeviceStatus.LOCKED.name())
-                .lt(Device::getLockedAt, threshold)
-                .set(Device::getStatus, DeviceStatus.AVAILABLE.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
-    }
-
-    /** 临时锁是否已超时；lockedAt 缺失视为已失效（脏数据不应永久占位） */
-    private boolean isLockExpired(Device device, int timeoutMinutes, LocalDateTime now) {
-        if (device.getLockedAt() == null) {
-            return true;
-        }
-        return device.getLockedAt().plusMinutes(timeoutMinutes).isBefore(now);
-    }
-
-    /** 超时时间点；lockedAt 为空时返回 null（前端不显示倒计时） */
-    private LocalDateTime lockExpiresAt(Device device, int timeoutMinutes) {
-        return device.getLockedAt() == null ? null : device.getLockedAt().plusMinutes(timeoutMinutes);
-    }
 
     // ------------------------------------------------------------------
     // 内部方法
     // ------------------------------------------------------------------
+
+    /**
+     * 解析「型号」最终写入的文本（V56 / R3）。
+     *
+     * <p>传了 {@code modelId} ⇒ 取字典里的名称（顺带把「规范型号」写进 {@code model} 原文列，
+     * 让两列不打架）；没传 ⇒ 沿用请求里的自由文本（兼容批量导入与旧前端，
+     * 该设备随即成为「型号待整理」，可在型号管理页一键收敛）。
+     *
+     * <p>只校验「存在」不校验「启用」：编辑老设备时它原来选的型号可能已被停用，
+     * 若这里强制启用，管理员就永远改不了这台设备的其它字段。
+     */
+    private String resolveModelName(DeviceSaveRequest request) {
+        if (request.getModelId() == null) {
+            return trimToNull(request.getModel());
+        }
+        DeviceModel model = deviceModelMapper.selectById(request.getModelId());
+        if (model == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "所选型号不存在，请刷新后重试");
+        }
+        return model.getModelName();
+    }
 
     private Device requireDevice(Long id) {
         Device device = id == null ? null : deviceMapper.selectById(id);
@@ -509,17 +423,32 @@ public class DeviceServiceImpl implements DeviceService {
         return result;
     }
 
-    /** 锁定人姓名（仅 LOCKED 状态的设备需要） */
-    private Map<Long, String> lockHolderNameMap(Collection<Device> devices) {
+    /** 型号字典名（V56 / R3）：页内 model_id 去重后一次查字典 */
+    private Map<Long, String> modelNameMap(Collection<Device> devices) {
         if (devices == null || devices.isEmpty()) {
             return Map.of();
         }
-        Set<Long> holderIds = devices.stream()
-                .filter(device -> DeviceStatus.LOCKED.name().equals(device.getStatus()))
-                .map(Device::getLockedBy)
+        Set<Long> modelIds = devices.stream()
+                .map(Device::getModelId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        return userNameMap(holderIds);
+        if (modelIds.isEmpty()) {
+            return Map.of();
+        }
+        return deviceModelMapper.selectBatchIds(modelIds).stream()
+                .collect(Collectors.toMap(DeviceModel::getId, DeviceModel::getModelName, (a, b) -> a));
+    }
+
+    /** 负责人姓名（V57 / 第 10 项）：与「借用人」无关，只看台账 owner_id */
+    private Map<Long, String> ownerNameMap(Collection<Device> devices) {
+        if (devices == null || devices.isEmpty()) {
+            return Map.of();
+        }
+        Set<Long> ownerIds = devices.stream()
+                .map(Device::getOwnerId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return userNameMap(ownerIds);
     }
 
     private Map<Long, String> userNameMap(Set<Long> userIds) {
@@ -532,8 +461,8 @@ public class DeviceServiceImpl implements DeviceService {
                         (a, b) -> a));
     }
 
-    private DeviceVO toVO(Device device, Map<Long, String> categoryNames,
-                          DeviceUsageVO usage, String lockedByName) {
+    private DeviceVO toVO(Device device, Map<Long, String> categoryNames, Map<Long, String> modelNames,
+                          Map<Long, String> ownerNames, DeviceUsageVO usage) {
         DeviceVO vo = new DeviceVO();
         vo.setId(device.getId());
         vo.setDeviceName(device.getDeviceName());
@@ -545,10 +474,18 @@ public class DeviceServiceImpl implements DeviceService {
                 ? null : categoryNames.get(device.getSecondaryCategoryId()));
         vo.setBrand(device.getBrand());
         vo.setModel(device.getModel());
+        // modelId / modelName 是 V56 起的「规范化型号」：台账里 model 仍是原文，
+        // 但当 modelId 为空时前端要能看出「这条还没整理」，故两者都下发
+        vo.setModelId(device.getModelId());
+        vo.setModelName(device.getModelId() == null ? null : modelNames.get(device.getModelId()));
         vo.setSerialNo(device.getSerialNo());
         vo.setStorageLocation(device.getStorageLocation());
         vo.setPurchaseDate(device.getPurchaseDate());
         vo.setAmount(device.getAmount());
+
+        // 负责人（V57 / 第 10 项）：资产归属责任人，不是借用人
+        vo.setOwnerId(device.getOwnerId());
+        vo.setOwnerName(device.getOwnerId() == null ? null : ownerNames.get(device.getOwnerId()));
 
         DeviceStatus status = DeviceStatus.of(device.getStatus());
         vo.setStatus(device.getStatus());
@@ -556,10 +493,6 @@ public class DeviceServiceImpl implements DeviceService {
         vo.setApplicable(status != null && status.isApplicable());
 
         vo.setUsage(usage);
-        if (status == DeviceStatus.LOCKED) {
-            vo.setLockedByName(lockedByName);
-            vo.setLockExpiresAt(lockExpiresAt(device, systemConfigService.lockTimeoutMinutes()));
-        }
 
         vo.setRemark(device.getRemark());
         vo.setCreatedAt(device.getCreatedAt());
@@ -638,6 +571,48 @@ public class DeviceServiceImpl implements DeviceService {
         }
         log.info("批量修改设备分类 → {}：共 {} 条，成功 {}，失败 {}",
                 category.getCategoryName(), ids.size(), succeeded, failures.size());
+        return BatchResultVO.of(ids.size(), succeeded, failures);
+    }
+
+    /**
+     * 批量设置负责人（V57 / 第 10 项）。
+     *
+     * <p>只写 {@code owner_id} 一列：这是「报修页我名下的设备」的唯一数据来源，
+     * 存量台账全部为空，必须能批量补齐 —— 逐台点开编辑等于这个功能用不起来。
+     */
+    @Override
+    public BatchResultVO batchAssignOwner(DeviceBatchOwnerRequest request) {
+        List<Long> ids = distinctIds(request.getIds());
+        Long ownerId = request.getOwnerId();
+        // 负责人 id 必须先校验存在。悬空 id 不会报错，表现是「这些设备在报修页
+        // 永远不出现」—— 而那正是加这个字段要解决的问题，等于白做。
+        if (ownerId != null) {
+            User owner = userMapper.selectById(ownerId);
+            if (owner == null) {
+                throw new BusinessException(ErrorCode.PARAM_INVALID, "负责人不存在，请重新选择");
+            }
+        }
+
+        List<BatchResultVO.Failure> failures = new ArrayList<>();
+        int succeeded = 0;
+        for (Long id : ids) {
+            try {
+                requireDevice(id);
+                // 只 set 负责人：不复用单条 update（整体替换语义会把品牌/型号/存放位置一并清空）。
+                // ownerId 为 null 时这里写出的是 SQL NULL —— 显式 set 不受 not_null 更新策略影响。
+                deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
+                        .eq(Device::getId, id)
+                        .set(Device::getOwnerId, ownerId));
+                succeeded++;
+            } catch (BusinessException e) {
+                failures.add(failureOf(id, e.getMessage()));
+            } catch (RuntimeException e) {
+                failures.add(failureOf(id, "处理失败：" + e.getMessage()));
+                log.warn("批量设置负责人时设备 id={} 处理失败", id, e);
+            }
+        }
+        log.info("批量设置设备负责人 → {}：共 {} 条，成功 {}，失败 {}",
+                ownerId, ids.size(), succeeded, failures.size());
         return BatchResultVO.of(ids.size(), succeeded, failures);
     }
 

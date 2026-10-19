@@ -7,8 +7,10 @@ import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.entity.DeviceCategory;
+import com.enterprise.ticket.module.device.entity.DeviceModel;
 import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.order.entity.Order;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
@@ -47,17 +49,20 @@ public class OrderReferenceNames {
     private final UserMapper userMapper;
     private final DeviceMapper deviceMapper;
     private final DeviceCategoryMapper categoryMapper;
+    private final DeviceModelMapper deviceModelMapper;
     private final DepartmentMapper departmentMapper;
     private final ApplyTypeMapper applyTypeMapper;
 
     public OrderReferenceNames(UserMapper userMapper,
                                DeviceMapper deviceMapper,
                                DeviceCategoryMapper categoryMapper,
+                               DeviceModelMapper deviceModelMapper,
                                DepartmentMapper departmentMapper,
                                ApplyTypeMapper applyTypeMapper) {
         this.userMapper = userMapper;
         this.deviceMapper = deviceMapper;
         this.categoryMapper = categoryMapper;
+        this.deviceModelMapper = deviceModelMapper;
         this.departmentMapper = departmentMapper;
         this.applyTypeMapper = applyTypeMapper;
     }
@@ -168,6 +173,19 @@ public class OrderReferenceNames {
                         .select(DeviceCategory::getId, DeviceCategory::getCategoryName))
                 .stream()
                 .collect(Collectors.toMap(DeviceCategory::getId, DeviceCategory::getCategoryName, (a, b) -> a));
+    }
+
+    /**
+     * 设备型号 id → 名称（V56 / R3）。
+     *
+     * <p>与 {@link #categoryNameMap()} 同口径：字典总量是百级，全量取一次比拼 IN 更简单，
+     * 且列表页要显示「借的是哪一类 / 哪个型号」（V56 起交付前没有设备，只能靠这两项辨识）。
+     */
+    public Map<Long, String> modelNameMap() {
+        return deviceModelMapper.selectList(Wrappers.<DeviceModel>lambdaQuery()
+                        .select(DeviceModel::getId, DeviceModel::getModelName))
+                .stream()
+                .collect(Collectors.toMap(DeviceModel::getId, DeviceModel::getModelName, (a, b) -> a));
     }
 
     // ------------------------------------------------------------------

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { deviceApi, deviceFaultApi } from '@/api/device'
+import { deviceCategoryApi, deviceFaultApi, deviceModelApi } from '@/api/device'
 import { uploadAttachments } from '@/api/attachment'
 import { applyTypeApi } from '@/api/applyType'
 import { orderApi } from '@/api/order'
@@ -14,54 +14,78 @@ import {
   shouldShowBorrowPath,
   type BorrowFlowPreview
 } from '@/types/department'
-import { DEFAULT_USE_TYPE, type DeviceOption, type DivisionPrefill } from '@/types/order'
-import type { DeviceFaultSelectable, DeviceLockInfo } from '@/types/device'
-import {
-  formatCountdown,
-  remainingLockSeconds,
-  todayString,
-  validateOrderForm,
-  type OrderFormState
-} from '@/utils/orderForm'
+import { DEFAULT_USE_TYPE, type DivisionPrefill } from '@/types/order'
+import type { DeviceCategory, DeviceModelOption, FaultDeviceLookup } from '@/types/device'
+import { todayString, validateOrderForm, type OrderFormState } from '@/utils/orderForm'
 
 /**
- * 提交申请（，需求方  的两种工单类型 +  故障报修）
+ * 提交申请（两种内置工单类型 + 自定义申请 + 故障报修）
  *
  * 两步结构：
  * 1. 步骤一：卡片式选择申请类型，由 APPLY_TYPES 数组驱动（新增类型 = 加一项）；
- * 2. 步骤二：进入对应表单，顶部「← 返回重选类型」回到步骤一（若借表单已临时锁设备则释放锁）。
+ * 2. 步骤二：进入对应表单，顶部「← 返回重选类型」回到步骤一。
  *
- * <h2>：借用表单三项化</h2>
- * 需求文档「三·」要求员工只填三项。落地后：
+ * <h2>V56（第 9 项）：借用表单从「挑一台设备」改为「挑一个类别」</h2>
+ * <p>需求方拍定：<b>借用单只声明「一级分类 + 二级分类 + 型号」，不绑定具体资产</b> ——
+ * 具体哪一台由 IT 在交付时扫码绑定。连带产生三处结构性变化：
  * <ul>
- *   <li><b>步骤一的借用卡片由两张合并为一张</b> —— 原「短期借用 / 长期领用」两张卡本质是
- *       「先选借用类型」，而借用类型已固定为短期借用（{@link DEFAULT_USE_TYPE}）。
- *       留着两张卡指向同一个表单，用户只会问「这两个有什么区别」。</li>
- *   <li><b>表单只剩「借什么设备 / 还的日期 / 用途」+ 附件</b>（附件按需求方决策 3 保留为可选）。</li>
- *   <li><b>归还日期由条件必填升级为常显必填</b> —— 原来的 `v-if="needReturnDate"` 与
- *       「长期领用 → 归还方式」提示一并删除。</li>
+ *   <li><b>临时锁整段删除</b>：{@code lockInfo} / 倒计时 / {@code deviceApi.lock} /
+ *       「设备临时锁已失效」判据全部移除。后端连 {@code locked_by/locked_at/lock_token}
+ *       三列与 {@code DeviceLockReleaseJob} 一起删了，前端留一套算不出东西的倒计时只会误导人；</li>
+ *   <li><b>设备下拉换成三级联动</b>：一级分类（必填）→ 二级分类（选填）→ 型号（选填）；</li>
+ *   <li><b>扫码预选从 deviceId 改为分类</b>：扫到可用设备时只能带「这类设备」进来，
+ *       带不了「这一台」—— 传 deviceId 后端已不接收，等于按钮点了没反应。</li>
  * </ul>
- * 设备临时锁逻辑与审批路径预览（M1）**一字未改** ——
- * 它们与字段多少无关，改表单不该动流程。
  *
- * 故障报修表单：设备从 deviceFaultApi.selectableDevices() 下拉（label 直显），
- * 选中项若带 orderId 则提交时带上；故障描述 + 发生时间（不得晚于当前时间），提交 deviceFaultApi.report。
+ * <p>审批路径预览（M1）仍在，但入参同步换成 {@code primaryCategoryId}：
+ * 预览与提交必须用同一口径算条件分支，否则会画出与实际不一致的路径。
+ * 预览失败依旧不阻断提交（它是提示，不是闸门）。
  *
- *  追加附件：借用提交时随单上传「申请附件」，故障报修时随单上传「故障照片」。
- * 附件需绑定业务记录 id，而 id 只能等主操作成功后才返回，故先在本地挑选、成功后统一上传；
- * 附件为可选，上传失败不阻断主流程（仅提示成功数量）。
+ * <p>故障报修表单（V57 / 第 10 项）：两种填报方式，二选一 ——
+ * <ul>
+ *   <li><b>我名下的设备</b>：服务端返回「我负责的 ∪ 我正在用的」，选中项已带
+ *       {@code reportable / reason / orderId}，前端不自己判定能不能报；</li>
+ *   <li><b>公共设备 / 扫码</b>：按资产编号查（扫码枪直接扫进输入框），
+ *       查不到返回 `found=false` 而不是报错 —— 输错编号是这个入口的日常动作。</li>
+ * </ul>
+ * 两种模式共用同一套「可报修」判定（后端 {@code toLookup} 是唯一口径），
+ * 因此不会出现「下拉里能选、提交却被拒」。附件（申请附件 / 故障照片）为可选，
+ * 上传失败不阻断主流程。
  */
 
 const { isMobile } = useResponsive()
 const route = useRoute()
 const router = useRouter()
 
+/**
+ * 申请类型（**入口形态**，不是借用类型）。
+ *
+ * <p>内置只有两项：借用设备 / 故障报修。原来的 `SHORT_TERM` / `LONG_TERM`
+ * 两个值代表「借用类型」，已随选择器一起退役 —— 现在借用一律短期，入口不区分。
+ */
+type ApplyType = 'BORROW' | 'FAULT_REPORT'
+
+interface ApplyTypeItem {
+  value: ApplyType
+  title: string
+  desc: string
+}
+
+/** 由该数组驱动步骤一卡片，扩展新申请类型只需追加一项 */
+const APPLY_TYPES: ApplyTypeItem[] = [
+  { value: 'BORROW', title: '借用设备', desc: '选设备类别与型号、填归还日期即可提交' },
+  { value: 'FAULT_REPORT', title: '故障报修', desc: '设备报修，登记故障记录' }
+]
+
+const step = ref<'select' | 'form'>('select')
+const applyType = ref<ApplyType | null>(null)
+
 // ------------------------------------------------------------------
 // 自定义申请类型
 //
-// 与上面两种内置类型并列但<b>数据来源不同</b>：内置类型写死在 APPLY_TYPES 数组里，
+// 与两种内置类型并列但<b>数据来源不同</b>：内置类型写死在 APPLY_TYPES 数组里，
 // 自定义类型由管理员在「申请类型管理」中配置，且会按当前用户的提交权限过滤 ——
-// 因此必须由服务端下发（前端过滤等于没过滤，直调接口即可绕过，）。
+// 因此必须由服务端下发（前端过滤等于没过滤，直调接口即可绕过）。
 // 没有可提交的自定义类型时整块不渲染，避免出现一个永远点不出东西的空壳区域。
 // ------------------------------------------------------------------
 
@@ -80,48 +104,23 @@ function selectCustomType(option: ApplyTypeOption): void {
   void router.push(`/order/apply/custom/${option.id}`)
 }
 
-// ------------------------------------------------------------------
-// 两步状态
-// ------------------------------------------------------------------
-
-/**
- * 申请类型（**入口形态**，不是借用类型）。
- *
- *  起内置只有两项：借用设备 / 故障报修。原来的 `SHORT_TERM` / `LONG_TERM`
- * 两个值代表「借用类型」，已随选择器一起退役 —— 现在借用一律短期，入口不区分。
- */
-type ApplyType = 'BORROW' | 'FAULT_REPORT'
-
-interface ApplyTypeItem {
-  value: ApplyType
-  title: string
-  desc: string
-}
-
-/** 由该数组驱动步骤一卡片，扩展新申请类型只需追加一项 */
-const APPLY_TYPES: ApplyTypeItem[] = [
-  { value: 'BORROW', title: '借用设备', desc: '选设备、填归还日期即可提交' },
-  { value: 'FAULT_REPORT', title: '故障报修', desc: '设备报修，登记故障记录' }
-]
-
-const step = ref<'select' | 'form'>('select')
-const applyType = ref<ApplyType | null>(null)
-
-/** 选中申请类型：借用类拉一次路径预览；故障类拉取可选设备 */
+/** 选中申请类型：借用类拉一次路径预览；故障类按当前填报方式拉设备 */
 function selectType(type: ApplyType): void {
   applyType.value = type
   step.value = 'form'
   if (type === 'FAULT_REPORT') {
-    void loadFaultDevices()
+    // 只加载当前模式需要的数据：另一个模式在切换时按需加载（省一次无用请求）
+    if (faultMode.value === 'MINE') {
+      void loadFaultOwnedDevices()
+    }
   } else {
-    // 进入借用表单即拉一次路径预览（此时还没有设备，仍能展示不依赖设备的节点）
+    // 进入借用表单即拉一次路径预览（此时还没选类别，仍能展示不依赖类别的节点）
     void refreshBorrowPreview()
   }
 }
 
-/** 返回重选类型：若借表单持有临时锁，先释放，避免占用他人可选设备 */
+/** 返回重选类型 */
 function backToSelect(): void {
-  void releaseLock()
   applyType.value = null
   step.value = 'select'
 }
@@ -203,11 +202,12 @@ function handleDivisionChange(): void {
 }
 
 // ------------------------------------------------------------------
-// 本地草稿缓存（需求方三波·第二波·；「前端增加本地草稿缓存，浏览器刷新也保留草稿」）
+// 本地草稿缓存（需求方三波·第二波：「前端增加本地草稿缓存，浏览器刷新也保留草稿」）
 //
-// 只缓存「用户填写的文本类字段」：设备 ID 不缓存 —— 临时锁（默认 5 分钟）早已过期，
-// 恢复一个锁不存在的设备 ID 会让用户以为可以直接提交，提交时又报错，体验反而更差。
-// 附件（File 对象）无法序列化，同样不缓存。草稿带 7 天有效期，过期自动丢弃。
+// 只缓存「用户填写的文本类字段」：类别 / 型号 id 不缓存 —— 分类与型号字典
+// 都可能被管理员停用或改造，恢复出一个已失效的 id 会让用户以为已经填好，
+// 提交时又报「所选分类不存在」，体验反而更差。附件（File 对象）无法序列化，同样不缓存。
+// 草稿带 7 天有效期，过期自动丢弃。
 // ------------------------------------------------------------------
 
 const DRAFT_KEY = 'ticket:apply-draft'
@@ -222,9 +222,9 @@ interface ApplyDraft {
 }
 
 /**
- * 收口老草稿里的申请类型（ 迁移）。
+ * 收口老草稿里的申请类型。
  *
- *  之前草稿里存的是 `SHORT_TERM` / `LONG_TERM`（两张借用卡）。若原样恢复，
+ * <p>早期草稿里存的是 `SHORT_TERM` / `LONG_TERM`（两张借用卡）。若原样恢复，
  * `step` 会被置为 `'form'`，而模板里没有任何一个 `applyType === ...` 分支能命中 ——
  * **页面会渲染成一片空白**（不报错，最难查）。因此这里统一映射到 `BORROW`。
  */
@@ -292,7 +292,7 @@ function clearDraft(): void {
   }
 }
 
-/** 恢复草稿（设备需重新选择；临时锁不会恢复） */
+/** 恢复草稿（类别需重新选择） */
 function restoreDraft(): void {
   let raw: string | null = null
   try {
@@ -325,179 +325,110 @@ function restoreDraft(): void {
   const restoredType = normalizeDraftApplyType(draft.applyType)
   applyType.value = restoredType
   step.value = draft.step === 'form' && restoredType !== null ? 'form' : 'select'
-  if (step.value === 'form' && restoredType === 'FAULT_REPORT') {
-    void loadFaultDevices()
+  if (step.value === 'form' && restoredType === 'FAULT_REPORT' && faultMode.value === 'MINE') {
+    void loadFaultOwnedDevices()
   }
-  ElMessage.info('已恢复上次未提交的草稿（设备需重新选择）')
+  ElMessage.info('已恢复上次未提交的草稿（设备类别需重新选择）')
 }
 
 // ------------------------------------------------------------------
-// 借用表单（ / ）； 起为「借什么设备 / 还的日期 / 用途」三项
+// 借用表单（V56：借什么类别 / 还的日期 / 用途）
 // ------------------------------------------------------------------
 
-const loadingDevices = ref(false)
 const submitting = ref(false)
-const deviceOptions = ref<DeviceOption[]>([])
 
-/** 随单提交的申请附件（本地待上传，） */
+/** 随单提交的申请附件（本地待上传） */
 const applyFiles = ref<File[]>([])
 
-const lockInfo = ref<DeviceLockInfo | null>(null)
-const lockRemaining = ref(0)
-let lockTimer: ReturnType<typeof setInterval> | null = null
-
 const form = reactive<OrderFormState>({
-  deviceId: null,
+  primaryCategoryId: null,
+  secondaryCategoryId: null,
+  modelId: null,
   reason: '',
   expectedReturnDate: null
 })
 
-const lockText = computed(() => (lockInfo.value ? formatCountdown(lockRemaining.value) : ''))
-
 const formErrors = computed(() => validateOrderForm(form))
-const canSubmit = computed(() => formErrors.value.length === 0 && lockInfo.value != null && !submitting.value)
+const canSubmit = computed(() => formErrors.value.length === 0 && !submitting.value)
 
-onMounted(async () => {
-  await loadDevices()
-  // 自定义申请类型：与服务端权限过滤后的可用类型
-  await loadCustomTypes()
-  // 当前所在分部预填（V54）：两种内置表单共用，进入页面就取一次
-  await loadDivisionPrefill()
-  // 恢复上次未提交的草稿（在设备列表就绪后，避免恢复出的设备项无法匹配）
-  restoreDraft()
-  // 扫码借还跳转带来的 ?deviceId=（P1）：放在草稿恢复**之后** ——
-  // URL 是本次的明确动作，应当覆盖上次残留的草稿选择。
-  await applyScanPreselect()
-  // 草稿恢复后表单可能已就绪 → 拉一次借用路径预览（M1）
-  void refreshBorrowPreview()
+// ------------------------------------------------------------------
+// 设备类别 / 型号字典（V56）
+//
+// 三个下拉的数据来源刻意不同，别合并：
+// - 一级分类：`/device-categories` 分类树（只取根节点）；
+// - 二级分类：从已加载的树里按所选一级过滤（**不再请求接口** —— 树是一次性全量下发的，
+//   再请求一遍只会出现「两次响应不一致」这类难查问题）；
+// - 型号：`/device-models/options`（仅启用型号）。字典**没有分类维度**
+//   （`device_model` 只有 model_name / brand），所以它不随分类过滤 ——
+//   选错型号的风险由交付时的三层校验（分类 → 型号 → 空闲）兜住。
+// ------------------------------------------------------------------
+
+const categoryTree = ref<DeviceCategory[]>([])
+const categoryLoading = ref(false)
+const modelOptions = ref<DeviceModelOption[]>([])
+const modelLoading = ref(false)
+
+/** 只保留启用的分类由服务端保证（树接口不下发停用项），前端不再二次过滤 */
+const primaryOptions = computed(() => categoryTree.value)
+
+/** 当前所选一级分类下的二级分类 */
+const secondaryOptions = computed(() => {
+  if (form.primaryCategoryId == null) {
+    return []
+  }
+  return categoryTree.value.find((item) => item.id === form.primaryCategoryId)?.children ?? []
 })
 
-onBeforeUnmount(() => {
-  stopLockTimer()
-  // 离开页面主动释放；失败也无妨，服务端 5 分钟超时释放兜底
-  void releaseLock()
+const secondaryPlaceholder = computed(() => {
+  if (form.primaryCategoryId == null) {
+    return '请先选择一级分类'
+  }
+  return secondaryOptions.value.length === 0
+    ? '该类别下没有二级分类，可跳过'
+    : '选填，不选表示该类别下任意子类'
 })
 
-async function loadDevices(): Promise<void> {
-  loadingDevices.value = true
+async function loadCategories(): Promise<void> {
+  categoryLoading.value = true
   try {
-    deviceOptions.value = await orderApi.selectableDevices()
+    categoryTree.value = await deviceCategoryApi.tree()
   } catch {
-    deviceOptions.value = []
+    categoryTree.value = []
   } finally {
-    loadingDevices.value = false
+    categoryLoading.value = false
   }
 }
 
-function deviceLabel(device: DeviceOption): string {
-  const category = device.secondaryCategoryName || device.primaryCategoryName || ''
-  return `${device.deviceName}（${device.assetNo}）${category ? ' · ' + category : ''}`
+async function loadModels(): Promise<void> {
+  modelLoading.value = true
+  try {
+    modelOptions.value = await deviceModelApi.options()
+  } catch {
+    modelOptions.value = []
+  } finally {
+    modelLoading.value = false
+  }
 }
 
 /**
- * 扫码借还跳转带来的 ?deviceId=（P1 扫码借还）：自动进入借用表单并选中该设备。
+ * 一级分类变化：清空二级与型号。
  *
- * <h2>为什么必须连「进第二步」一起做</h2>
- * <p>申请页是两步式的（先选申请类型，再填表单），设备选择器只在第二步渲染。
- * 如果只把 deviceId 填进（看不见的）第二步表单里，用户扫完码看到的仍然是
- * 「请选择申请类型」—— 会以为扫码没生效，然后又自己选一遍。
- * 扫码的意图本来就非常明确：<b>就是要借这一台</b>，所以直接替他选好类型。
- *
- * <h2>为什么先查一遍可申请列表</h2>
- * <p>列表本身就是服务端的「可申请」口径（AVAILABLE，或临时锁已超时可直接接管）。
- * 不在列表里说明它已被借走 / 维修中 / 正被他人锁定，此时若仍然加锁，
- * 只会拿到一个必然失败的锁，用户还得自己猜「为什么扫了却没反应」。
+ * <p>必须清 —— 旧二级可能不属于新一级（服务端会拒绝，但用户看到的是一句
+ * 提交后的报错，而不是「我换了类别，下面的选项跟着变了」）。
+ * 型号一并清空：它是跨类别的全局字典，留着会让人以为「型号已经选好了」。
  */
-async function applyScanPreselect(): Promise<void> {
-  const raw = route.query.deviceId
-  if (typeof raw !== 'string' || !raw) {
-    return
-  }
-  const deviceId = Number(raw)
-  if (!Number.isFinite(deviceId)) {
-    return
-  }
-  if (!deviceOptions.value.some((device) => device.id === deviceId)) {
-    ElMessage.warning('该设备当前不可申请，请重新选择')
-    return
-  }
-  selectType('BORROW')
-  // 等第二步的表单渲染出来再选中：el-select 的选项依赖已加载的 deviceOptions，
-  // 而设备选择器在那个分支里，未渲染时直接赋值不会触发选中态刷新。
-  await nextTick()
-  await handleDeviceChange(deviceId)
-}
-
-/** 选择设备：释放旧锁 → 加新锁 */
-async function handleDeviceChange(nextId: number | null): Promise<void> {
-  if (lockInfo.value && lockInfo.value.deviceId === nextId) {
-    return
-  }
-  await releaseLock()
-  form.deviceId = nextId
-  // 设备决定 borrow.deviceCategoryId，会影响条件分支走向 → 锁变更后刷新路径预览
+function handlePrimaryChange(): void {
+  form.secondaryCategoryId = null
+  form.modelId = null
   void refreshBorrowPreview()
-  if (nextId == null) {
-    return
-  }
-  try {
-    const locked = await deviceApi.lock(nextId)
-    lockInfo.value = locked
-    startLockTimer()
-    ElMessage.success(`设备已临时锁定，请在 ${locked.timeoutMinutes} 分钟内提交申请`)
-  } catch {
-    // DEVICE_UNAVAILABLE：已被他人锁定；错误提示由请求层统一处理
-    form.deviceId = null
-    lockInfo.value = null
-    await loadDevices()
-    void refreshBorrowPreview()
-  }
 }
 
-function startLockTimer(): void {
-  stopLockTimer()
-  updateRemaining()
-  lockTimer = setInterval(updateRemaining, 1000)
-}
-
-function updateRemaining(): void {
-  if (!lockInfo.value) {
-    lockRemaining.value = 0
-    return
-  }
-  lockRemaining.value = remainingLockSeconds(lockInfo.value.expiresAt)
-  if (lockRemaining.value <= 0) {
-    stopLockTimer()
-    lockInfo.value = null
-    form.deviceId = null
-    ElMessage.warning('设备临时锁已超时，请重新选择设备')
-    void loadDevices()
-  }
-}
-
-function stopLockTimer(): void {
-  if (lockTimer !== null) {
-    clearInterval(lockTimer)
-    lockTimer = null
-  }
-}
-
-async function releaseLock(): Promise<void> {
-  const current = lockInfo.value
-  lockInfo.value = null
-  lockRemaining.value = 0
-  if (!current) {
-    return
-  }
-  try {
-    await deviceApi.unlock(current.deviceId, current.lockToken)
-  } catch {
-    // 幂等：锁可能已被提交或超时释放，静默忽略
-  }
+function handleSecondaryChange(): void {
+  void refreshBorrowPreview()
 }
 
 // ------------------------------------------------------------------
-// 借用审批路径预览（ / M1）
+// 借用审批路径预览（M1）
 //
 // 接入自定义流程后，借用单的审批路径不再固定：
 // 分组若绑定了流程模板，本单会按流程流转（条件分支会改变走向），
@@ -522,14 +453,18 @@ const borrowSkippedNodes = computed(() => borrowPreview.value?.skippedNodes ?? [
  * 借用路径预览参数指纹。
  *
  * 只在「会影响路径求值的输入」变化时才重新请求：
- * 还的日期（决定 borrow.expectedDays）、设备（决定设备分类）、用途（文本条件可能用到）。
+ * 还的日期（决定 borrow.expectedDays）、类别（决定 borrow.deviceCategoryId）、
+ * 用途（文本条件可能用到）。
  * 用指纹而非 watch 多个 ref，是为了避免「同一次用户操作触发多次请求」。
+ *
+ * <p>V56：指纹里的 deviceId 换成 primaryCategoryId —— 预览与提交的入参必须同一口径，
+ * 否则「预览画三级、提交走四级」这类漂移会重新出现。
  */
 function previewSignature(): string {
   if (applyType.value !== 'BORROW') {
     return ''
   }
-  return [form.expectedReturnDate ?? '', form.deviceId ?? '', form.reason.trim()].join('|')
+  return [form.expectedReturnDate ?? '', form.primaryCategoryId ?? '', form.reason.trim()].join('|')
 }
 
 async function refreshBorrowPreview(): Promise<void> {
@@ -544,7 +479,7 @@ async function refreshBorrowPreview(): Promise<void> {
     const preview = await orderApi.borrowFlowPreview({
       useType: DEFAULT_USE_TYPE,
       expectedReturnDate: form.expectedReturnDate,
-      deviceId: form.deviceId
+      primaryCategoryId: form.primaryCategoryId
     })
     if (seq !== borrowPreviewSeq) {
       return
@@ -573,21 +508,31 @@ function disabledReturnDate(date: Date): boolean {
   return date.getTime() < new Date(`${todayString()}T00:00:00`).getTime()
 }
 
+// ------------------------------------------------------------------
+// 「锁」相关代码已整体删除（V56）
+//
+// 原来这里有一整套：lockInfo / lockRemaining / lockTimer / startLockTimer /
+// updateRemaining / stopLockTimer / releaseLock，以及「没锁就不能提交」的判据
+// （canSubmit 曾要求 lockInfo != null）。删掉的原因不是前端想简化，而是
+// 这套东西已经没有对端了：后端 `DeviceService#lock/unlock/forceUnlock/
+// releaseExpiredLocks`、`DeviceLockReleaseJob`、`device.locked_*` 三列、
+// 以及 `POST /api/devices/{id}/lock` 三个端点全部移除，调用只会 404。
+// 顺带的好处是：员工提交时不再有「5 分钟内必须填完」这种无谓倒计时压力。
+// ------------------------------------------------------------------
+
 async function handleSubmit(): Promise<void> {
   const errors = validateOrderForm(form)
   if (errors.length > 0) {
     ElMessage.warning(errors[0])
     return
   }
-  if (!lockInfo.value) {
-    ElMessage.warning('设备临时锁已失效，请重新选择设备')
-    return
-  }
   submitting.value = true
   try {
     const orderId = await orderApi.create({
-      deviceId: form.deviceId as number,
-      lockToken: lockInfo.value.lockToken,
+      // V56：只声明「借哪一类 + 什么型号」，具体资产由 IT 交付扫码绑定
+      primaryCategoryId: form.primaryCategoryId as number,
+      secondaryCategoryId: form.secondaryCategoryId ?? null,
+      modelId: form.modelId ?? null,
       // 借用类型不再由用户选择：一律短期借用，显式回传便于日志与回归断言
       useType: DEFAULT_USE_TYPE,
       // 用途（原「借用原因」）选填：空白一律提交 null，避免落库一串空格
@@ -608,27 +553,25 @@ async function handleSubmit(): Promise<void> {
         : '申请已提交，可在「我的工单」查看审批进度'
     )
     resetFormAfterSubmit()
-    await loadDevices()
   } catch {
-    // 提交失败（锁失效 / 设备被抢占 / 无部门等）由请求层给出明确提示；
-    // 设备可能已不可用，刷新可选设备列表
-    void loadDevices()
+    // 提交失败（分类被停用 / 无部门等）由请求层给出明确提示；
+    // 分类可能已变化，刷新一次分类树
+    void loadCategories()
   } finally {
     submitting.value = false
   }
 }
 
 function resetFormAfterSubmit(): void {
-  stopLockTimer()
-  lockInfo.value = null
-  lockRemaining.value = 0
-  form.deviceId = null
+  form.primaryCategoryId = null
+  form.secondaryCategoryId = null
+  form.modelId = null
   form.reason = ''
   form.expectedReturnDate = null
   applyFiles.value = []
   // 已成功提交，草稿使命完成，清除避免下次进入又恢复成旧内容
   clearDraft()
-  // 表单已清空，路径预览随之失效（下一次选择设备时会重新拉取）
+  // 表单已清空，路径预览随之失效（下一次选择类别时会重新拉取）
   borrowPreview.value = null
   borrowPreviewSeq += 1
   // 分部回到默认：清掉「动过」标记并重新预填 —— 预填本身取决于
@@ -638,19 +581,88 @@ function resetFormAfterSubmit(): void {
 }
 
 function handleReset(): void {
-  void releaseLock()
   resetFormAfterSubmit()
 }
 
+/**
+ * 扫码借还跳转带来的 ?primaryCategoryId=（P1 扫码借还 / V56 调整）。
+ *
+ * <h2>参数为什么变了</h2>
+ * <p>V56 之前扫码页传的是 `?deviceId=`「就要这一台」。现在借用单不绑具体资产，
+ * 只能带「扫到的这台属于哪一类」进来，所以参数改为 primaryCategoryId /
+ * secondaryCategoryId / modelId 三个。
+ *
+ * <h2>为什么要校验二级分类归属</h2>
+ * <p>URL 是可以手改的（也可能是上一版前端留下的旧链接）。若把不属于所传一级分类的
+ * 二级 id 直接塞进表单，用户看到的是一个「选项里根本没有」的值 —— 要么静默错乱，
+ * 要么提交后才报错。这里在可选项里找不到就丢弃它。
+ */
+async function applyScanPreselect(): Promise<void> {
+  const rawPrimary = route.query.primaryCategoryId
+  if (typeof rawPrimary !== 'string' || !rawPrimary) {
+    return
+  }
+  const primaryCategoryId = Number(rawPrimary)
+  if (!Number.isFinite(primaryCategoryId)) {
+    return
+  }
+  if (!primaryOptions.value.some((item) => item.id === primaryCategoryId)) {
+    ElMessage.warning('扫码带来的设备类别已不可用，请手动选择')
+    return
+  }
+  selectType('BORROW')
+  // 等第二步表单渲染出来再赋值：下拉的选项依赖已加载的分类树，
+  // 未渲染时直接赋值不会触发选中态刷新。
+  await nextTick()
+  form.primaryCategoryId = primaryCategoryId
+
+  const rawSecondary = route.query.secondaryCategoryId
+  const secondaryCategoryId = typeof rawSecondary === 'string' ? Number(rawSecondary) : NaN
+  form.secondaryCategoryId =
+    Number.isFinite(secondaryCategoryId) &&
+    secondaryOptions.value.some((item) => item.id === secondaryCategoryId)
+      ? secondaryCategoryId
+      : null
+
+  const rawModel = route.query.modelId
+  const modelId = typeof rawModel === 'string' ? Number(rawModel) : NaN
+  form.modelId =
+    Number.isFinite(modelId) && modelOptions.value.some((item) => item.id === modelId) ? modelId : null
+
+  void refreshBorrowPreview()
+}
+
 // ------------------------------------------------------------------
-// 故障报修表单（，第二条上报路径：台账 / 工单内统一入口）
+// 故障报修表单（第二种填报模式并存的统一入口，V57 / 第 10 项）
+//
+// 两种模式看着不同，要回答的问题完全一样：这台设备是哪台、能不能报、
+// 报修时绑定哪张工单。判定一律由服务端给（reportable / reason / orderId），
+// 前端**不做二次判定** —— 两边各判一次，迟早出现「能选但提交被拒」。
 // ------------------------------------------------------------------
 
-const faultLoadingDevices = ref(false)
+/**
+ * 填报方式。
+ *
+ * - MINE ：「我名下的设备」= 我负责的（owner_id=我）∪ 我正在用的（使用中借用单）
+ *          —— 只查负责人会让普通员工看到一个空列表（资产负责人通常是 IT）；
+ * - ASSET：公共设备，按资产编号查（扫码枪扫进输入框），对应「会议室打印机」
+ *          这类没有负责人的设备。
+ */
+type FaultMode = 'MINE' | 'ASSET'
+
+const faultMode = ref<FaultMode>('MINE')
 const faultSubmitting = ref(false)
-const faultDeviceOptions = ref<DeviceFaultSelectable[]>([])
 
-/** 随单提交的故障照片（本地待上传，，仅图片） */
+/** 模式一：我名下的设备 */
+const faultOwnedDevices = ref<FaultDeviceLookup[]>([])
+const faultOwnedLoading = ref(false)
+
+/** 模式二：按资产编号查到的结果（null = 还没查 / 查询失败） */
+const faultAssetNo = ref('')
+const faultLookupResult = ref<FaultDeviceLookup | null>(null)
+const faultLookupLoading = ref(false)
+
+/** 随单提交的故障照片（本地待上传，仅图片） */
 const faultFiles = ref<File[]>([])
 
 const faultForm = reactive({
@@ -659,23 +671,106 @@ const faultForm = reactive({
   occurredAt: ''
 })
 
-/** 选中设备项，用于回带关联工单 */
-const selectedFaultDevice = computed(
-  () => faultDeviceOptions.value.find((device) => device.deviceId === faultForm.deviceId) ?? null
-)
-/** 关联工单只读展示：选中设备若带 orderNo 则显示，否则「无（台账直接登记）」 */
-const faultOrderText = computed(() =>
-  selectedFaultDevice.value?.orderNo ? selectedFaultDevice.value.orderNo : '无（台账直接登记）'
+const faultModeHint = computed(() =>
+  faultMode.value === 'MINE'
+    ? '我负责的资产 + 我正在借用的设备；使用中的设备会自动关联到你的借用单'
+    : '扫资产二维码或输入编号：适用于会议室打印机这类没有负责人的设备，报修后设备进入维修中'
 )
 
-async function loadFaultDevices(): Promise<void> {
-  faultLoadingDevices.value = true
+/**
+ * 当前选中的设备（两种模式收口成同一个结构）。
+ *
+ * <p>模板、提交、原因提示全部读它，而不是各自去翻 `faultOwnedDevices` 或
+ * `faultLookupResult` —— 否则「模式二查到了、提交时却还在读模式一的 deviceId」
+ * 这类错会在切换模式时凭空出现。
+ */
+const faultPicked = computed<FaultDeviceLookup | null>(() => {
+  if (faultMode.value === 'ASSET') {
+    return faultLookupResult.value
+  }
+  return faultOwnedDevices.value.find((item) => item.deviceId === faultForm.deviceId) ?? null
+})
+
+/** 选中项是否可提交（后端判定为唯一口径） */
+const faultCanSubmit = computed(
+  () => faultPicked.value?.reportable === true && faultPicked.value.deviceId != null
+)
+
+/** 关联工单只读展示：带 orderNo 说明是工单内上报，否则台账直接登记 */
+const faultOrderText = computed(() => {
+  const picked = faultPicked.value
+  if (picked == null || picked.deviceId == null) {
+    return '—'
+  }
+  return picked.orderNo ? picked.orderNo : '无（台账直接登记）'
+})
+
+/** 下拉展示文案：设备名（资产编号）· 状态 */
+function faultDeviceLabel(device: FaultDeviceLookup): string {
+  const name = device.deviceName ?? '未命名设备'
+  const asset = device.assetNo ? `（${device.assetNo}）` : ''
+  const status = device.deviceStatusLabel ? ` · ${device.deviceStatusLabel}` : ''
+  return `${name}${asset}${status}`
+}
+
+async function loadFaultOwnedDevices(): Promise<void> {
+  faultOwnedLoading.value = true
   try {
-    faultDeviceOptions.value = await deviceFaultApi.selectableDevices()
+    faultOwnedDevices.value = await deviceFaultApi.ownedDevices()
   } catch {
-    faultDeviceOptions.value = []
+    faultOwnedDevices.value = []
   } finally {
-    faultLoadingDevices.value = false
+    faultOwnedLoading.value = false
+  }
+}
+
+/**
+ * 下拉可选项：滤掉 deviceId 为空的项。
+ *
+ * <p>服务端不会下发这种数据（没查到设备时整条返回 found=false），但类型上 deviceId 可空 ——
+ * `el-option` 的 value 不接受 null。用类型守卫顺手把 deviceId 收窄成 number，
+ * 模板里就不必写 `!` 断言（断言一旦失效，是运行时才发现的下拉错乱）。
+ */
+const faultOwnedOptions = computed(() =>
+  faultOwnedDevices.value.filter(
+    (item): item is FaultDeviceLookup & { deviceId: number } => item.deviceId != null
+  )
+)
+
+/**
+ * 切换填报方式：清掉另一模式的选择。
+ *
+ * <p>必须清 —— 两个模式的「当前设备」是两套数据，留着上一个模式的选择会让
+ * 「关联工单」显示出与眼前输入框无关的工单号，用户会以为系统记错了。
+ */
+function switchFaultMode(value: string | number | boolean | undefined): void {
+  if (value !== 'MINE' && value !== 'ASSET') {
+    return
+  }
+  faultMode.value = value
+  faultForm.deviceId = null
+  faultLookupResult.value = null
+  if (value === 'MINE' && faultOwnedDevices.value.length === 0) {
+    void loadFaultOwnedDevices()
+  }
+}
+
+/** 按资产编号查询（扫码枪扫完直接触发回车） */
+async function lookupFaultAsset(): Promise<void> {
+  const assetNo = faultAssetNo.value.trim()
+  if (!assetNo) {
+    ElMessage.warning('请扫码或输入资产编号')
+    return
+  }
+  faultLookupLoading.value = true
+  try {
+    faultLookupResult.value = await deviceFaultApi.lookup(assetNo)
+  } catch {
+    // 网络 / 服务异常与「查不到这台设备」是两件事：前者由请求层统一提示，
+    // 这里只清空结果，不能伪装成 found=false 让人以为编号敲错了
+    faultLookupResult.value = null
+  } finally {
+    faultLookupLoading.value = false
   }
 }
 
@@ -685,8 +780,16 @@ function disabledFaultOccurredDate(date: Date): boolean {
 }
 
 async function submitFault(): Promise<void> {
-  if (faultForm.deviceId == null) {
-    ElMessage.warning('请选择故障设备')
+  const picked = faultPicked.value
+  if (picked == null || picked.deviceId == null) {
+    ElMessage.warning(
+      faultMode.value === 'ASSET' ? '请先扫码或输入资产编号并查询到设备' : '请选择故障设备'
+    )
+    return
+  }
+  // 「不可报修」的拦截放在前端只是省一次请求，真正的闸门在服务端
+  if (!picked.reportable) {
+    ElMessage.warning(picked.reason ?? '这台设备当前无法报修')
     return
   }
   if (!faultForm.faultDescription.trim()) {
@@ -700,9 +803,10 @@ async function submitFault(): Promise<void> {
   faultSubmitting.value = true
   try {
     const faultId = await deviceFaultApi.report({
-      deviceId: faultForm.deviceId,
-      // 选中设备若在使用中工单内（带 orderId）则带上；可用设备（台账登记）为 null
-      orderId: selectedFaultDevice.value?.orderId ?? null,
+      deviceId: picked.deviceId,
+      // 我在用这台设备时 orderId 才有值（走工单路径，设备保持使用中）；
+      // 公共设备为 null（走台账登记，设备 可用 → 维修中）
+      orderId: picked.orderId ?? null,
       faultDescription: faultForm.faultDescription.trim(),
       occurredAt: faultForm.occurredAt,
       // 报修不产生工单，分部只能落在故障记录上（V54）—— 否则「各分部报修量」没有数据源
@@ -713,15 +817,9 @@ async function submitFault(): Promise<void> {
       faultFiles.value.length > 0 && faultId != null
         ? await uploadAttachments('FAULT_PHOTO', faultId, faultFiles.value)
         : 0
-    ElMessage.success(
-      attached > 0 ? `故障已登记，并上传 ${attached} 张照片` : '故障已登记'
-    )
+    ElMessage.success(attached > 0 ? `故障已登记，并上传 ${attached} 张照片` : '故障已登记')
     // 登记成功后返回步骤一并重置故障表单，便于连续登记或切换类型
-    faultForm.deviceId = null
-    faultForm.faultDescription = ''
-    faultForm.occurredAt = ''
-    faultFiles.value = []
-    faultDeviceOptions.value = []
+    resetFaultForm()
     // 已成功登记，清除草稿
     clearDraft()
     // 分部回到默认（理由同借用表单：预填随「今天是否在出差」变化）
@@ -735,7 +833,40 @@ async function submitFault(): Promise<void> {
   }
 }
 
-// 表单与步骤变化即安排落盘（watch 仅用于持久化，不参与业务级联清理）。
+function resetFaultForm(): void {
+  faultForm.deviceId = null
+  faultForm.faultDescription = ''
+  faultForm.occurredAt = ''
+  faultFiles.value = []
+  faultAssetNo.value = ''
+  faultLookupResult.value = null
+  // 列表缓存一并清掉：下次进入报修时重新拉，才能看到刚变过状态的那台
+  faultOwnedDevices.value = []
+}
+
+// ------------------------------------------------------------------
+// 生命周期
+// ------------------------------------------------------------------
+
+onMounted(async () => {
+  // 分类树与型号字典先加载：下面 restoreDraft / applyScanPreselect 都要用选项
+  await Promise.all([loadCategories(), loadModels()])
+  // 自定义申请类型：与服务端权限过滤后的可用类型
+  await loadCustomTypes()
+  // 当前所在分部预填（V54）：两种内置表单共用，进入页面就取一次
+  await loadDivisionPrefill()
+  // 恢复上次未提交的草稿
+  restoreDraft()
+  // 扫码借还跳转带来的 ?primaryCategoryId=（P1 / V56）：放在草稿恢复**之后** ——
+  // URL 是本次的明确动作，应当覆盖上次残留的草稿内容。
+  await applyScanPreselect()
+  // 草稿恢复后表单可能已就绪 → 拉一次借用路径预览（M1）
+  void refreshBorrowPreview()
+})
+
+// 表单与步骤变化即安排落盘（watch 仅用于持久化，不参与业务级联清理；
+// 级联清空由 handlePrimaryChange 这类事件处理器负责，见约定：
+// 「级联清空不用 watch」—— watch 触发的清空会与用户操作抢时序）。
 // 必须放在 form / faultForm 声明之后：watch 在注册时即读取这两个响应式对象。
 watch([step, applyType, form, faultForm], scheduleSaveDraft, { deep: true })
 
@@ -774,16 +905,14 @@ onBeforeUnmount(() => {
       <template v-if="step === 'select'">
         <h3 class="ts-order__title">提交申请</h3>
         <p class="ts-text-secondary ts-order__desc">请选择本次申请的类型，再填写对应表单。</p>
-        <!-- ：卡片**平铺**。
+        <!-- 卡片**平铺**。
              改造前自定义申请被一个「自定义申请」分组标题单独隔开，形成「内置 / 自定义」两段式布局；
              实际使用中两者都是「提交一张单」的入口，分段只增加了扫视成本。
              现合并为同一网格，顺序约定：**内置类型在前、自定义表单类在后** ——
              内置两项是高频操作；自定义类型数量随管理员配置增长，排在后面才不会把常用入口挤下去。
              自定义卡片**不再**显示审批模式标签（V48）：需求方明确要求去掉卡片上的
              「自定义流程」字样 —— 那个词对提交人没有信息量（既没说几级、也没说谁批），
-             却多占一行视觉重量。审批路径在选定类型后的「路径预览」里会逐级列出。
-             ：内置借用卡片由「短期借用 + 长期领用」两张合并为「借用设备」一张 ——
-             借用类型不再由员工选择，两张卡指向同一个表单形态。 -->
+             却多占一行视觉重量。审批路径在选定类型后的「路径预览」里会逐级列出。 -->
         <div class="ts-apply__types">
           <div
             v-for="item in APPLY_TYPES"
@@ -820,36 +949,71 @@ onBeforeUnmount(() => {
           ← 返回重选类型
         </div>
 
-        <!-- 借用表单（ 起为三项 + 可选附件；沿用现有锁逻辑） -->
+        <!-- 借用表单（V56：借什么类别 / 还的日期 / 用途 + 可选附件） -->
         <template v-if="applyType === 'BORROW'">
           <h3 class="ts-order__title">申请借用设备</h3>
           <p class="ts-text-secondary ts-order__desc">
-            选定设备后系统会为该设备加临时锁（默认 5 分钟，），请在有效期内提交；
-            提交后设备进入审批中，审批通过由最终处理人交付。
+            说明「借哪一类设备、什么型号」即可，无需挑具体某一台；
+            审批通过后由 IT 交付时扫码录入资产编号，那时才会锁定设备。
           </p>
 
           <el-form class="ts-order__form ts-mt-16" label-width="104px" :label-position="isMobile ? 'top' : 'right'">
-            <el-form-item label="借什么设备" required>
+            <el-form-item label="设备类别" required>
               <el-select
-                :model-value="form.deviceId"
+                :model-value="form.primaryCategoryId"
                 class="ts-order__field"
-                placeholder="请选择需要借用的设备"
+                placeholder="请选择要借用的设备类别"
                 filterable
                 clearable
-                :loading="loadingDevices"
-                @change="handleDeviceChange"
+                :loading="categoryLoading"
+                @change="handlePrimaryChange"
               >
                 <el-option
-                  v-for="device in deviceOptions"
-                  :key="device.id"
-                  :label="deviceLabel(device)"
-                  :value="device.id"
+                  v-for="category in primaryOptions"
+                  :key="category.id"
+                  :label="category.categoryName"
+                  :value="category.id"
                 />
               </el-select>
-              <div v-if="lockInfo" class="ts-order__lock">
-                临时锁剩余 <strong>{{ lockText }}</strong>，超时后需重新选择设备
-              </div>
-              <div v-else class="ts-text-hint">选中设备即完成临时锁定；超时或更换设备会自动释放</div>
+              <div class="ts-text-hint">交付时这台设备的类别必须与所选类别一致</div>
+            </el-form-item>
+
+            <el-form-item label="二级分类">
+              <el-select
+                v-model="form.secondaryCategoryId"
+                class="ts-order__field"
+                :placeholder="secondaryPlaceholder"
+                filterable
+                clearable
+                :disabled="secondaryOptions.length === 0"
+                @change="handleSecondaryChange"
+              >
+                <el-option
+                  v-for="category in secondaryOptions"
+                  :key="category.id"
+                  :label="category.categoryName"
+                  :value="category.id"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="型号">
+              <el-select
+                v-model="form.modelId"
+                class="ts-order__field"
+                placeholder="选填，留空表示同类别内哪台都行"
+                filterable
+                clearable
+                :loading="modelLoading"
+              >
+                <el-option
+                  v-for="model in modelOptions"
+                  :key="model.id"
+                  :label="model.brand ? `${model.modelName}（${model.brand}）` : model.modelName"
+                  :value="model.id"
+                />
+              </el-select>
+              <div class="ts-text-hint">填了型号则交付时按型号核对；型号清单由资产管理员维护</div>
             </el-form-item>
 
             <el-form-item label="还的日期" required>
@@ -896,13 +1060,13 @@ onBeforeUnmount(() => {
               <div class="ts-text-hint">{{ divisionHint }}</div>
             </el-form-item>
 
-            <!-- ：申请附件（，随单提交，可选；需求方决策 3 保留） -->
+            <!-- 申请附件（随单提交，可选；需求方决策 3 保留） -->
             <el-form-item label="申请附件">
               <PendingAttachmentPicker v-model="applyFiles" biz-type="APPLY_ATTACHMENT" label="随申请提交的材料" />
             </el-form-item>
           </el-form>
 
-          <!--  / M1：审批路径预览（绑定流程时展示动态路径，否则不渲染） -->
+          <!-- M1：审批路径预览（绑定流程时展示动态路径，否则不渲染） -->
           <div v-if="showBorrowPath && borrowPreview" v-loading="borrowPreviewLoading" class="ts-path ts-mt-16">
             <div class="ts-path__head">
               <strong class="ts-path__title">审批路径预览</strong>
@@ -956,26 +1120,84 @@ onBeforeUnmount(() => {
         <template v-else-if="applyType === 'FAULT_REPORT'">
           <h3 class="ts-order__title">故障报修</h3>
           <p class="ts-text-secondary ts-order__desc">
-            登记设备故障时填写故障描述与发生时间；工单内设备会自动关联工单，可用设备则为台账直接登记。
+            选「我名下的设备」从你自己的设备里挑；会议室打印机这类公共设备改用「公共设备 / 扫码」按资产编号填报。
+            正在使用的设备会自动关联到你的借用单，报修后设备仍归你使用，去向由归还登记决定。
           </p>
 
           <el-form class="ts-order__form ts-mt-16" label-width="104px" :label-position="isMobile ? 'top' : 'right'">
-            <el-form-item label="故障设备" required>
+            <!-- 填报方式（V57 / 第 10 项）：两种模式二选一，判定口径统一由服务端给 -->
+            <el-form-item label="填报方式" required>
+              <el-radio-group :model-value="faultMode" @change="switchFaultMode">
+                <el-radio-button value="MINE">我名下的设备</el-radio-button>
+                <el-radio-button value="ASSET">公共设备 / 扫码</el-radio-button>
+              </el-radio-group>
+              <div class="ts-text-hint">{{ faultModeHint }}</div>
+            </el-form-item>
+
+            <!-- 模式一：我负责的 ∪ 我正在用的 -->
+            <el-form-item v-if="faultMode === 'MINE'" label="故障设备" required>
               <el-select
                 v-model="faultForm.deviceId"
                 class="ts-order__field"
                 placeholder="请选择故障设备"
                 filterable
                 clearable
-                :loading="faultLoadingDevices"
+                :loading="faultOwnedLoading"
               >
                 <el-option
-                  v-for="device in faultDeviceOptions"
+                  v-for="device in faultOwnedOptions"
                   :key="device.deviceId"
-                  :label="device.label"
+                  :label="faultDeviceLabel(device)"
                   :value="device.deviceId"
+                  :disabled="!device.reportable"
                 />
               </el-select>
+              <div v-if="!faultOwnedLoading && faultOwnedOptions.length === 0" class="ts-text-hint">
+                你名下没有可报修的设备 —— 请切换到「公共设备 / 扫码」按资产编号填报
+              </div>
+              <!-- 不可报修的原因直接展示：后端给的是「能照着做」的一句话 -->
+              <div v-else-if="faultPicked && !faultPicked.reportable" class="ts-fault__reason">
+                {{ faultPicked.reason }}
+              </div>
+            </el-form-item>
+
+            <!-- 模式二：扫码 / 输入资产编号 -->
+            <el-form-item v-else label="资产编号" required>
+              <div class="ts-fault__lookup">
+                <el-input
+                  v-model="faultAssetNo"
+                  placeholder="扫描资产二维码，或直接输入编号后回车"
+                  clearable
+                  @keyup.enter="lookupFaultAsset"
+                />
+                <el-button type="primary" :loading="faultLookupLoading" @click="lookupFaultAsset">
+                  查询
+                </el-button>
+              </div>
+              <div
+                v-if="faultLookupResult"
+                class="ts-fault__result"
+                :class="{ 'is-blocked': !faultLookupResult.reportable }"
+              >
+                <template v-if="faultLookupResult.found">
+                  <div class="ts-fault__result-title">
+                    <span>{{ faultLookupResult.deviceName }}（{{ faultLookupResult.assetNo }}）</span>
+                    <el-tag size="small" effect="plain">{{ faultLookupResult.deviceStatusLabel }}</el-tag>
+                  </div>
+                  <div class="ts-text-hint">
+                    {{ faultLookupResult.primaryCategoryName || '未归类'
+                    }}<template v-if="faultLookupResult.secondaryCategoryName">
+                      / {{ faultLookupResult.secondaryCategoryName }}</template
+                    ><template v-if="faultLookupResult.orderNo">
+                      · 将关联你的工单 {{ faultLookupResult.orderNo }}</template
+                    >
+                  </div>
+                  <div v-if="!faultLookupResult.reportable" class="ts-fault__reason">
+                    {{ faultLookupResult.reason }}
+                  </div>
+                </template>
+                <div v-else class="ts-fault__reason">没找到这个资产编号，请核对后重试</div>
+              </div>
             </el-form-item>
 
             <el-form-item label="关联工单">
@@ -1027,7 +1249,7 @@ onBeforeUnmount(() => {
               />
             </el-form-item>
 
-            <!-- ：故障照片（，随登记上传，仅图片） -->
+            <!-- 故障照片（随登记上传，仅图片） -->
             <el-form-item label="故障照片">
               <PendingAttachmentPicker v-model="faultFiles" biz-type="FAULT_PHOTO" label="现场照片" />
             </el-form-item>
@@ -1035,7 +1257,14 @@ onBeforeUnmount(() => {
 
           <div class="ts-order__submit">
             <el-button @click="backToSelect">返回</el-button>
-            <el-button type="danger" :loading="faultSubmitting" @click="submitFault">提交故障登记</el-button>
+            <el-button
+              type="danger"
+              :loading="faultSubmitting"
+              :disabled="!faultCanSubmit"
+              @click="submitFault"
+            >
+              提交故障登记
+            </el-button>
           </div>
         </template>
       </template>
@@ -1064,12 +1293,6 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-.ts-order__lock {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #e6a23c;
-}
-
 .ts-order__submit {
   display: flex;
   gap: 12px;
@@ -1079,7 +1302,7 @@ onBeforeUnmount(() => {
 }
 
 /* 步骤一：类型选择卡片。
-   列宽用 auto-fill + minmax 而不是写死 3 列 —— 内置卡片只有 2 张（ 合并后），
+   列宽用 auto-fill + minmax 而不是写死 3 列 —— 内置卡片只有 2 张，
    写死 3 列会空出半行；自定义申请类型的数量由管理员配置，无法预知。
    auto-fill 让「有几张排几张、放不下自动换行」，两种情况都不会出现空洞或挤压。 */
 .ts-apply__types {
@@ -1122,9 +1345,8 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-secondary);
 }
 
-/* 自定义申请卡片（ 起与内置卡片同格平铺）：
-   「自定义申请」分组标题与其独立外边距已随平铺一并移除（`.ts-apply__group-title` /
-   `.ts-apply__types--custom` 两条死规则已删除）。
+/* 自定义申请卡片（与内置卡片同格平铺）：
+   「自定义申请」分组标题与其独立外边距已随平铺一并移除。
    这里只保留自定义卡片标题的 flex 布局 —— 它要在类型名右侧并排放审批模式标签。 */
 .ts-apply__type--custom .ts-apply__type-title {
   display: flex;
@@ -1223,7 +1445,49 @@ onBeforeUnmount(() => {
   margin-top: 10px;
 }
 
+/* 故障报修「公共设备」模式：输入框 + 查询按钮，窄屏纵向堆叠 */
+.ts-fault__lookup {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.ts-fault__result {
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border: 1px solid var(--ts-border);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+/* 不可报修：整块转为警示底色，避免「填完了才发现提交不了」 */
+.ts-fault__result.is-blocked {
+  border-color: #f5dab1;
+  background: #fdf6ec;
+}
+
+.ts-fault__result-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ts-fault__reason {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e6a23c;
+}
+
 @media (max-width: 767px) {
+  .ts-fault__lookup {
+    flex-direction: column;
+  }
+
   .ts-order__submit .el-button {
     flex: 1 1 0;
   }

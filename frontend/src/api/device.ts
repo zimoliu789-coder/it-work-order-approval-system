@@ -2,6 +2,7 @@ import { http } from '@/api/request'
 import type { BatchResult, PageResult } from '@/types/api'
 import type {
   DeviceCategory,
+  DeviceCategoryOption,
   DeviceCategoryPayload,
   DeviceFaultHandlePayload,
   DeviceFaultItem,
@@ -13,10 +14,15 @@ import type {
   DeviceImportPreview,
   DeviceImportResult,
   DeviceItem,
-  DeviceLockInfo,
+  DeviceModelItem,
+  DeviceModelOption,
+  DeviceModelPayload,
+  DeviceModelStatusCode,
+  DeviceModelSyncResult,
   DevicePayload,
   DeviceQuery,
-  DeviceStatusCode
+  DeviceStatusCode,
+  FaultDeviceLookup
 } from '@/types/device'
 
 /**
@@ -29,6 +35,18 @@ export const deviceCategoryApi = {
   /** 分类树（一级分类含 children 二级分类） */
   tree() {
     return http.get<DeviceCategory[]>('/device-categories')
+  },
+
+  /**
+   * 分类下拉选项（一级 + 二级扁平列表）。
+   *
+   * <p>**普通员工可用**（后端只要求登录）：借用单放开表单自定义后，
+   * 「设备分类 / 二级分类」是提交页的系统字段，而分类树接口挂
+   * `device:category:manage`（只有资产管理员有）。改造前提交页一直在调树接口，
+   * 403 被 catch 吞掉后下拉是空的且没有任何提示 —— 「没法提交但看不到原因」。
+   */
+  options() {
+    return http.get<DeviceCategoryOption[]>('/device-categories/options')
   },
 
   /** 新增分类：parentId 为空或 0 表示一级分类 */
@@ -111,33 +129,75 @@ export const deviceApi = {
     })
   },
 
+  /**
+   * 批量设置负责人（V57 / 第 10 项）
+   *
+   * `ownerId` 传 null = **清空负责人**（设备转为公共设备，只能扫码报修）。
+   * 只改 owner_id 一列，与分类批量操作同理，不会动品牌 / 型号等字段。
+   */
+  batchAssignOwner(ids: number[], ownerId: number | null) {
+    return http.post<BatchResult>('/devices/batch/owner', { ids, ownerId })
+  },
+
   /** 软删除设备（：记录保留，资产编号不可复用） */
   remove(id: number) {
     return http.delete<void>(`/devices/${id}`)
-  },
+  }
 
   // ------------------------------------------------------------------
-  // 临时锁
+  // 临时锁：V56（第 9 项）起整体移除
+  //
+  // 申请人不再挑选具体资产（只选分类 + 型号），设备绑定延后到 IT 交付扫码，
+  // 因此 lock / unlock / forceUnlock 三个方法与后端的对应端点一起删除。
+  // 不要试图「先锁设备再提交」—— 后端字段已不存在，调用会 404。
   // ------------------------------------------------------------------
+}
+
+/**
+ * 设备型号字典接口（V56 / R3）
+ *
+ * 权限：下拉 `options` 仅要求已登录（借用申请页要用）；其余需 `device:ledger:manage`。
+ * 没有删除接口 —— 型号被台账与历史工单引用，删除会留下悬空 model_id；
+ * 要「清理」录错的型号，正确做法是停用后新建一条。
+ */
+export const deviceModelApi = {
+  /** 管理列表（型号名 / 品牌关键字 + 状态筛选） */
+  page(query: { page?: number; size?: number; keyword?: string; status?: DeviceModelStatusCode | null } = {}) {
+    const params: Record<string, unknown> = {}
+    if (query.page != null) params.page = query.page
+    if (query.size != null) params.size = query.size
+    if (query.keyword) params.keyword = query.keyword
+    if (query.status) params.status = query.status
+    return http.get<PageResult<DeviceModelItem>>('/device-models', params)
+  },
+
+  /** 下拉选项（仅启用型号；借用表单与台账共用） */
+  options(keyword?: string) {
+    const params: Record<string, unknown> = {}
+    if (keyword) params.keyword = keyword
+    return http.get<DeviceModelOption[]>('/device-models/options', params)
+  },
+
+  create(data: DeviceModelPayload) {
+    return http.post<number>('/device-models', data)
+  },
+
+  update(id: number, data: DeviceModelPayload) {
+    return http.put<void>(`/device-models/${id}`, data)
+  },
+
+  /** 启停（停用后新增下拉不再出现，既有设备与历史工单关联不变） */
+  changeStatus(id: number, status: DeviceModelStatusCode) {
+    return http.put<void>(`/device-models/${id}/status`, { status })
+  },
 
   /**
-   * 临时锁定设备（申请页选定设备时调用）
+   * 从台账存量文本补齐字典（把 model_id 为空的行去重纳入并回填）
    *
-   * 返回 `lockToken` 与 `expiresAt`：令牌在提交申请时必须原样回传，
-   * 释放锁时也必须携带（防止旧页面释放后来属于其他用户的新锁）。
+   * 这是「型号待整理」的收敛入口，可反复执行；返回本次新建 / 回填的数量。
    */
-  lock(id: number) {
-    return http.post<DeviceLockInfo>(`/devices/${id}/lock`)
-  },
-
-  /** 释放本人持有的临时锁（切换设备 / 取消填表 / 离开页面时调用） */
-  unlock(id: number, lockToken: string) {
-    return http.post<void>(`/devices/${id}/unlock`, { lockToken })
-  },
-
-  /** 管理员强制解除临时锁（；高风险操作，后端同步落审计日志） */
-  forceUnlock(id: number) {
-    return http.post<void>(`/devices/${id}/force-unlock`)
+  syncFromLedger() {
+    return http.post<DeviceModelSyncResult>('/device-models/sync-from-ledger')
   }
 }
 
@@ -194,6 +254,27 @@ export const deviceFaultApi = {
    */
   selectableDevices() {
     return http.get<DeviceFaultSelectable[]>('/device-faults/selectable-devices')
+  },
+
+  /**
+   * 「我的设备」（V57 / 第 10 项）—— 我负责的 ∪ 我正在用的。
+   *
+   * <p>两类缺一不可：资产负责人通常是 IT，普通员工手上那台的 `owner_id` 不是他，
+   * 只查负责人会得到一个空列表，把报修入口变成摆设。
+   * 返回项已带 `reportable / reason / orderId`，前端不做二次判定。
+   */
+  ownedDevices() {
+    return http.get<FaultDeviceLookup[]>('/device-faults/owned-devices')
+  },
+
+  /**
+   * 按资产编号查一台设备（V57 / 第 10 项「公共设备」模式，扫码枪直接扫进输入框）。
+   *
+   * 查不到返回 `found = false` 而不是抛错 —— 输错编号是这个入口的日常动作，
+   * 每次都弹一个红色报错会让人以为系统坏了。
+   */
+  lookup(assetNo: string) {
+    return http.get<FaultDeviceLookup>('/device-faults/lookup', { assetNo })
   },
 
   /** 故障记录分页（仅 super_admin / admin） */

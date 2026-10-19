@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 /**
  * 设备故障上报请求
@@ -47,4 +48,16 @@ public class DeviceFaultRequest {
      * 但分部信息必须留痕 —— 「各分部报修量」与「某分部设备质量」都要靠它聚合。
      */
     private Long currentDivisionId;
+
+    /**
+     * 报修表单的**自定义字段值**（V59 / 批次 3.5「表单完全放开」）。
+     *
+     * <p>管理员可以在系统字段（设备 / 发生时间 / 描述 / 分部）之后追加任意字段，
+     * 这些值按字段 key 放在本 map 里，随故障记录一起落
+     * {@code device_fault.form_data_json}（版本指针落 {@code form_template_version_id}）。
+     *
+     * <p>可为空：改造前的调用方（台账页登记、归还时自动生成）不传这个字段，
+     * 存量记录两列皆为 NULL，语义 = 「没有自定义字段」。
+     */
+    private Map<String, Object> formData;
 }

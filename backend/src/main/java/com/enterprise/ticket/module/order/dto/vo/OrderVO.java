@@ -16,10 +16,33 @@ public class OrderVO {
 
     private String orderNo;
 
+    /** 绑定的设备 id；V56 起新单在交付前为空（申请人只挑分类/型号） */
     private Long deviceId;
 
-    /** 设备名称（格式「设备名（资产编号）」） */
+    /** 设备名称（格式「设备名（资产编号）」）；未绑定设备时为空 */
     private String deviceName;
+
+    /**
+     * 借什么（V56 / 第 9 项）：一级分类 / 二级分类 / 型号。
+     *
+     * <p>交付前 {@code deviceId} 为空，列表要能显示「借的是哪一类」，
+     * 因此这三项必须随工单一起下发 —— 否则 IT 在待交付列表里看到的是空白。
+     * 历史工单（V56 之前）这三项为空，前端回落展示设备名。
+     */
+    private Long primaryCategoryId;
+
+    private String primaryCategoryName;
+
+    private Long secondaryCategoryId;
+
+    private String secondaryCategoryName;
+
+    private Long modelId;
+
+    private String modelName;
+
+    /** 待交付且尚未绑定设备时为 true —— 前端据此提示「交付时需扫码选设备」 */
+    private boolean pendingDeviceBinding;
 
     private Long applicantId;
 

@@ -100,8 +100,36 @@ public class Order {
      */
     private String approvalFlowName;
 
-    /** 申请设备 device.id */
+    /**
+     * 绑定的设备 {@code device.id}。
+     *
+     * <p><b>V56（第 9 项）起允许为空</b>：申请人提交时只选「分类 + 型号」，不挑具体资产，
+     * 因此新单在「待审批 / 待交付」阶段本列恒为 null；IT 交付扫码通过三层校验后
+     * 才写入设备 id，并同时把工单推进到「使用中」。
+     *
+     * <p>V56 之前的历史工单本列一直有值，读代码时不要假设「有工单必有设备」——
+     * 凡是拿 {@code deviceId} 去查设备的地方都要能容忍 null（归还、详情、扫码查询等）。
+     */
     private Long deviceId;
+
+    /**
+     * 申请的一级分类 {@code device_category.id}（V56 / 第 9 项）。
+     *
+     * <p>它是「交付扫码三层校验」的第一层依据 —— 发出哪台设备必须与申请类别一致。
+     * 新单必填；V56 之前的历史单本列为空（那时直接绑设备，无需分类）。
+     */
+    private Long primaryCategoryId;
+
+    /** 申请的二级分类（可空，非空时必须归属 {@link #primaryCategoryId}） */
+    private Long secondaryCategoryId;
+
+    /**
+     * 申请的型号 {@code device_model.id}（V56 / R3，可空）。
+     *
+     * <p>型号是选填项：填了就在交付时按 {@code model_id} 比对（大小写/写法差异不影响判定），
+     * 没填则跳过型号校验 —— 对应需求「型号匹配（填了才校验）」。
+     */
+    private Long modelId;
 
     /** 申请人 user_id（取自登录态，「申请人从当前登录 Session 自动读取，只读」） */
     private Long applicantId;

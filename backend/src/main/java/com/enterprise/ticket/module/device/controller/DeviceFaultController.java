@@ -8,6 +8,7 @@ import com.enterprise.ticket.module.device.dto.DeviceFaultHandleRequest;
 import com.enterprise.ticket.module.device.dto.DeviceFaultQuery;
 import com.enterprise.ticket.module.device.dto.DeviceFaultRequest;
 import com.enterprise.ticket.module.device.dto.vo.DeviceFaultVO;
+import com.enterprise.ticket.module.device.dto.vo.FaultDeviceLookupVO;
 import com.enterprise.ticket.module.device.dto.vo.FaultDeviceOptionVO;
 import com.enterprise.ticket.module.device.service.DeviceFaultService;
 import jakarta.validation.Valid;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -76,6 +78,34 @@ public class DeviceFaultController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<FaultDeviceOptionVO>> selectableDevices() {
         return ApiResponse.success(deviceFaultService.selectableDevices());
+    }
+
+    /**
+     * 报修「我的设备」（V57 / 第 10 项模式 1）：负责人 = 当前登录用户 的设备。
+     *
+     * <p>只要求已登录：它取的是「我名下的资产」，本来就不涉及他人数据。
+     * 负责人为空的设备**不在其中**，那类设备走下面的「公共设备」查询入口。
+     *
+     * <p>测试路径：GET http://localhost:8080/api/device-faults/owned-devices
+     */
+    @GetMapping("/owned-devices")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<FaultDeviceLookupVO>> ownedDevices() {
+        return ApiResponse.success(deviceFaultService.ownedDevices());
+    }
+
+    /**
+     * 报修「公共设备」（V57 / 第 10 项模式 2）：按资产编号查询，**不校验负责人**。
+     *
+     * <p>查不到时返回 {@code found=false}（HTTP 200），**不抛 404**：
+     * 输错编号是这个入口的日常动作，每次弹红色错误只会让人以为系统坏了。
+     *
+     * <p>测试路径：GET http://localhost:8080/api/device-faults/lookup?assetNo=IT-2026-0001
+     */
+    @GetMapping("/lookup")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<FaultDeviceLookupVO> lookupByAssetNo(@RequestParam(required = false) String assetNo) {
+        return ApiResponse.success(deviceFaultService.lookupByAssetNo(assetNo));
     }
 
     /**

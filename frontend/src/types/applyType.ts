@@ -124,6 +124,16 @@ export interface BuiltInApplyConfig {
   flowDefinition?: FlowDefinition | null
   /** 条件分支可引用的字段清单（借用域字段目录） */
   fieldSchema?: FormSchema | null
+  /**
+   * 内置类型当前绑定的表单模板版本 id（V59 / D3「表单完全放开」）。
+   *
+   * <p>改造前内置类型没有表单模板，这一项为 null，面板上也没有表单编辑区。
+   */
+  formTemplateVersionId?: number | null
+  /** 已绑定表单版本的字段清单（快照：读的是绑定的那一版，不是模板最新草稿） */
+  formSchema?: FormSchema | null
+  /** 表单模板 id（改表单要走「模板改草稿 → 发布新版本」，需要它） */
+  formTemplateId?: number | null
 }
 
 /**

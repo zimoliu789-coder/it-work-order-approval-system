@@ -6,6 +6,7 @@ import com.enterprise.ticket.common.api.ApiResponse;
 import com.enterprise.ticket.common.log.AuditLog;
 import com.enterprise.ticket.common.log.RiskLevel;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeStatusRequest;
 import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.FlowPreviewRequest;
@@ -35,7 +36,7 @@ import java.util.List;
  *
  * <h2>权限分两档</h2>
  * <ul>
- *   <li><b>管理类</b>（列表 / 新建 / 修改 / 删除 / 启停）：{@code apply_type:view|manage}。
+ *   <li><b>管理类</b>（列表 / 新建 / 修改 / 删除 / 启停 / 排序）：{@code apply_type:view|manage}。
  *       按需求约定 {@code admin} 默认只拿 {@code apply_type:view}（能看不能改）；</li>
  *   <li><b>提交类</b>（启用列表 / 详情）：仅要求已登录 —— 这是普通员工用的接口，
  *       他们不该、也不会有任何管理权限码。数据可见性由
@@ -191,6 +192,26 @@ public class ApplyTypeController {
                                           @Valid @RequestBody ApplyTypeStatusRequest request) {
         applyTypeService.updateStatus(id, request.getStatus());
         return ApiResponse.success("状态已更新", null);
+    }
+
+    /**
+     * 整体排序（拖拽调整）：按提交的顺序重写所有类型的 {@code sort_order}。
+     *
+     * <p>内置类型也在排序链里（V48 的「内置置顶」已废弃）——
+     * 提交页卡片顺序对每个人都是同一份，管理员应当有权决定它。
+     *
+     * <p>审计等级 HIGH：它改变的是**所有员工**提交第一屏看到的顺序，
+     * 且属于事后无法从业务数据倒推的配置操作。
+     *
+     * <p>路径段 {@code /sort} 是字面量，与 {@code /{id}}（GET/PUT/DELETE）不冲突。
+     */
+    @PostMapping("/sort")
+    @PreAuthorize("@perm.has('apply_type:manage')")
+    @AuditLog(module = "SYSTEM", action = "APPLY_TYPE_SORT",
+            description = "调整申请类型排序", risk = RiskLevel.HIGH)
+    public ApiResponse<Void> sort(@Valid @RequestBody ApplyTypeSortRequest request) {
+        applyTypeService.sort(request);
+        return ApiResponse.success("排序已更新", null);
     }
 
     /** 删除（已被工单使用时返回 APPLY_TYPE_HAS_ORDER，只能停用） */

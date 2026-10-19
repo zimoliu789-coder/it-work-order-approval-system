@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { deviceApi, deviceCategoryApi, deviceFaultApi } from '@/api/device'
+import { deviceApi, deviceCategoryApi, deviceFaultApi, deviceModelApi } from '@/api/device'
 import BatchResultDialog from '@/components/BatchResultDialog.vue'
 import DeviceImportDialog from '@/components/DeviceImportDialog.vue'
 import DeviceLabelDialog from '@/components/DeviceLabelDialog.vue'
 import TablePage from '@/components/TablePage.vue'
+import UserSelectDialog from '@/components/UserSelectDialog.vue'
 import { useExport } from '@/composables/useExport'
 import { useResponsive } from '@/composables/useResponsive'
 import { useUserStore } from '@/store/user'
@@ -14,7 +15,8 @@ import {
   deviceStatusTagType,
   formatAmount
 } from '@/types/device'
-import type { DeviceCategory, DeviceItem, DeviceStatusCode } from '@/types/device'
+import type { DeviceCategory, DeviceItem, DeviceModelOption, DeviceStatusCode } from '@/types/device'
+import type { UserOption } from '@/types/user'
 import type { BatchResult } from '@/types/api'
 import type { TableInstance } from 'element-plus'
 import type { ColumnDef } from '@/types/table'
@@ -52,6 +54,9 @@ const columns: ColumnDef[] = [
   { key: 'category', label: '分类', minWidth: 170, showOverflowTooltip: true },
   { key: 'brandModel', label: '品牌 / 型号', minWidth: 150, showOverflowTooltip: true },
   { key: 'statusLabel', label: '状态', width: 100, align: 'center' },
+  // 负责人（V57 / 第 10 项）：决定「报修 → 我名下的设备」里能看到哪些，
+  // 空值必须显式写成「未指定」—— 留白会让人以为字段没实现
+  { key: 'ownerName', label: '负责人', width: 110, showOverflowTooltip: true },
   { key: 'usage', label: '使用 / 占用', minWidth: 200, showOverflowTooltip: true },
   { key: 'storageLocation', label: '存放位置', minWidth: 120, showOverflowTooltip: true },
   { key: 'amount', label: '设备金额', minWidth: 110, align: 'right', showOverflowTooltip: true },
@@ -122,13 +127,90 @@ const form = reactive({
   primaryCategoryId: null as number | null,
   secondaryCategoryId: null as number | null,
   brand: '',
+  /** 型号原文（V56 起只读回显：字典化后不再直接编辑它） */
   model: '',
+  /** 型号字典 id（V56 / R3）：新录入一律走字典 */
+  modelId: null as number | null,
   serialNo: '',
   storageLocation: '',
   purchaseDate: null as string | null,
   amount: null as number | null,
+  /** 负责人 user_id（V57 / 第 10 项） */
+  ownerId: null as number | null,
+  /** 负责人姓名（仅用于回显，不随请求提交） */
+  ownerName: '',
   remark: ''
 })
+
+/** 型号字典下拉（仅启用型号；停用型号不出现在新增里，但已挂接的设备仍保留其 id） */
+const modelOptions = ref<DeviceModelOption[]>([])
+const modelLoading = ref(false)
+/** 负责人选择弹窗（人员选择一律走 UserSelectDialog，不用裸 select） */
+const ownerPickerVisible = ref(false)
+
+async function loadModels(): Promise<void> {
+  modelLoading.value = true
+  try {
+    modelOptions.value = await deviceModelApi.options()
+  } catch {
+    modelOptions.value = []
+  } finally {
+    modelLoading.value = false
+  }
+}
+
+/**
+ * 选中负责人。
+ *
+ * <p>只存 id + 姓名用于回显：姓名会改，落库只存 id（后端按 id → name 批量解析），
+ * 冗余姓名列会在改名后长期说谎。
+ */
+function handleOwnerPicked(picked: UserOption[]): void {
+  const first = picked[0]
+  form.ownerId = first ? first.id : null
+  form.ownerName = first ? first.displayName || first.username : ''
+}
+
+function clearOwner(): void {
+  form.ownerId = null
+  form.ownerName = ''
+}
+
+/**
+ * 批量设置负责人（V57 / 第 10 项）。
+ *
+ * <p>为什么必须有批量：负责人是报修页「我名下的设备」的唯一来源，而存量台账
+ * 一千多台的 owner_id 全是空 —— 逐台点开编辑等于这个功能用不起来。
+ * 客户端的「撤销」就是再批量设回原负责人，因此这里不做二次确认。
+ */
+function openBatchOwner(): void {
+  batchOwnerId.value = null
+  batchOwnerName.value = ''
+  batchOwnerVisible.value = true
+}
+
+function handleBatchOwnerPicked(picked: UserOption[]): void {
+  const first = picked[0]
+  batchOwnerId.value = first ? first.id : null
+  batchOwnerName.value = first ? first.displayName || first.username : ''
+}
+
+function clearBatchOwner(): void {
+  batchOwnerId.value = null
+  batchOwnerName.value = ''
+}
+
+async function submitBatchOwner(): Promise<void> {
+  batchSubmitting.value = true
+  try {
+    const result = await deviceApi.batchAssignOwner(selectedIds.value, batchOwnerId.value)
+    batchOwnerVisible.value = false
+    finishBatch(result)
+    await load()
+  } finally {
+    batchSubmitting.value = false
+  }
+}
 
 /** 二级分类候选：随所选一级分类联动 */
 const secondaryOptions = computed(
@@ -156,6 +238,8 @@ function clearFormSecondaryOnPrimaryChange(): void {
 
 onMounted(async () => {
   await loadCategories()
+  // 型号字典：表单里的型号下拉要用；拉不到不影响台账浏览（下拉空，仍可保存原文本）
+  await loadModels()
   await load()
 })
 
@@ -181,6 +265,11 @@ const batchResultVisible = ref(false)
 const batchResult = ref<BatchResult | null>(null)
 const batchSubmitting = ref(false)
 const batchCategoryId = ref<number | null>(null)
+/** 批量设置负责人（V57 / 第 10 项）：null=清空，dialog 内单独维护，确认后才提交 */
+const batchOwnerVisible = ref(false)
+const batchOwnerId = ref<number | null>(null)
+const batchOwnerName = ref('')
+const batchOwnerPickerVisible = ref(false)
 const batchForm = reactive<{ targetStatus: DeviceStatusCode | null; reason: string }>({
   targetStatus: null,
   reason: ''
@@ -365,10 +454,13 @@ function resetForm(): void {
   form.secondaryCategoryId = null
   form.brand = ''
   form.model = ''
+  form.modelId = null
   form.serialNo = ''
   form.storageLocation = ''
   form.purchaseDate = null
   form.amount = null
+  form.ownerId = null
+  form.ownerName = ''
   form.remark = ''
 }
 
@@ -392,6 +484,9 @@ function openEdit(row: DeviceItem): void {
   form.secondaryCategoryId = row.secondaryCategoryId ?? null
   form.brand = row.brand ?? ''
   form.model = row.model ?? ''
+  form.modelId = row.modelId ?? null
+  form.ownerId = row.ownerId ?? null
+  form.ownerName = row.ownerName ?? ''
   form.serialNo = row.serialNo ?? ''
   form.storageLocation = row.storageLocation ?? ''
   form.purchaseDate = row.purchaseDate ?? null
@@ -427,11 +522,15 @@ async function handleSubmit(): Promise<void> {
     primaryCategoryId: form.primaryCategoryId,
     secondaryCategoryId: form.secondaryCategoryId,
     brand: trimmedOrNull(form.brand),
+    // 型号原文仍随请求带上：选了字典时后端会用字典名覆盖它，
+    // 没选字典（历史文本型设备）时保留原文，避免「编辑一次就把型号清空」
     model: trimmedOrNull(form.model),
+    modelId: form.modelId,
     serialNo: trimmedOrNull(form.serialNo),
     storageLocation: trimmedOrNull(form.storageLocation),
     purchaseDate: form.purchaseDate,
     amount: form.amount,
+    ownerId: form.ownerId,
     remark: trimmedOrNull(form.remark)
   }
   saving.value = true
@@ -724,11 +823,16 @@ function amountText(row: DeviceItem): string {
  * 设备当前使用信息主行（需求方 ）
  *
  * 设备表不冗余使用人，使用信息以「占用中的工单」为准（后端 usageMap 装配）。
- * 三种情形：临时锁定（显示锁定人）> 有占用工单（使用人 + 类型）> 无（空闲）。
+ * 三种情形：历史锁定（无锁定人字段可显示）> 有占用工单（使用人 + 类型）> 无（空闲）。
+ *
+ * <p><b>V56 起 `LOCKED` 只是历史值</b>：临时锁机制已整体移除（连
+ * `device.locked_by / locked_at / lock_token` 三列与超时释放任务一起删了），
+ * 新单不会再产生该状态。存量行仍可能存在，因此仍要能显示 ——
+ * 但**不能再引用锁字段**（`lockedByName` / `lockExpiresAt` 已从类型里删除，写了编译不过）。
  */
 function usagePrimary(row: DeviceItem): string {
   if (row.status === 'LOCKED') {
-    return row.lockedByName ? `临时锁定：${row.lockedByName}` : '临时锁定中'
+    return '历史锁定状态'
   }
   if (!row.usage) {
     return '-'
@@ -740,7 +844,7 @@ function usagePrimary(row: DeviceItem): string {
 /** 使用信息次行：工单号 + 归还日期（仅短期借用有归还日期） */
 function usageSecondary(row: DeviceItem): string {
   if (row.status === 'LOCKED') {
-    return row.lockExpiresAt ? `锁到期 ${row.lockExpiresAt}` : '超时自动释放'
+    return '请联系管理员确认占用情况'
   }
   if (!row.usage) {
     return ''
@@ -827,6 +931,9 @@ function isOccupied(row: DeviceItem): boolean {
         <el-button type="primary" size="small" :loading="batchSubmitting" @click="openBatchStatus">
           批量改状态
         </el-button>
+        <el-button type="primary" size="small" :loading="batchSubmitting" @click="openBatchOwner">
+          批量设负责人
+        </el-button>
         <el-button size="small" @click="openLabelForSelection">打印标签</el-button>
         <el-button size="small" @click="clearSelection">取消选择</el-button>
       </div>
@@ -864,6 +971,10 @@ function isOccupied(row: DeviceItem): boolean {
             <div class="ts-text-hint">{{ usageSecondary(row as DeviceItem) }}</div>
           </template>
           <span v-else class="ts-text-hint">空闲</span>
+        </template>
+        <template #cell-ownerName="{ row }">
+          <span v-if="(row as DeviceItem).ownerName">{{ (row as DeviceItem).ownerName }}</span>
+          <span v-else class="ts-text-hint">未指定</span>
         </template>
         <template #cell-storageLocation="{ row }">
           <span v-if="(row as DeviceItem).storageLocation">{{ (row as DeviceItem).storageLocation }}</span>
@@ -1097,8 +1208,39 @@ function isOccupied(row: DeviceItem): boolean {
         <el-form-item label="品牌">
           <el-input v-model="form.brand" maxlength="64" placeholder="选填" />
         </el-form-item>
+        <!-- V56 / R3：型号改为字典选择。
+             `device.model` 原文列仍保留并可回溯（存量脏数据不丢），
+             但**新录入一律走字典** —— 自由文本是「同一型号多种写法」的根源，
+             而交付时要按型号核对，写法不同就核对不了。 -->
         <el-form-item label="型号">
-          <el-input v-model="form.model" maxlength="128" placeholder="选填" />
+          <el-select
+            v-model="form.modelId"
+            class="ts-dev__form-select"
+            placeholder="选填，从型号字典中选择"
+            filterable
+            clearable
+            :loading="modelLoading"
+          >
+            <el-option
+              v-for="model in modelOptions"
+              :key="model.id"
+              :label="model.brand ? `${model.modelName}（${model.brand}）` : model.modelName"
+              :value="model.id"
+            />
+          </el-select>
+          <span v-if="form.modelId == null && form.model" class="ts-text-hint">
+            台账原型号文本：{{ form.model }}（未归入字典，保存后仍会保留；建议改选为字典型号）
+          </span>
+          <span v-else class="ts-text-hint">型号字典由「设备型号管理」维护</span>
+        </el-form-item>
+        <!-- V57 / 第 10 项：负责人（长期固定的资产责任人，≠ 借用人） -->
+        <el-form-item label="负责人">
+          <el-input :model-value="form.ownerName" readonly placeholder="选填；未指定时只能走「公共设备」报修入口">
+            <template #append>
+              <el-button @click="ownerPickerVisible = true">选择</el-button>
+            </template>
+          </el-input>
+          <el-button v-if="form.ownerId != null" link type="danger" @click="clearOwner">清除</el-button>
         </el-form-item>
         <el-form-item label="序列号">
           <el-input v-model="form.serialNo" maxlength="128" placeholder="选填（支持按序列号搜索）" />
@@ -1235,12 +1377,54 @@ function isOccupied(row: DeviceItem): boolean {
       </template>
     </el-dialog>
 
-    <BatchResultDialog v-model="batchResultVisible" :result="batchResult" title="批量操作结果" unit="台" />
+    <!-- 批量设置负责人（V57 / 第 10 项）：只改 owner_id，不动其它字段 -->
+    <el-dialog v-model="batchOwnerVisible" title="批量设置负责人" :width="isMobile ? '94%' : '460px'">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="负责人决定报修页「我名下的设备」里能看到哪些设备"
+        description="留空保存＝清空负责人，这些设备转为公共设备（只能扫码 / 输编号报修）。只修改负责人，品牌、型号、存放位置等字段保持不变。"
+      />
+      <el-form label-width="80px" class="ts-mt-16">
+        <el-form-item label="负责人">
+          <el-input :model-value="batchOwnerName" readonly placeholder="未指定（保存后清空负责人）">
+            <template #append>
+              <el-button @click="batchOwnerPickerVisible = true">选择</el-button>
+            </template>
+          </el-input>
+          <el-button v-if="batchOwnerName" link type="primary" class="ts-mt-8" @click="clearBatchOwner">
+            清空负责人
+          </el-button>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchOwnerVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchSubmitting" @click="submitBatchOwner">确认设置</el-button>
+      </template>
+    </el-dialog>
 
+    <BatchResultDialog v-model="batchResultVisible" :result="batchResult" title="批量操作结果" unit="台" />
     <DeviceLabelDialog v-model="labelVisible" :devices="labelDevices" />
 
     <!-- 批量导入（管理端，与单条新增权限一致） -->
     <DeviceImportDialog v-model="importVisible" @imported="load" />
+
+    <!-- 负责人选择（V57 / 第 10 项）：人员选择一律走统一弹窗，不用裸下拉 -->
+    <UserSelectDialog
+      v-model="ownerPickerVisible"
+      :multiple="false"
+      title="选择设备负责人"
+      @confirm="handleOwnerPicked"
+    />
+
+    <!-- 批量设置负责人的人员选择：与单条编辑共用同一个组件，只是回填目标不同 -->
+    <UserSelectDialog
+      v-model="batchOwnerPickerVisible"
+      :multiple="false"
+      title="选择设备负责人（批量）"
+      @confirm="handleBatchOwnerPicked"
+    />
   </div>
 </template>
 

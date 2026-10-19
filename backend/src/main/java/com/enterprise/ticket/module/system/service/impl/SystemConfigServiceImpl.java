@@ -481,6 +481,22 @@ public class SystemConfigServiceImpl extends ServiceImpl<SystemConfigMapper, Sys
                 StorageSettings.DEFAULT_EXPORT_RETENTION_DAYS));
     }
 
+    @Override
+    public int faultPhotoMaxSizeMb() {
+        // 收敛在读取侧：0 或负数会让**所有**故障照片上传被拒（服务不可用级的手滑），
+        // 统一回落部署配置的默认上限，而不是把「配置坏了」当成「策略收紧」执行
+        return StorageSettings.effectiveMaxSizeMb(
+                getInt(StorageSettings.KEY_FAULT_PHOTO_MAX_MB, -1),
+                appProperties.getAttachment().getMaxSizeMb());
+    }
+
+    @Override
+    public int applyAttachmentMaxSizeMb() {
+        return StorageSettings.effectiveMaxSizeMb(
+                getInt(StorageSettings.KEY_APPLY_ATTACHMENT_MAX_MB, -1),
+                appProperties.getAttachment().getMaxSizeMb());
+    }
+
     // ------------------------------------------------------------------
     // 异常告警
     //
@@ -697,10 +713,9 @@ public class SystemConfigServiceImpl extends ServiceImpl<SystemConfigMapper, Sys
 
     // ---------------- 业务语义化快捷方法 ----------------
 
-    @Override
-    public int lockTimeoutMinutes() {
-        return getInt("lock_timeout_minutes", 5);
-    }
+    // V56：lockTimeoutMinutes() 随临时锁机制一并删除 ——
+    // 配置行 lock_timeout_minutes 仍留在库里（有内存缓存，停机升级后自然无人读取），
+    // 但任何新代码都不应再拿它做判断。
 
     @Override
     public boolean backupEnabled() {

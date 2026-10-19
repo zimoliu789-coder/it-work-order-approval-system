@@ -31,11 +31,11 @@ import org.springframework.stereotype.Component;
  * 标记已置位 ⇒ 无论表里有没有、是什么样，都不再触碰。
  *
  * <h2>为什么不走 ApplyTypeService</h2>
- * 服务层的创建入口（{@code create} / {@code createFull}）都强制
- * 「必须绑定一个已发布的表单版本」，而内置类型**恰好没有表单模板** ——
- * 表单是内置页面（借用表单 / 报修表单）。硬走服务入口只能靠加一串「if 内置就跳过校验」，
- * 那会把「内置」这个特殊分支渗进自定义类型的主路径。
- * 这里直接用 Mapper 插入一行结构确定的记录，服务层的校验保持对自定义类型的原样强度。
+ * 内置类型的记录是**结构确定的一行**（编码取自 {@link BuiltInApplyCatalog}、
+ * 提交权限恒为全员、状态恒为启用），走服务入口要为一堆「内置例外」开分支。
+ * 这里直接用 Mapper 插入，服务层的校验保持对自定义类型的原样强度 ——
+ * 内置类型的表单 / 流程改动走的是**更新**路径（V59 起已放开，见
+ * {@code ApplyTypeServiceImpl#update} 的内置分支），与播种无关。
  *
  * <h2>失败不阻断启动</h2>
  * 与预置播种一致：单个失败只记 ERROR、**不置位标记**（下次启动自动重试），
@@ -76,16 +76,14 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
     /**
      * 给内置类型准备表单模板。
      *
-     * <h2>V53：内置类型从此分成两类</h2>
-     * <ul>
-     *   <li><b>无表单</b>（借用 / 报修）：表单是代码内置页面，
-     *       {@code form_template_version_id} 保持 NULL（V48 已放开该列 NOT NULL）；</li>
-     *   <li><b>有表单</b>（V53 起的出差申请）：目录给出 schema
-     *       （{@link BuiltInApplyCatalog#formSchemaOf}，三个系统内置字段），
-     *       这里建<b>真实的表单模板 + 首发版本</b>并绑定到类型 ——
-     *       与 {@link PresetApplyInitializer} 的产出物同构，
-     *       管理员后续（表单放开后）可以像改预置类一样改它，提交侧走通用动态表单链路。</li>
-     * </ul>
+     * <h2>V59 / 批次 3.5：三个内置类型全都有表单</h2>
+     * D3 裁定「表单、审批流程完全放开可自定义」后，借用 / 报修不再有「表单由代码提供」的
+     * 豁免：目录给它们各一份种子 schema（见 {@link BuiltInApplyCatalog#formSchemaOf}），
+     * 这里建<b>真实的表单模板 + 首发版本</b>并绑定到类型 —— 与 {@link PresetApplyInitializer}
+     * 的产出物同构，管理员随后就能在设计器里像改预置类一样改它。
+     *
+     * <p>{@code formSchemaOf} 返回 {@code null} 只可能是「目录里没这个内置类型」，
+     * 那是配置错误，直接跳过绑定（不置位标记，下次启动重试）。
      *
      * <h2>中断后的重试必须是幂等的</h2>
      * 先建模板再插类型行；若插类型失败（如迁移未跑、约束冲突），会留下「有模板、没类型」的残局。
@@ -98,7 +96,7 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
     private void seedFormTemplate(ApplyType type, BuiltInApplyCatalog.BuiltIn builtIn) {
         FormSchema schema = BuiltInApplyCatalog.formSchemaOf(builtIn.typeCode());
         if (schema == null) {
-            // 借用 / 报修：表单由代码提供，没有模板版本
+            // 目录里没有该内置类型的 schema（配置错误）：不绑定，等下次启动重试
             type.setFormTemplateVersionId(null);
             return;
         }

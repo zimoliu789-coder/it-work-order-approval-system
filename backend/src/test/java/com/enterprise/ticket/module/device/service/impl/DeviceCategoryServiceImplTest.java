@@ -57,6 +57,33 @@ class DeviceCategoryServiceImplTest {
     // 辅助构造
     // ------------------------------------------------------------------
 
+    @Test
+    @DisplayName("★ 分类下拉选项：一级 + 二级一起扁平下发（普通员工借用单要选分类，V59）")
+    void enabledOptions_flattensBothLevels() {
+        when(categoryMapper.selectList(any())).thenReturn(List.of(
+                category(1L, "电脑", 0L, 1, 1),
+                category(2L, "笔记本", 1L, 2, 1),
+                category(3L, "显示器", 0L, 1, 2)));
+
+        List<com.enterprise.ticket.module.device.dto.vo.DeviceCategoryOptionVO> options =
+                service.enabledOptions();
+
+        assertEquals(3, options.size());
+        assertEquals("电脑", options.get(0).getCategoryName());
+        assertEquals(1, options.get(0).getLevel());
+        // 二级必须带父级 id：前端「二级分类」下拉要靠它按所选一级过滤
+        assertEquals(1L, options.get(1).getParentId());
+        assertEquals(2, options.get(1).getLevel());
+    }
+
+    @Test
+    @DisplayName("分类下拉选项：空库返回空列表（不抛错，前端据此显示「暂无分类」）")
+    void enabledOptions_empty() {
+        when(categoryMapper.selectList(any())).thenReturn(List.of());
+
+        assertTrue(service.enabledOptions().isEmpty());
+    }
+
     private DeviceCategory category(Long id, String name, Long parentId, int level, int sortOrder) {
         DeviceCategory category = new DeviceCategory();
         category.setId(id);

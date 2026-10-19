@@ -17,6 +17,8 @@ import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.service.DeviceImportService;
 import com.enterprise.ticket.module.device.service.DeviceService;
 import com.enterprise.ticket.module.log.service.OperationLogService;
+import com.enterprise.ticket.module.user.entity.User;
+import com.enterprise.ticket.module.user.mapper.UserMapper;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import lombok.extern.slf4j.Slf4j;
@@ -83,13 +85,21 @@ public class DeviceImportServiceImpl implements DeviceImportService {
     private final Validator validator;
     private final TransactionTemplate transactionTemplate;
     private final OperationLogService operationLogService;
+    /**
+     * 负责人账号 → user（V57 / 第 10 项）。
+     *
+     * <p>导入模板里填的是<b>登录账号</b>而不是姓名：姓名会重名，重名的表现是
+     * 「设备悄悄挂到了另一个人名下」—— 不报错，事后极难发现。
+     */
+    private final UserMapper userMapper;
 
     public DeviceImportServiceImpl(DeviceImportExcelSupport excelSupport,
                                    DeviceService deviceService,
                                    DeviceCategoryMapper categoryMapper,
                                    Validator validator,
                                    PlatformTransactionManager transactionManager,
-                                   OperationLogService operationLogService) {
+                                   OperationLogService operationLogService,
+                                   UserMapper userMapper) {
         this.excelSupport = excelSupport;
         this.deviceService = deviceService;
         this.categoryMapper = categoryMapper;
@@ -98,6 +108,7 @@ public class DeviceImportServiceImpl implements DeviceImportService {
         // 由 PlatformTransactionManager 自行构造可保证行为稳定。
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.operationLogService = operationLogService;
+        this.userMapper = userMapper;
     }
 
     // ------------------------------------------------------------------
@@ -344,7 +355,22 @@ public class DeviceImportServiceImpl implements DeviceImportService {
             }
         }
 
-        // 5) 复用「单条新增」规则：Bean Validation（必填 / 长度）+ 服务层业务规则（编号唯一 / 分类归属）
+        // 5) 负责人账号（选填，V57 / 第 10 项）：按账号匹配，填了就**必须**命中。
+        //    静默忽略会让「我明明填了负责人」变成落库后查无此人 —— 报修页永远不出现这台设备。
+        String ownerUsername = trimToNull(row.getOwnerUsername());
+        Long ownerId = null;
+        if (ownerUsername != null) {
+            User owner = context.userByUsername().get(ownerUsername);
+            if (owner == null) {
+                return fail(vo, "负责人账号「" + ownerUsername + "」不存在，请填写登录账号（不是姓名）");
+            }
+            if (!Boolean.TRUE.equals(owner.getEnabled()) || Boolean.TRUE.equals(owner.getDimission())) {
+                return fail(vo, "负责人账号「" + ownerUsername + "」已停用或已离职，请更换");
+            }
+            ownerId = owner.getId();
+        }
+
+        // 6) 复用「单条新增」规则：Bean Validation（必填 / 长度）+ 服务层业务规则（编号唯一 / 分类归属）
         DeviceSaveRequest request = new DeviceSaveRequest();
         request.setDeviceName(trimToNull(row.getDeviceName()));
         request.setAssetNo(assetNo);
@@ -357,6 +383,7 @@ public class DeviceImportServiceImpl implements DeviceImportService {
         request.setPurchaseDate(purchaseDate);
         request.setRemark(trimToNull(row.getRemark()));
         request.setAmount(amount);
+        request.setOwnerId(ownerId);
 
         String beanError = firstViolationMessage(request);
         if (beanError != null) {
@@ -368,7 +395,7 @@ public class DeviceImportServiceImpl implements DeviceImportService {
             return fail(vo, e.getMessage());
         }
 
-        // 6) 本次导入文件内重复（与数据库唯一索引同样按「不区分大小写」比对，
+        // 7) 本次导入文件内重复（与数据库唯一索引同样按「不区分大小写」比对，
         //    因为 asset_no 列使用 utf8mb4_general_ci 排序规则）
         if (assetNo != null && !context.usedAssetNos().add(assetNo.toUpperCase(Locale.ROOT))) {
             return fail(vo, "资产编号「" + assetNo + "」在本次导入文件中重复，仅第一处会被导入");
@@ -411,7 +438,26 @@ public class DeviceImportServiceImpl implements DeviceImportService {
                         .put(category.getCategoryName(), category);
             }
         }
-        return new ImportContext(primaryByName, secondaryByParent, new TreeSet<>(String.CASE_INSENSITIVE_ORDER));
+        return new ImportContext(primaryByName, secondaryByParent,
+                new TreeSet<>(String.CASE_INSENSITIVE_ORDER), loadUsersByUsername());
+    }
+
+    /**
+     * 账号 → 用户（V57 / 第 10 项），一次查全表。
+     *
+     * <p>用户量级是「几百人」，一次全量查比逐行按账号查库（500 行 = 500 次）划算得多。
+     * Map 用大小写不敏感：用户名在库中同样落在 utf8mb4_general_ci 上，
+     * Java 侧若区分大小写，会出现「库能匹配到、按账号却找不到」。
+     */
+    private Map<String, User> loadUsersByUsername() {
+        Map<String, User> byUsername = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (User user : userMapper.selectList(Wrappers.<User>lambdaQuery()
+                .select(User::getId, User::getUsername, User::getEnabled, User::getDimission))) {
+            if (user.getUsername() != null) {
+                byUsername.put(user.getUsername(), user);
+            }
+        }
+        return byUsername;
     }
 
     // ------------------------------------------------------------------
@@ -474,6 +520,7 @@ public class DeviceImportServiceImpl implements DeviceImportService {
         vo.setPurchaseDate(row.getPurchaseDate());
         vo.setRemark(row.getRemark());
         vo.setAmount(row.getAmount());
+        vo.setOwnerUsername(row.getOwnerUsername());
         return vo;
     }
 
@@ -495,10 +542,11 @@ public class DeviceImportServiceImpl implements DeviceImportService {
     private record ValidatedRow(DeviceImportRowVO vo, DeviceSaveRequest request) {
     }
 
-    /** 分类与资产编号上下文 */
+    /** 分类、负责人与本次已用资产编号上下文 */
     private record ImportContext(Map<String, DeviceCategory> primaryByName,
                                  Map<Long, Map<String, DeviceCategory>> secondaryByParent,
-                                 Set<String> usedAssetNos) {
+                                 Set<String> usedAssetNos,
+                                 Map<String, User> userByUsername) {
 
         Map<String, DeviceCategory> secondaryByParent(Long parentId) {
             return secondaryByParent.getOrDefault(parentId, Map.of());

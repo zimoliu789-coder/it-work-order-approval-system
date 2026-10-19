@@ -22,10 +22,20 @@ import java.time.LocalDateTime;
  *   <li><b>软删除（deleted = 1）</b>：台账记录逻辑隐藏，一般极少使用；历史设备不允许物理删除。</li>
  * </ul>
  *
- * <p><b>临时锁三件套（， 落地）</b>：{@code lockedBy} / {@code lockedAt} / {@code lockToken}
- * 仅在 {@code status = LOCKED} 期间有值，释放时一并置空。
- * {@code lockToken} 的用途是防止「旧页面释放了后来属于其他用户的新锁」——
- * 释放时必须比对令牌，不匹配则拒绝。
+ * <p><b>临时锁已整体移除（V56 / 第 9 项）</b>：改造后申请人<b>不再挑选具体资产</b>
+ * （只选分类与型号），设备绑定延后到 IT 交付扫码那一刻 —— 既然没有「填表期间占住设备」
+ * 这件事，{@code lockedBy / lockedAt / lockToken} 三件套与 5 分钟超时释放任务一并删除。
+ * 设备状态从 {@code AVAILABLE} 直接进入 {@code IN_USE}（交付扫码成功瞬间），
+ * 中间不再经过 {@code LOCKED / IN_APPROVAL}。
+ *
+ * <p><b>型号双列并存（V56 / R3）</b>：{@code model} 是原始自由文本，保留不动；
+ * {@code modelId} 是型号字典的规范化指向，为 {@code null} 表示「这条台账的型号还没整理」。
+ * 二者并存是为了让存量脏数据可回溯、迁移可回滚 —— 不要在任何新逻辑里读 {@code model} 做比对，
+ * 那会把「ThinkPad X1 / thinkpad x1」重新当成两种型号。
+ *
+ * <p><b>负责人（V57 / 第 10 项）</b>：{@code ownerId} 是<b>资产归属责任人</b>（长期固定，
+ * 由资产管理员维护），与「借用人」（{@code borrow_order.applicant_id}，动态）是两件事。
+ * 报修页「我名下的设备」只按 {@code ownerId} 过滤，绝不拿在途借用单反推。
  */
 @Data
 @TableName("device")
@@ -48,7 +58,21 @@ public class Device {
 
     private String brand;
 
+    /**
+     * 型号原始文本（自由录入，历史数据）。
+     *
+     * <p>V56 起<b>不再参与任何比对</b>：型号选择与校验一律走 {@link #modelId}。
+     * 保留本列的唯一目的是让存量脏数据可回溯（{@code modelId IS NULL} 即「待整理」）。
+     */
     private String model;
+
+    /**
+     * 型号字典 {@code device_model.id}（V56 / R3）。
+     *
+     * <p>为 {@code null} 表示「还没整理」—— 台账里能看到原文（{@link #model}），
+     * 但新增设备与借用申请的下拉只认字典，因此这类设备在报修/借用校验里会提示先整理。
+     */
+    private Long modelId;
 
     private String serialNo;
 
@@ -75,20 +99,24 @@ public class Device {
     private BigDecimal amount;
 
     /**
+     * 负责人 user_id（V57 / 第 10 项）。
+     *
+     * <p><b>资产归属责任人，不是借用人</b>：长期固定、由资产管理员维护
+     * （权限 {@code device:ledger:manage}），借用人只存在于借用工单里。
+     * 报修页「我名下的设备」按本字段过滤；为 {@code null} 表示未指定，
+     * 这类设备只能走「公用 / 其他设备」入口填报。
+     */
+    private Long ownerId;
+
+    /**
      * 设备状态，取值见 {@link com.enterprise.ticket.common.constant.DeviceStatus}
      *
-     * <p> 起由工单流程驱动 LOCKED → IN_APPROVAL → IN_USE → AVAILABLE 的自动流转。
+     * <p>V56 起的流转：{@code AVAILABLE} →（IT 交付扫码成功）→ {@code IN_USE}
+     * →（归还检查）→ {@code AVAILABLE / MAINTENANCE / LOST}。
+     * {@code LOCKED / IN_APPROVAL} 成为<b>历史值</b>（存量数据可能仍是它们，
+     * 为此枚举保留），新流程不再产生。
      */
     private String status;
-
-    /** 临时锁定人 user_id */
-    private Long lockedBy;
-
-    /** 临时锁定开始时间（；超时判断以本字段为准，MySQL 是最终事实来源） */
-    private LocalDateTime lockedAt;
-
-    /** 临时锁令牌（；释放时比对，防止跨用户误释放） */
-    private String lockToken;
 
     private String remark;
 

@@ -12,6 +12,7 @@ import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.entity.DeviceCategory;
 import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.device.service.DeviceFaultService;
 import com.enterprise.ticket.module.message.service.MessageService;
@@ -91,6 +92,9 @@ class OrderScanLookupTest {
     private DeviceMapper deviceMapper;
     @Mock
     private DeviceCategoryMapper categoryMapper;
+
+    @Mock
+    private DeviceModelMapper deviceModelMapper;
     @Mock
     private DepartmentMapper departmentMapper;
     @Mock
@@ -118,7 +122,7 @@ class OrderScanLookupTest {
     void wireReferenceNames() {
         ReflectionTestUtils.setField(service, "referenceNames",
                 new OrderReferenceNames(userMapper, deviceMapper, categoryMapper,
-                        departmentMapper, applyTypeMapper));
+                        deviceModelMapper, departmentMapper, applyTypeMapper));
     }
 
     @AfterEach
@@ -208,11 +212,10 @@ class OrderScanLookupTest {
         }
 
         @Test
-        @DisplayName("被他人锁定且未超时 ⇒ 不可借用")
-        void lockedFresh() {
+        @DisplayName("历史锁定状态 ⇒ 不可借用（V56 起不再产生新锁，需管理员确认后处理）")
+        void lockedLegacy() {
             loginAs(ME, RoleCode.USER);
             when(deviceMapper.selectOne(any())).thenReturn(device(DeviceStatus.LOCKED.name(), LocalDateTime.now()));
-            when(systemConfigService.lockTimeoutMinutes()).thenReturn(5);
 
             ScanLookupVO vo = service.scanLookup(ASSET_NO);
 
@@ -220,17 +223,16 @@ class OrderScanLookupTest {
         }
 
         @Test
-        @DisplayName("锁定已超时 ⇒ 视为已释放，可直接借用（规范 §10）")
-        void lockedExpired() {
+        @DisplayName("历史锁定状态即使很久也不自动放行 —— 锁已移除，没有「超时视为释放」这条规则了")
+        void lockedLegacyIsNotAutoReleased() {
             loginAs(ME, RoleCode.USER);
             when(deviceMapper.selectOne(any())).thenReturn(
                     device(DeviceStatus.LOCKED.name(), LocalDateTime.now().minusMinutes(30)));
-            when(systemConfigService.lockTimeoutMinutes()).thenReturn(5);
 
             ScanLookupVO vo = service.scanLookup(ASSET_NO);
 
-            assertEquals(ScanAction.BORROW, vo.getAction(),
-                    "锁超时未释放会让设备看起来永远被别人占着，规范 §10 明确超时视为已释放");
+            assertEquals(ScanAction.UNAVAILABLE, vo.getAction(),
+                    "V56 删除了临时锁与超时释放任务，残留的 LOCKED 只能由管理员在台账上改状态");
         }
 
         @Test
@@ -360,13 +362,19 @@ class OrderScanLookupTest {
         return user;
     }
 
+    /**
+     * 设备夹具。
+     *
+     * <p>{@code lockedAt} 参数在 V56 之后<b>已无对应实体字段</b>（临时锁三件套被删），
+     * 保留形参只是为了不改动几十处既有调用点 —— 两个「历史锁定」用例传的时间值
+     * 现在不影响任何判定（LOCKED 一律不可借）。
+     */
     private Device device(String status, LocalDateTime lockedAt) {
         Device device = new Device();
         device.setId(DEVICE_ID);
         device.setDeviceName("ThinkPad X1");
         device.setAssetNo(ASSET_NO);
         device.setStatus(status);
-        device.setLockedAt(lockedAt);
         return device;
     }
 

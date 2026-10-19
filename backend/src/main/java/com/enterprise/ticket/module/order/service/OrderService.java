@@ -67,9 +67,11 @@ public interface OrderService {
      *
      * @param useType            借用类型（SHORT_TERM / LONG_TERM），参与条件求值
      * @param expectedReturnDate 期望归还日期，用于算出 {@code borrow.expectedDays}；可空
-     * @param deviceId           设备 id，用于取设备分类参与条件求值；可空
+     * @param primaryCategoryId  要借用的设备一级分类 id，用于取 {@code borrow.deviceCategoryId}
+     *                           参与条件求值；可空（未选分类时仍能预览不依赖分类的节点）
      */
-    BorrowFlowPreviewVO previewBorrowFlow(String useType, java.time.LocalDate expectedReturnDate, Long deviceId);
+    BorrowFlowPreviewVO previewBorrowFlow(String useType, java.time.LocalDate expectedReturnDate,
+                                          Long primaryCategoryId);
 
     /**
      * 「当前所在分部」的预填值 + 可选分部列表（V54 / D5.2）。
@@ -184,8 +186,15 @@ public interface OrderService {
     /** 申请人撤回（：PENDING_APPROVAL / PENDING_DELIVERY 可撤回，释放设备） */
     void cancel(Long orderId, String reason);
 
-    /** 实际执行人确认交付（：工单→使用中，设备→IN_USE） */
-    void deliver(Long orderId);
+    /**
+     * 实际执行人确认交付（：工单→使用中，设备→IN_USE）
+     *
+     * <p><b>V56 / 第 9 项改造</b>：提交时不再绑定设备，因此交付必须带上
+     * 「要发哪一台」的资产编号，由服务端做三层校验（分类 → 型号 → 空闲）后绑定。
+     * V56 之前的历史工单（提交时已绑定、设备处于「审批中」）不需要传资产编号，
+     * 服务端按 {@code device_id} 是否为空自动分支。
+     */
+    void deliver(Long orderId, com.enterprise.ticket.module.order.dto.OrderDeliverRequest request);
 
     /**
      * 发起归还（ 第一步，需求方  ）

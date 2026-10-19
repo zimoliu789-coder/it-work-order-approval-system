@@ -10,8 +10,6 @@ import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
-import com.enterprise.ticket.module.device.entity.Device;
-import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.order.dto.vo.BorrowFlowPreviewVO;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import com.enterprise.ticket.module.user.entity.User;
@@ -20,7 +18,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -52,7 +49,6 @@ import java.util.Map;
 public class BorrowFlowPreviewer {
 
     private final DepartmentMapper departmentMapper;
-    private final DeviceMapper deviceMapper;
     private final UserMapper userMapper;
     private final ApprovalFlowService approvalFlowService;
     private final ApproverRuleResolver approverRuleResolver;
@@ -63,9 +59,9 @@ public class BorrowFlowPreviewer {
      *
      * @param useType            借用类型枚举名（SHORT_TERM / LONG_TERM）
      * @param expectedReturnDate 期望归还日期；长期领用为 null
-     * @param deviceId           申请的设备 id；可为 null（未选设备时也能预览）
+     * @param primaryCategoryId  要借用的设备**一级分类** id；可为 null（未选分类时也能预览）
      */
-    public BorrowFlowPreviewVO preview(String useType, LocalDate expectedReturnDate, Long deviceId) {
+    public BorrowFlowPreviewVO preview(String useType, LocalDate expectedReturnDate, Long primaryCategoryId) {
         BorrowFlowPreviewVO vo = new BorrowFlowPreviewVO();
         vo.setBound(false);
 
@@ -80,7 +76,7 @@ public class BorrowFlowPreviewer {
             return vo;
         }
 
-        Map<String, Object> formData = formData(useType, expectedReturnDate, deviceId);
+        Map<String, Object> formData = formData(useType, expectedReturnDate, primaryCategoryId);
         FlowDefinition definition;
         String label;
         if (department.getApprovalFlowVersionId() != null) {
@@ -136,20 +132,18 @@ public class BorrowFlowPreviewer {
         return user.getDisplayName() == null ? user.getUsername() : user.getDisplayName();
     }
 
-    /** 借用提交上下文 → 条件求值器的扁平 map（与提交侧同一套 key） */
-    private Map<String, Object> formData(String useType, LocalDate expectedReturnDate, Long deviceId) {
+    /**
+     * 借用提交上下文 → 条件求值器的扁平 map（与提交侧同一套 key）。
+     *
+     * <h2>V56 起为什么不再反查设备</h2>
+     * <p>提交时已经没有具体资产（设备绑定延后到交付扫码），设备金额在审批完成前
+     * 根本不可能知道。因此这里与 {@code OrderServiceImpl#create} 保持同一口径：
+     * <b>分类直接用申请人选的 {@code primaryCategoryId}，金额恒为 null</b>。
+     * 金额为 null 时 {@link BorrowFieldCatalog#formData} 不会放入该 key，
+     * 金额分档条件自然走默认分支 —— 这正是提交侧的实际行为，预览必须一致。
+     */
+    private Map<String, Object> formData(String useType, LocalDate expectedReturnDate, Long primaryCategoryId) {
         Integer expectedDays = BorrowFieldCatalog.expectedDays(LocalDate.now(), expectedReturnDate);
-        Long categoryId = null;
-        BigDecimal deviceAmount = null;
-        if (deviceId != null) {
-            Device device = deviceMapper.selectById(deviceId);
-            if (device != null) {
-                categoryId = device.getPrimaryCategoryId();
-                // 设备金额决定走三级还是四级：不取它，预览永远只能画出一条不含
-                // 「上级部门主管」的路径，与提交后的实际路径不符。
-                deviceAmount = device.getAmount();
-            }
-        }
-        return BorrowFieldCatalog.formData(useType, expectedDays, categoryId, null, deviceAmount);
+        return BorrowFieldCatalog.formData(useType, expectedDays, primaryCategoryId, null, null);
     }
 }

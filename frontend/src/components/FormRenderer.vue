@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { departmentApi } from '@/api/department'
+import { deviceCategoryApi, deviceModelApi } from '@/api/device'
 import { orderApi } from '@/api/order'
 import userApi from '@/api/user'
 import PendingAttachmentPicker from '@/components/PendingAttachmentPicker.vue'
@@ -17,6 +18,7 @@ import {
   type FormSchema
 } from '@/types/form'
 import type { DepartmentOption } from '@/types/department'
+import type { DeviceCategoryOption, DeviceModelOption } from '@/types/device'
 import type { DeviceOption } from '@/types/order'
 import type { UserOption } from '@/types/user'
 
@@ -95,6 +97,11 @@ function selectOptionLabel(option: { label: string; value: string }): string {
 const userOptions = ref<UserOption[]>([])
 const deviceOptions = ref<DeviceOption[]>([])
 const groupOptions = ref<DepartmentOption[]>([])
+/** 设备分类下拉项（一级 + 二级扁平，V59） */
+const categoryOptions = ref<DeviceCategoryOption[]>([])
+/** 型号下拉项（仅启用型号，V59 / R3） */
+const modelOptions = ref<DeviceModelOption[]>([])
+const modelOptionsLoading = ref(false)
 
 /**
  * 一级分部选项（V53）—— 「一级分部选择」字段的下拉数据源。
@@ -145,6 +152,34 @@ function update(field: FormField, value: unknown): void {
     next[key] = value
   }
   emit('update:modelValue', next)
+}
+
+/**
+ * 一级分类变更：顺带清掉**已不属于新一级**的二级分类。
+ *
+ * <p>不清的后果：用户先选「电脑 → 笔记本」，再把一级改成「办公用品」，
+ * 二级仍留着「笔记本」—— 提交时后端按「二级必须归属一级」校验直接拒，
+ * 而用户看到的界面上两项都是填好的，只会认为系统乱报错。
+ * （与改造前提交页的 {@code handlePrimaryChange} 同一取向；
+ * 项目约定：级联清空用 @change 主动做，不开 watch。）
+ */
+function updatePrimaryCategory(field: FormField, value: unknown): void {
+  update(field, value)
+  for (const sub of fields.value) {
+    if (sub.type !== 'DEVICE_SUBCATEGORY' || !sub.key) {
+      continue
+    }
+    const current = props.modelValue[sub.key]
+    if (current == null) {
+      continue
+    }
+    const stillBelongs = categoryOptions.value.some(
+      (item) => String(item.id) === String(current) && String(item.parentId) === String(value ?? '')
+    )
+    if (!stillBelongs) {
+      update(sub, null)
+    }
+  }
 }
 
 // ----------------------------------------------------------------------
@@ -245,6 +280,16 @@ function refLabel(field: FormField, value: unknown): string {
       const hit = groupOptions.value.find((item) => item.id === Number(id))
       return hit ? hit.deptName : `#${id}`
     }
+    case 'DEVICE_CATEGORY':
+    // 二级分类与一级分类同为分类 id，显示名解析共用一份选项
+    case 'DEVICE_SUBCATEGORY': {
+      const hit = categoryOptions.value.find((item) => item.id === Number(id))
+      return hit ? hit.categoryName : `#${id}`
+    }
+    case 'DEVICE_MODEL': {
+      const hit = modelOptions.value.find((item) => item.id === Number(id))
+      return hit ? `${hit.modelName}${hit.brand ? ' · ' + hit.brand : ''}` : `#${id}`
+    }
     default:
       return id
   }
@@ -266,6 +311,8 @@ function displayText(field: FormField): string {
     case 'USER_REF':
     case 'DEVICE_REF':
     case 'GROUP_REF':
+    case 'CATEGORY_REF':
+    case 'MODEL_REF':
       return refLabel(field, value)
     case 'NUMBER':
       return `${value}${field.unit ?? ''}`
@@ -304,7 +351,70 @@ async function loadRefOptions(): Promise<void> {
       // 普通员工无 staff:view 权限（部门选项接口要求它），回落 #id
     }
   }
+  // 设备分类（V59）：一级 / 二级共用一个扁平列表，二级的选项按**当前选中的一级**过滤。
+  // 这里刻意只发一次请求：树是一次性全量下发的，再按一级请求一遍只会出现
+  // 「两次响应不一致」这类难查问题（与原提交页同一取向）。
+  if (types.has('DEVICE_CATEGORY') || types.has('DEVICE_SUBCATEGORY')) {
+    try {
+      categoryOptions.value = await deviceCategoryApi.options()
+    } catch {
+      // 分类是借用单的必填依据：取不到就留空，由后端在提交时报字段级错误
+    }
+  }
+  if (types.has('DEVICE_MODEL')) {
+    modelOptionsLoading.value = true
+    try {
+      modelOptions.value = await deviceModelApi.options()
+    } catch {
+      // 同上
+    } finally {
+      modelOptionsLoading.value = false
+    }
+  }
 }
+
+/**
+ * 二级分类选项：按**同一表单内所选的一级分类**过滤。
+ *
+ * <p>为什么必须联动而不是列全部二级：一级与二级在值域上都是分类 id，
+ * 列出全部会让「电脑」下面出现「办公用品」这种属于另一棵树的选项，
+ * 用户选了下单，交付时按一级校验必然不匹配。
+ */
+const primaryCategoryField = computed(() =>
+  fields.value.find((field) => field.type === 'DEVICE_CATEGORY')
+)
+
+const subCategoryOptions = computed(() => {
+  const primaryField = primaryCategoryField.value
+  if (!primaryField) {
+    return []
+  }
+  const primary = String(rawValue(primaryField) ?? '')
+  if (!primary) {
+    return []
+  }
+  return categoryOptions.value.filter((item) => item.level === 2 && String(item.parentId) === primary)
+})
+
+/** 一级分类选项：只列 level=1（后端已按启用过滤，前端只做层级收窄） */
+const primaryCategoryOptions = computed(() =>
+  categoryOptions.value.filter((item) => item.level === 1)
+)
+
+/**
+ * 二级分类的占位提示：一级没选时说「请先选择」，选了但没有子类时说「可跳过」。
+ *
+ * <p>与改造前提交页的措辞保持一致 —— 那个页面已经用真实用户验证过这两种说法
+ * 不会引起「是不是坏了」的误解。
+ */
+const subCategoryPlaceholder = computed(() => {
+  const primaryField = primaryCategoryField.value
+  const primary = primaryField ? String(rawValue(primaryField) ?? '') : ''
+  if (!primary) {
+    return '请先选择设备类别'
+  }
+  return subCategoryOptions.value.length === 0 ? '该类别下没有二级分类，可跳过' : '选填，不选表示该类别下任意子类'
+})
 
 onMounted(loadRefOptions)
 watch(() => props.schema, loadRefOptions)
@@ -539,6 +649,62 @@ watch(() => props.schema, loadRefOptions)
               :key="dept.id"
               :label="dept.deptName"
               :value="String(dept.id)"
+            />
+          </el-select>
+
+          <!-- 设备分类（V59）：只列一级；借用单交付时按它做三层校验的第一层 -->
+          <el-select
+            v-else-if="field.type === 'DEVICE_CATEGORY'"
+            :model-value="singleValue(field)"
+            :placeholder="field.placeholder ?? '请选择设备类别'"
+            filterable
+            clearable
+            class="ts-form-render__full"
+            @update:model-value="(v) => updatePrimaryCategory(field, v)"
+          >
+            <el-option
+              v-for="category in primaryCategoryOptions"
+              :key="category.id"
+              :label="category.categoryName"
+              :value="String(category.id)"
+            />
+          </el-select>
+
+          <!-- 设备二级分类（V59）：选项随所选一级联动，一级没选时整个禁用 -->
+          <el-select
+            v-else-if="field.type === 'DEVICE_SUBCATEGORY'"
+            :model-value="singleValue(field)"
+            :placeholder="subCategoryPlaceholder"
+            filterable
+            clearable
+            :disabled="subCategoryOptions.length === 0"
+            class="ts-form-render__full"
+            @update:model-value="(v) => update(field, v)"
+          >
+            <el-option
+              v-for="category in subCategoryOptions"
+              :key="category.id"
+              :label="category.categoryName"
+              :value="String(category.id)"
+            />
+          </el-select>
+
+          <!-- 设备型号（V59 / R3）：读型号字典，存 model_id（不做字符串比对） -->
+          <el-select
+            v-else-if="field.type === 'DEVICE_MODEL'"
+            :model-value="singleValue(field)"
+            :placeholder="field.placeholder ?? '选填，留空表示同类别内哪台都行'"
+            filterable
+            clearable
+            :loading="modelOptionsLoading"
+            class="ts-form-render__full"
+            @update:model-value="(v) => update(field, v)"
+          >
+            <el-option
+              v-for="model in modelOptions"
+              :key="model.id"
+              :label="`${model.modelName}${model.brand ? ' · ' + model.brand : ''}`"
+              :value="String(model.id)"
             />
           </el-select>
 

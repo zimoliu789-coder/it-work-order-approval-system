@@ -409,7 +409,18 @@ public final class SystemConfigCatalog {
                                         // 这一项属「附件」，单独收尾比混在中间好找。
                                         number("attachment_orphan_grace_hours", "附件无主文件宽限期", "小时",
                                                 "附件落盘后多久仍未关联记录才判定为无主文件，留出写入时间余量。",
-                                                "24"))))));
+                                                "24"),
+                                        // V58：附件单张上限按业务类型拆分（R2 定稿「两个限额后台可视化可改」）。
+                                        // 必须放在这里的原因就是「可视化」：现场换了拍照设备要提高上限时，
+                                        // 不该要求运维改 application.yml 再重启服务。
+                                        number(StorageSettings.KEY_FAULT_PHOTO_MAX_MB, "故障照片单张上限", "MB",
+                                                "报修现场照片的单张大小上限。调大前请确认边缘 Nginx 的 client_max_body_size "
+                                                        + "与 Cloudflare 隧道（免费版单请求 100MB）都能放得下，否则会改成「上传直接失败」。",
+                                                String.valueOf(StorageSettings.DEFAULT_FAULT_PHOTO_MAX_MB)),
+                                        number(StorageSettings.KEY_APPLY_ATTACHMENT_MAX_MB, "借用附件单张上限", "MB",
+                                                "提交借用申请时随单上传的附件单张上限。与故障照片分开配置："
+                                                        + "附件随单长期留存、是磁盘占用的大头，不该跟着照片一起被放宽。",
+                                                String.valueOf(StorageSettings.DEFAULT_APPLY_ATTACHMENT_MAX_MB)))))));
 
         // ---------------- 2. 通知与验证 ----------------
         // 【为什么把两个渠道开关从「登录与安全」搬到这里】
@@ -645,21 +656,11 @@ public final class SystemConfigCatalog {
         groups.add(new Group("borrow", "借用与审批",
                 "控制设备借用的时长、顺延次数，以及超时未处理时的提醒与催办节奏。",
                 null,
-                List.of("临时锁时长决定「提交申请后设备被锁定多久」；锁过期未归还，锁会自动释放。",
-                        "顺延次数为 0 表示不允许顺延；催办冷却太短会让审批人收到大量重复提醒。"),
+                List.of("顺延次数为 0 表示不允许顺延；催办冷却太短会让审批人收到大量重复提醒。"),
                 false,
                 List.of(
                         anonymous("borrow-main", List.of(),
                                 List.of(
-                                        number("lock_timeout_minutes", "临时锁时长", "分钟",
-                                                "提交借用申请后设备被锁定的默认时长。",
-                                                "5"),
-                                        number("lock_timeout_min_minutes", "临时锁时长下限", "分钟",
-                                                "管理员手工设置锁时长的最小可填值。",
-                                                "1"),
-                                        number("lock_timeout_max_minutes", "临时锁时长上限", "分钟",
-                                                "管理员手工设置锁时长的最大可填值。",
-                                                "60"),
                                         number("borrow_expire_warning_days", "到期提前提醒", "天",
                                                 "设备到期前几天开始提醒借用人归还。",
                                                 "1"),

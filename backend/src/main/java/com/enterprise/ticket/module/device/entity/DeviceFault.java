@@ -81,6 +81,21 @@ public class DeviceFault {
     /** 更换配件说明 */
     private String replacedParts;
 
+    // ------------------------------------------------------------------
+    // V59 / 批次 3.5：报修表单放开后的自定义字段
+    // ------------------------------------------------------------------
+
+    /**
+     * 填写时使用的表单模板版本（内置「故障报修」类型绑定的那一版）。
+     *
+     * <p>与 {@code order_form_data.form_template_version_id} 同一快照语义：
+     * 之后管理员换绑表单，历史故障记录的回显仍按当初那一版。
+     */
+    private Long formTemplateVersionId;
+
+    /** 自定义字段值 JSON：{字段key: 值}；系统字段的值在专用列上，这里只存新增字段 */
+    private String formDataJson;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

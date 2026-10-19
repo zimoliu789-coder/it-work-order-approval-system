@@ -9,6 +9,7 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.form.FormSchemaCodec;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlowVersion;
@@ -44,6 +45,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,6 +53,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -610,5 +613,96 @@ class ApplyTypeServiceImplTest {
 
         assertEquals(List.of(2L, 1L, 3L), sorted.stream().map(ApplyType::getId).toList());
         assertFalse(sorted.isEmpty());
+    }
+
+    // ------------------------------------------------------------------
+    // 列表排序口径（内置置顶已移除）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("★ 管理列表：排序只认 sortOrder，内置类型不再被钉在最前（拖拽排序的前提）")
+    void listAllDoesNotPinBuiltInFirst() {
+        // 空列表会让 listAll 直接返回，Wrapper 仍已构造 —— 捕获得到即可断言
+        when(applyTypeMapper.selectList(any())).thenReturn(List.of());
+
+        service.listAll();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<ApplyType>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(applyTypeMapper).selectList(captor.capture());
+        String sql = captor.getValue().getSqlSegment().toLowerCase(Locale.ROOT);
+        assertTrue(sql.contains("sort_order"),
+                "排序必须落在 sort_order 上，否则拖拽保存了也不生效，实际 SQL：" + sql);
+        assertFalse(sql.contains("built_in"),
+                "不能再按 built_in 置顶：管理员把内置类型拖到后面会被这条 ORDER BY 悄悄改回来，"
+                        + "且界面上毫无提示，实际 SQL：" + sql);
+    }
+
+    // ------------------------------------------------------------------
+    // 整体排序
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("★ 排序：提交集合与现存类型不一致 → PARAM_INVALID，且一条都不改")
+    void sort_rejectsMismatchedIdSet() {
+        when(applyTypeMapper.selectList(any())).thenReturn(List.of(sortType(1L), sortType(2L), sortType(3L)));
+
+        ApplyTypeSortRequest request = new ApplyTypeSortRequest();
+        // 少提交一个（3 缺失）—— 这正是「页面列表已过期」的典型场景
+        request.setOrderedIds(List.of(2L, 1L));
+
+        assertEquals(ErrorCode.PARAM_INVALID, codeOf(() -> service.sort(request)));
+        verify(applyTypeMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 排序：集合一致时按下标逐条重写 sortOrder（1、2、3……）")
+    void sort_rewritesSortOrderByIndex() {
+        when(applyTypeMapper.selectList(any())).thenReturn(List.of(sortType(1L), sortType(2L), sortType(3L)));
+
+        ApplyTypeSortRequest request = new ApplyTypeSortRequest();
+        request.setOrderedIds(List.of(3L, 1L, 2L));
+
+        service.sort(request);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ApplyType>> captor =
+                ArgumentCaptor.forClass(
+                        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(applyTypeMapper, times(3)).update(any(), captor.capture());
+
+        List<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ApplyType>> wrappers =
+                captor.getAllValues();
+        // 注意顺序：MP 的 SET 子句是**惰性构建**的 —— 不先取一次 sql 就读不到参数，
+        // 表现是 paramNameValuePairs 里只剩 WHERE 的值（踩过一次，固化成注释）。
+        for (var wrapper : wrappers) {
+            String where = wrapper.getSqlSegment();
+            String setClause = wrapper.getSqlSet();
+            assertTrue(setClause.toLowerCase(Locale.ROOT).contains("sort_order"),
+                    "SET 子句必须写 sort_order 列，实际：" + setClause);
+            assertTrue(where.toLowerCase(Locale.ROOT).contains("id"),
+                    "WHERE 必须按 id 定位，实际：" + where);
+        }
+        // orderedIds = [3, 1, 2] → 每条 update 只带两个值：目标 id 与它的新 sortOrder（下标+1）
+        assertEquals(java.util.Set.of(3L, 1),
+                new java.util.HashSet<>(wrappers.get(0).getParamNameValuePairs().values()),
+                "第 0 次必须把 id=3 的 sortOrder 写成 1");
+        assertEquals(java.util.Set.of(1L, 2),
+                new java.util.HashSet<>(wrappers.get(1).getParamNameValuePairs().values()),
+                "第 1 次必须把 id=1 的 sortOrder 写成 2");
+        assertEquals(java.util.Set.of(2L, 3),
+                new java.util.HashSet<>(wrappers.get(2).getParamNameValuePairs().values()),
+                "第 2 次必须把 id=2 的 sortOrder 写成 3");
+    }
+
+    private ApplyType sortType(Long id) {
+        ApplyType t = new ApplyType();
+        t.setId(id);
+        t.setTypeCode("T" + id);
+        t.setTypeName("类型" + id);
+        t.setStatus(ApplyTypeStatus.ENABLED.name());
+        t.setBuiltIn(false);
+        return t;
     }
 }

@@ -1,5 +1,6 @@
 package com.enterprise.ticket.module.device.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -14,14 +15,19 @@ import com.enterprise.ticket.common.constant.OrderStatus;
 import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.UseType;
 import com.enterprise.ticket.common.exception.BusinessException;
+import com.enterprise.ticket.common.form.FormSchema;
+import com.enterprise.ticket.common.form.FormSchemaCodec;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.device.dto.DeviceFaultHandleRequest;
 import com.enterprise.ticket.module.device.dto.DeviceFaultQuery;
 import com.enterprise.ticket.module.device.dto.DeviceFaultRequest;
 import com.enterprise.ticket.module.device.dto.vo.DeviceFaultVO;
+import com.enterprise.ticket.module.device.dto.vo.FaultDeviceLookupVO;
 import com.enterprise.ticket.module.device.dto.vo.FaultDeviceOptionVO;
 import com.enterprise.ticket.module.device.entity.Device;
+import com.enterprise.ticket.module.device.entity.DeviceCategory;
 import com.enterprise.ticket.module.device.entity.DeviceFault;
+import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceFaultMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.device.service.DeviceFaultService;
@@ -38,6 +44,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +69,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
 
     private final DeviceFaultMapper faultMapper;
     private final DeviceMapper deviceMapper;
+    /** 分类名解析（V57：报修两种填报模式都要让用户确认「扫到的是不是那一类东西」） */
+    private final DeviceCategoryMapper categoryMapper;
     private final OrderMapper orderMapper;
     private final UserMapper userMapper;
     /** 报修「通知谁」+「谁能接单」的唯一判定来源（两处必须同源，见其类注释） */
@@ -75,6 +85,15 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
      * 方向是 device → order.support 的单向依赖（本类原本就已依赖 order 的实体与 Mapper）。
      */
     private final DivisionPrefillService divisionPrefillService;
+    /**
+     * 内置申请类型的表单版本指针（V59 / 批次 3.5）：报修表单放开后，
+     * 自定义字段要按内置「故障报修」当前绑定的那一版 schema 校验并随记录存档。
+     */
+    private final com.enterprise.ticket.module.applytype.service.ApplyTypeService applyTypeService;
+    /** 自定义字段的逐字段校验（与自定义申请同一套规则，避免两处口径漂移） */
+    private final com.enterprise.ticket.common.form.FormDataValidator formDataValidator;
+    /** 按版本 id 取已发布 schema（提交时必须用发布版，不能用草稿） */
+    private final com.enterprise.ticket.module.form.service.FormTemplateService formTemplateService;
 
     // ------------------------------------------------------------------
     // 上报
@@ -91,6 +110,12 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         if (request.getOccurredAt() != null && request.getOccurredAt().isAfter(now)) {
             throw new BusinessException(ErrorCode.FAULT_OCCURRED_TIME_INVALID);
         }
+
+        // V59 / 批次 3.5：报修表单放开后管理员新增的**自定义字段**。
+        // 位置有讲究：放在所有业务校验**之前**还是之后？放在这里（设备 / 权限 / 状态
+        // 都校验完、正要写库）—— 表单校验的错误是「字段级」的，比「设备状态不符」
+        // 更具体，而非法请求根本走不到这一步，不会白跑一次 schema 校验。
+        ResolvedFaultForm form = resolveFaultForm(request.getFormData());
 
         Long orderId = request.getOrderId();
         if (orderId != null) {
@@ -114,17 +139,18 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
             }
             // 工单内上报**不改变设备状态**：设备仍在借用中，去向（维修 / 可用）由归还登记决定
             Long id = insert(device, orderId, currentUserId, request, now,
-                    resolveDivision(currentUserId, request));
+                    resolveDivision(currentUserId, request), form);
             log.info("工单 {} 上报设备 {} 故障，记录 id={}（设备保持使用中）",
                     order.getOrderNo(), device.getId(), id);
             return id;
         }
 
-        // 台账直接登记：仅管理员 / 最终处理人；设备必须处于「可用」
-        if (!RoleCode.isAdminOrAbove(role)) {
-            throw new BusinessException(ErrorCode.FAULT_REPORTER_NOT_ALLOWED,
-                    "无工单故障登记仅管理员或最终处理人可操作");
-        }
+        // 无工单登记（V57 / 第 10 项「公共设备」模式起对普通员工开放）：
+        //   · 管理员 / 超管 —— 可对任意「可用」设备登记；
+        //   · 普通员工 —— 可对「可用」设备报修（会议室打印机、公共显示器这类
+        //     根本没有负责任人的设备，非要找管理员才能报，等于把这个入口废掉）。
+        // 唯一的硬约束仍然是「设备必须可用」：使用中的设备必须走工单路径，
+        // 否则设备状态会绕过借用单被改成维修中，那台设备的工单就永远收不回来了。
         if (deviceStatus != DeviceStatus.AVAILABLE) {
             throw new BusinessException(ErrorCode.FAULT_DEVICE_STATE_INVALID,
                     "设备当前状态为「" + DeviceStatus.labelOf(device.getStatus())
@@ -132,9 +158,48 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         }
         changeDeviceStatus(device, DeviceStatus.AVAILABLE, DeviceStatus.MAINTENANCE);
         Long id = insert(device, null, currentUserId, request, now,
-                resolveDivision(currentUserId, request));
+                resolveDivision(currentUserId, request), form);
         log.info("台账直接登记设备 {} 故障，记录 id={}，设备 可用 → 维修中", device.getId(), id);
         return id;
+    }
+
+    /**
+     * 报修表单解析结果（V59 / 批次 3.5）：版本指针 + 自定义字段值。
+     *
+     * <p>用一个 record 而不是两个返回值，是因为这两样东西必须**同生共死**：
+     * 有版本指针却没有值（或反之）会让「按哪一版回显」这个问题没有答案。
+     */
+    private record ResolvedFaultForm(Long formTemplateVersionId, Map<String, Object> formData) {
+
+        static final ResolvedFaultForm EMPTY = new ResolvedFaultForm(null, Map.of());
+    }
+
+    /**
+     * 校验并归一化报修的自定义字段（V59）。
+     *
+     * <h2>没绑表单版本时怎么办</h2>
+     * 与借用单同一取向（见 {@code OrderServiceImpl#resolveBorrowExtraFormData}）：
+     * **空 formData 照常放行，非空才拒绝**。存量调用方（台账页登记、归还时自动生成）
+     * 不传这个字段；升级未跑播种的部署也不会因此连普通报修都提交不了。
+     *
+     * <p>注意这里是 device 模块反向依赖 applytype 模块的**服务接口**而不是 Mapper ——
+     * 「内置报修类型绑在哪一版表单」是 applytype 域的知识，与它依赖 order 的
+     * {@code DivisionPrefillService} 同一模式（单向、经服务边界）。
+     */
+    private ResolvedFaultForm resolveFaultForm(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return ResolvedFaultForm.EMPTY;
+        }
+        Long formVersionId = applyTypeService.builtInFormVersionId(
+                com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog.CODE_FAULT_REPORT);
+        if (formVersionId == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "故障报修尚未配置表单版本，暂不支持提交自定义字段");
+        }
+        FormSchema schema = formTemplateService.requirePublishedSchema(formVersionId);
+        Map<String, Object> data = new LinkedHashMap<>(raw);
+        formDataValidator.validate(schema, data);
+        return new ResolvedFaultForm(formVersionId, data);
     }
 
     /**
@@ -152,7 +217,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
 
     private Long insert(Device device, Long orderId, Long reporterId, DeviceFaultRequest request,
                         LocalDateTime fallbackOccurredAt,
-                        DivisionPrefillService.ResolvedDivision division) {
+                        DivisionPrefillService.ResolvedDivision division,
+                        ResolvedFaultForm form) {
         DeviceFault fault = new DeviceFault();
         fault.setDeviceId(device.getId());
         fault.setOrderId(orderId);
@@ -163,6 +229,10 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         fault.setStatus(FaultStatus.PENDING_REPAIR.name());
         fault.setCurrentDivisionId(division.divisionId());
         fault.setDivisionSource(division.source());
+        // V59：自定义字段的版本指针与值。没配表单时两列留空（语义 = 没有自定义字段）。
+        fault.setFormTemplateVersionId(form.formTemplateVersionId());
+        fault.setFormDataJson(form.formData().isEmpty()
+                ? null : FormSchemaCodec.write(form.formData()));
         faultMapper.insert(fault);
         // V50：登记即通知维修人。改造前报修提交后**没有任何通知** ——
         // 维修人只能靠不断刷新列表才发现有新单，等于整条处理流程没有起点。
@@ -501,7 +571,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         Map<Long, Device> devices = devicesById(records);
         Map<Long, Order> orders = ordersById(records);
         Map<Long, String> userNames = userNameMap(reporterAndHandlerIds(records));
-        return PageResult.of(resultPage, fault -> toVO(fault, devices, orders, userNames));
+        Map<Long, FormSchema> schemas = formSchemasById(records);
+        return PageResult.of(resultPage, fault -> toVO(fault, devices, orders, userNames, schemas));
     }
 
     @Override
@@ -517,7 +588,10 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         Map<Long, Device> devices = devicesById(faults);
         Map<Long, Order> orders = ordersById(faults);
         Map<Long, String> userNames = userNameMap(reporterAndHandlerIds(faults));
-        return faults.stream().map(fault -> toVO(fault, devices, orders, userNames)).toList();
+        Map<Long, FormSchema> schemas = formSchemasById(faults);
+        return faults.stream()
+                .map(fault -> toVO(fault, devices, orders, userNames, schemas))
+                .toList();
     }
 
     @Override
@@ -584,9 +658,171 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         return options;
     }
 
+    // ------------------------------------------------------------------
+    // 第 10 项两种填报模式（V57）
+    // ------------------------------------------------------------------
+
+    @Override
+    public List<FaultDeviceLookupVO> ownedDevices() {
+        Long currentUserId = requireCurrentUserId();
+        // 「我的设备」= 两类的并集，少查任何一类都会让人找不到自己手上那台：
+        //   · owner_id = 我 —— 我是这台资产的负责人（长期固定，由资产管理员维护）；
+        //   · 我在用的设备 —— 我有一笔「使用中」的借用单。这类设备的负责人通常是 IT，
+        //     不是我。只按 owner_id 查，普通员工看到的是一个空列表 —— 报修入口等于不存在。
+        Map<Long, Order> myBorrowed = myBorrowedOrders(currentUserId);
+        LambdaQueryWrapper<Device> wrapper = Wrappers.lambdaQuery();
+        if (myBorrowed.isEmpty()) {
+            wrapper.eq(Device::getOwnerId, currentUserId);
+        } else {
+            wrapper.and(w -> w.eq(Device::getOwnerId, currentUserId)
+                    .or().in(Device::getId, myBorrowed.keySet()));
+        }
+        List<Device> devices = deviceMapper.selectList(wrapper.orderByAsc(Device::getDeviceName));
+        if (devices.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, String> categoryNames = categoryNameMap(devices);
+        return devices.stream()
+                .map(device -> toLookup(device, myBorrowed.get(device.getId()), categoryNames))
+                .toList();
+    }
+
+    @Override
+    public FaultDeviceLookupVO lookupByAssetNo(String assetNo) {
+        // 先取当前用户：本接口的「能不能报」判定依赖「我是不是这台的使用中借用人」
+        Long currentUserId = requireCurrentUserId();
+        String trimmed = assetNo == null ? null : assetNo.trim();
+        if (trimmed == null || trimmed.isEmpty()) {
+            return notFound();
+        }
+        Device device = deviceMapper.selectOne(Wrappers.<Device>lambdaQuery()
+                .eq(Device::getAssetNo, trimmed)
+                .last("LIMIT 1"));
+        if (device == null) {
+            return notFound();
+        }
+        Map<Long, String> categoryNames = categoryNameMap(List.of(device));
+        Order myBorrowed = myBorrowedOrders(currentUserId).get(device.getId());
+        FaultDeviceLookupVO vo = toLookup(device, myBorrowed, categoryNames);
+        vo.setFound(true);
+        return vo;
+    }
+
+    /** 查不到资产编号时的返回体（不抛错：输错编号是这个入口的日常动作） */
+    private FaultDeviceLookupVO notFound() {
+        FaultDeviceLookupVO vo = new FaultDeviceLookupVO();
+        vo.setFound(false);
+        vo.setReportable(false);
+        return vo;
+    }
+
+    /**
+     * 「当前用户正处在使用中的那些设备」—— key 为设备 id。
+     *
+     * <p>过滤条件不含「全部使用中」，只留 {@code applicant_id = 我}：报修带 orderId
+     * 会走工单路径，而服务端只允许该工单借用人（或管理员）关联。查全再判断等于
+     * 让前端拿到一个「看起来能关联、提交必被拒」的 orderId。
+     */
+    private Map<Long, Order> myBorrowedOrders(Long currentUserId) {
+        List<Order> orders = orderMapper.selectList(Wrappers.<Order>lambdaQuery()
+                .select(Order::getId, Order::getOrderNo, Order::getDeviceId, Order::getApplicantId)
+                .eq(Order::getStatus, OrderStatus.BORROWED.name())
+                .eq(Order::getApplicantId, currentUserId));
+        return orders.stream()
+                .filter(order -> order.getDeviceId() != null)
+                // 同一台设备理论上只会有一笔使用中工单；万一有脏数据，取 id 最大的那笔（最新）
+                .collect(Collectors.toMap(Order::getDeviceId, Function.identity(), (a, b) -> a.getId() >= b.getId() ? a : b));
+    }
+
+    /** 分类名映射（一次查库，避免逐台查）；分类缺失时返回空 map，VO 里对应字段为空 */
+    private Map<Long, String> categoryNameMap(Collection<Device> devices) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (Device device : devices) {
+            if (device.getPrimaryCategoryId() != null) {
+                ids.add(device.getPrimaryCategoryId());
+            }
+            if (device.getSecondaryCategoryId() != null) {
+                ids.add(device.getSecondaryCategoryId());
+            }
+        }
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        return categoryMapper.selectBatchIds(ids).stream()
+                .filter(category -> category.getCategoryName() != null)
+                .collect(Collectors.toMap(DeviceCategory::getId, DeviceCategory::getCategoryName, (a, b) -> a));
+    }
+
+    /**
+     * 从分类名映射里取名字。
+     *
+     * <p>存在的唯一理由：{@link #categoryNameMap} 在「一个分类 id 都没有」时返回 {@code Map.of()}，
+     * 而<b>不可变集合的 {@code get(null)} 会抛 NPE</b>（HashMap 不会，所以这个坑只在空表时出现）。
+     * 未归类的设备恰好就是这种情况 —— 不打这个补丁，接口会对着一条正常数据 500。
+     */
+    private String categoryNameOf(Map<Long, String> names, Long categoryId) {
+        return categoryId == null ? null : names.get(categoryId);
+    }
+
+    /**
+     * 设备 → 报修判定（两个填报模式共用的唯一口径）。
+     *
+     * <p>可报修只有两种情形：
+     * <ol>
+     *   <li><b>设备可用</b> ⇒ 走台账登记路径（无 orderId），报修后设备 可用 → 维修中；</li>
+     *   <li><b>设备使用中且正是我在用</b> ⇒ 走工单路径（带 orderId），设备保持使用中。</li>
+     * </ol>
+     * <p>其余一律不可报，并给出**能照着做**的原因：被别人用着的要去找使用人，
+     * 已报废/丢失的要走资产处置 —— 「不可报修」四个字本身没有任何指导意义。
+     */
+    private FaultDeviceLookupVO toLookup(Device device, Order myBorrowedOrder, Map<Long, String> categoryNames) {
+        FaultDeviceLookupVO vo = new FaultDeviceLookupVO();
+        vo.setDeviceId(device.getId());
+        vo.setDeviceName(device.getDeviceName());
+        vo.setAssetNo(device.getAssetNo());
+        // 分类 id 允许为空（历史台账可能没归类），而 categoryNameMap 在「一个 id 都没有」时
+        // 返回的是 Map.of() —— **不可变集合不接受 null 键，get(null) 直接抛 NPE**。
+        // 这里必须先用 null 短路，否则「没归类的设备」会让整个下拉接口 500
+        // （toVO 里同类踩过一次，见其 orderId 处的注释）。
+        vo.setPrimaryCategoryName(categoryNameOf(categoryNames, device.getPrimaryCategoryId()));
+        vo.setSecondaryCategoryName(categoryNameOf(categoryNames, device.getSecondaryCategoryId()));
+        vo.setDeviceStatus(device.getStatus());
+        vo.setDeviceStatusLabel(DeviceStatus.labelOf(device.getStatus()));
+
+        DeviceStatus status = DeviceStatus.of(device.getStatus());
+        if (status == DeviceStatus.AVAILABLE) {
+            vo.setReportable(true);
+            return vo;
+        }
+        if (status == DeviceStatus.IN_USE) {
+            if (myBorrowedOrder != null) {
+                vo.setOrderId(myBorrowedOrder.getId());
+                vo.setOrderNo(myBorrowedOrder.getOrderNo());
+                vo.setReportable(true);
+                return vo;
+            }
+            vo.setReason("该设备正在被他人使用，请让实际使用人从「提交申请」页报修（会关联到他的借用单）");
+            return vo;
+        }
+        if (status == DeviceStatus.MAINTENANCE) {
+            vo.setReason("该设备已在维修中，无需重复报修");
+            return vo;
+        }
+        if (status == DeviceStatus.SCRAPPED) {
+            vo.setReason("该设备已报废，无需报修");
+            return vo;
+        }
+        if (status == DeviceStatus.LOST) {
+            vo.setReason("该设备已标记丢失，请找资产管理员处理");
+            return vo;
+        }
+        // LOCKED（历史遗留）/ IN_APPROVAL：都在流程中间态，交给流程走完
+        vo.setReason("该设备正在流程处理中（" + DeviceStatus.labelOf(device.getStatus()) + "），请稍后再试");
+        return vo;
+    }
+
     /** 下拉展示文案：设备名（资产编号）；工单路径追加「· 使用中：申请人」 */
-    private String optionLabel(Device device, Order order, String applicantName) {
-        StringBuilder sb = new StringBuilder(device.getDeviceName() == null ? "" : device.getDeviceName());
+    private String optionLabel(Device device, Order order, String applicantName) {        StringBuilder sb = new StringBuilder(device.getDeviceName() == null ? "" : device.getDeviceName());
         if (device.getAssetNo() != null && !device.getAssetNo().isBlank()) {
             sb.append("（").append(device.getAssetNo()).append('）');
         }
@@ -611,7 +847,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
      * @param userNames 预取姓名映射；为 null 时按本条记录自行查询
      */
     private DeviceFaultVO toVO(DeviceFault fault, Map<Long, Device> devices,
-                               Map<Long, Order> orders, Map<Long, String> userNames) {
+                               Map<Long, Order> orders, Map<Long, String> userNames,
+                               Map<Long, FormSchema> schemas) {
         Device device = devices == null
                 ? deviceMapper.selectById(fault.getDeviceId())
                 : devices.get(fault.getDeviceId());
@@ -650,8 +887,43 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         vo.setRepairerName(names.get(fault.getRepairerId()));
         vo.setRepairCost(fault.getRepairCost());
         vo.setReplacedParts(fault.getReplacedParts());
+        // V59：自定义字段。版本指针 + 值 + 当初那一版 schema 三者一起下发，
+        // 前端才做得「label → 值」的回显；缺 schema 就只能显示 key，等于没回显。
+        vo.setFormTemplateVersionId(fault.getFormTemplateVersionId());
+        vo.setFormData(fault.getFormDataJson() == null
+                ? Map.of() : FormSchemaCodec.readData(fault.getFormDataJson()));
+        vo.setFormSchema(fault.getFormTemplateVersionId() == null
+                ? null : schemas.get(fault.getFormTemplateVersionId()));
         vo.setCreatedAt(fault.getCreatedAt());
         return vo;
+    }
+
+    /**
+     * 批量取「故障记录当初用的那一版」表单 schema（V59）。
+     *
+     * <p>按版本 id 去重后一次查完，避免逐行 N+1 —— 故障列表最多 100 行，
+     * 而同一批记录大概率共用同一个版本（都是同一个内置报修类型）。
+     */
+    private Map<Long, FormSchema> formSchemasById(Collection<DeviceFault> faults) {
+        Set<Long> versionIds = faults.stream()
+                .map(DeviceFault::getFormTemplateVersionId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (versionIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, FormSchema> result = new HashMap<>();
+        for (Long versionId : versionIds) {
+            try {
+                result.put(versionId, formTemplateService.requirePublishedSchema(versionId));
+            } catch (BusinessException ex) {
+                // 版本被删 / 未发布是配置问题，不该让整张故障列表打不开：
+                // 这条记录的 schema 留空，前端按「无自定义字段」渲染，其余记录正常。
+                log.warn("故障记录引用的表单版本不可用，跳过 schema 加载 versionId={} msg={}",
+                        versionId, ex.getMessage());
+            }
+        }
+        return result;
     }
 
     // ------------------------------------------------------------------

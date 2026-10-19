@@ -9,6 +9,7 @@ import com.enterprise.ticket.common.constant.BatchLimits;
 import com.enterprise.ticket.common.constant.DeviceStatus;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.device.dto.DeviceBatchCategoryRequest;
+import com.enterprise.ticket.module.device.dto.DeviceBatchOwnerRequest;
 import com.enterprise.ticket.module.device.dto.DeviceBatchStatusRequest;
 import com.enterprise.ticket.module.device.dto.DeviceSaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceStatusRequest;
@@ -467,6 +468,64 @@ class DeviceServiceImplTest {
         assertEquals(1, result.getFailed());
         assertEquals("id=2", result.getFailures().get(0).getName(),
                 "设备已被删除时明细要回落 id，否则这行显示空白、用户无从定位");
+    }
+
+    // ------------------------------------------------------------------
+    // 批量设置负责人（V57 / 第 10 项）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("批量设负责人：只写 owner_id 一列，且负责人必须真实存在")
+    void batchAssignOwner_setsOwnerOnly() {
+        when(userMapper.selectById(21L)).thenReturn(user(21L));
+        when(deviceMapper.selectById(1L)).thenReturn(device(1L, "A", "IT-0001", DeviceStatus.AVAILABLE.name()));
+        when(deviceMapper.selectById(2L)).thenReturn(device(2L, "B", "IT-0002", DeviceStatus.AVAILABLE.name()));
+
+        BatchResultVO result = service.batchAssignOwner(ownerRequest(List.of(1L, 2L), 21L));
+
+        assertEquals(2, result.getSucceeded());
+        assertEquals(0, result.getFailed());
+        // 两次 UPDATE：批量只改负责人，不能复用单条 update（整体替换会把品牌/型号抹掉）
+        verify(deviceMapper, times(2)).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("★ 批量设负责人：负责人 id 悬空 ⇒ 整批拒绝（悬空 id 的表现是「报修页永远看不到这台设备」）")
+    void batchAssignOwner_ownerMissing_rejected() {
+        when(userMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.batchAssignOwner(ownerRequest(List.of(1L), 999L)));
+
+        assertEquals(ErrorCode.PARAM_INVALID, ex.getErrorCode());
+        verify(deviceMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("批量设负责人：ownerId 传空 ⇒ 清空负责人（设备转为公共设备，仍允许执行）")
+    void batchAssignOwner_nullOwner_clearsOwner() {
+        when(deviceMapper.selectById(1L)).thenReturn(device(1L, "A", "IT-0001", DeviceStatus.AVAILABLE.name()));
+
+        BatchResultVO result = service.batchAssignOwner(ownerRequest(List.of(1L), null));
+
+        assertEquals(1, result.getSucceeded());
+        verify(userMapper, never()).selectById(any());
+    }
+
+    private com.enterprise.ticket.module.user.entity.User user(Long id) {
+        com.enterprise.ticket.module.user.entity.User user = new com.enterprise.ticket.module.user.entity.User();
+        user.setId(id);
+        user.setUsername("u" + id);
+        user.setEnabled(true);
+        user.setDimission(false);
+        return user;
+    }
+
+    private DeviceBatchOwnerRequest ownerRequest(List<Long> ids, Long ownerId) {
+        DeviceBatchOwnerRequest request = new DeviceBatchOwnerRequest();
+        request.setIds(ids);
+        request.setOwnerId(ownerId);
+        return request;
     }
 
     private DeviceBatchStatusRequest statusRequest(List<Long> ids, String target) {

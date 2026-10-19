@@ -15,7 +15,7 @@ import {
   returnConditionPlaceholder,
   returnConditionRequiresRemark
 } from '@/types/order'
-import type { OrderItem, ReturnConditionCode } from '@/types/order'
+import type { OrderItem, ReturnConditionCode, DeviceOption } from '@/types/order'
 import type { ColumnDef } from '@/types/table'
 
 /**
@@ -62,7 +62,6 @@ const size = ref(10)
 
 const detailVisible = ref(false)
 const detailId = ref<number | null>(null)
-const acting = ref(false)
 
 /** 确认收回弹窗 */
 const confirmVisible = ref(false)
@@ -143,26 +142,131 @@ function isTimeout(order: OrderItem): boolean {
   return order.borrowTimeout === true
 }
 
-async function handleDeliver(order: OrderItem): Promise<void> {
+// ------------------------------------------------------------------
+// 确认交付（V56 / 第 9 项：从「点一下确认」改为「扫码绑定具体资产」）
+//
+// 新单在提交时**没有设备**（申请人只挑类别 + 型号），所以交付这一步必须指定
+// 到底发哪一台。后端按「分类 → 型号 → 空闲」三层校验后绑定，因此这里的表单
+// 要尽量让执行人在**扫码之前**就看出「这台不合规」：
+// - 候选列表按工单的类别 / 型号预过滤（口径与后端校验一致）；
+// - 手输 / 扫码枪输入始终可用（货架前的真实动作就是扫标签）。
+// ------------------------------------------------------------------
+
+/** 交付弹窗 */
+const deliverVisible = ref(false)
+const deliverTarget = ref<OrderItem | null>(null)
+const deliverSubmitting = ref(false)
+const deliverAssetNo = ref('')
+/** 可交付候选（仅「待绑定设备」的新单加载；按类别 / 型号预过滤） */
+const deliverCandidates = ref<DeviceOption[]>([])
+const deliverLoading = ref(false)
+
+/**
+ * 这台工单是否**尚未绑定设备**。
+ *
+ * <p>以服务端下发的 {@link OrderItem.pendingDeviceBinding} 为准，
+ * 再兜一道 `deviceId == null`：历史单（V56 之前）在待交付时一定有 deviceId，
+ * 两者都为空只可能是异常数据 —— 那种情况仍走「扫码绑定」，让执行人现场决定。
+ */
+function needsBinding(order: OrderItem): boolean {
+  return order.pendingDeviceBinding === true || order.deviceId == null
+}
+
+/** 工单要求的「借什么」文案（交付时的核对依据，直接展示给执行人） */
+function borrowTargetText(order: OrderItem): string {
+  const parts: string[] = []
+  if (order.primaryCategoryName) {
+    parts.push(order.primaryCategoryName)
+  }
+  if (order.secondaryCategoryName) {
+    parts.push(order.secondaryCategoryName)
+  }
+  if (order.modelName) {
+    parts.push(`型号 ${order.modelName}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : '未指定类别'
+}
+
+async function openDeliver(order: OrderItem): Promise<void> {
+  deliverTarget.value = order
+  deliverAssetNo.value = ''
+  deliverCandidates.value = []
+  deliverVisible.value = true
+  if (needsBinding(order)) {
+    await loadDeliverCandidates(order)
+  }
+}
+
+/**
+ * 拉候选设备并按工单要求预过滤。
+ *
+ * <p>过滤规则**刻意与后端 `resolveDeviceForDelivery` 逐条对齐**（一级必匹配；
+ * 申请填了二级才校验二级；申请填了型号才校验型号）—— 多滤会被判「没得选」，
+ * 少滤则让执行人选中一台必然被拒的设备。真正的裁决仍在后端。
+ *
+ * <p>拿的是「可申请设备」接口（仅 AVAILABLE，`isAuthenticated` 即可），
+ * 而不是设备台账接口：执行人通常是 IT 一线，未必有 `device:ledger:view`。
+ */
+async function loadDeliverCandidates(order: OrderItem): Promise<void> {
+  deliverLoading.value = true
   try {
-    await ElMessageBox.confirm(
-      `确认已将设备「${order.deviceName ?? '-'}」交付给申请人「${order.applicantName ?? '-'}」？确认后工单进入「使用中」，设备状态同步变为「使用中」。`,
-      '确认交付',
-      { type: 'info', confirmButtonText: '确认已交付', cancelButtonText: '取消' }
-    )
+    const all = await orderApi.selectableDevices(undefined, 200)
+    deliverCandidates.value = all.filter((device) => {
+      if (order.primaryCategoryId != null && device.primaryCategoryId !== order.primaryCategoryId) {
+        return false
+      }
+      if (
+        order.secondaryCategoryId != null &&
+        device.secondaryCategoryId !== order.secondaryCategoryId
+      ) {
+        return false
+      }
+      if (order.modelId != null && device.modelId !== order.modelId) {
+        return false
+      }
+      return true
+    })
   } catch {
+    // 拉不到候选不影响交付：手输 / 扫码仍然可用，只是少了一层便利
+    deliverCandidates.value = []
+  } finally {
+    deliverLoading.value = false
+  }
+}
+
+/** 选中候选设备 → 回填资产编号（提交仍只传资产编号，不传设备 id） */
+function handleCandidatePick(assetNo: string | null): void {
+  if (assetNo) {
+    deliverAssetNo.value = assetNo
+  }
+}
+
+async function submitDeliver(): Promise<void> {
+  const target = deliverTarget.value
+  if (!target) {
     return
   }
-  acting.value = true
+  const binding = needsBinding(target)
+  const assetNo = deliverAssetNo.value.trim()
+  if (binding && !assetNo) {
+    ElMessage.warning('请扫描或输入要交付的设备资产编号')
+    return
+  }
+  deliverSubmitting.value = true
   try {
-    await orderApi.deliver(order.id)
-    ElMessage.success('交付完成，工单已进入使用中')
+    await orderApi.deliver(target.id, binding ? assetNo : null)
+    ElMessage.success(
+      binding
+        ? `交付完成：设备 ${assetNo} 已绑定该工单并进入使用中`
+        : '交付完成，工单已进入使用中'
+    )
+    deliverVisible.value = false
     detailVisible.value = false
     await load()
   } catch {
-    // 状态已变化等非法操作由请求层统一提示
+    // 三层校验失败（分类 / 型号 / 空闲）由请求层给出明确中文原因，执行人换一台即可
   } finally {
-    acting.value = false
+    deliverSubmitting.value = false
   }
 }
 
@@ -281,7 +385,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
             link
             type="success"
             size="small"
-            @click="handleDeliver(row as OrderItem)"
+            @click="openDeliver(row as OrderItem)"
           >
             确认交付
           </el-button>
@@ -347,7 +451,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
                   plain
                   @done="load"
                 />
-                <el-button v-if="canDeliver(row)" size="small" type="success" plain @click="handleDeliver(row)">
+                <el-button v-if="canDeliver(row)" size="small" type="success" plain @click="openDeliver(row)">
                   确认交付
                 </el-button>
                 <el-button v-if="canConfirm(row)" size="small" type="warning" plain @click="openConfirm(row)">
@@ -377,14 +481,90 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
         <el-button
           v-if="canDeliver(detail)"
           type="success"
-          :loading="acting"
-          @click="handleDeliver(detail)"
+          @click="openDeliver(detail)"
         >
           确认交付
         </el-button>
         <el-button v-if="canConfirm(detail)" type="warning" @click="openConfirm(detail)">确认收回</el-button>
       </template>
     </OrderDetailDialog>
+
+    <!-- 确认交付（V56）：新单要先扫码 / 输入资产编号，历史单只需确认 -->
+    <el-dialog v-model="deliverVisible" title="确认交付设备" :width="isMobile ? '94%' : '560px'">
+      <div v-if="deliverTarget" class="ts-op__deliver">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="工单编号">{{ deliverTarget.orderNo }}</el-descriptions-item>
+          <el-descriptions-item label="申请人">{{ deliverTarget.applicantName ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="申请内容">{{ borrowTargetText(deliverTarget) }}</el-descriptions-item>
+          <el-descriptions-item label="归还日期">
+            {{ deliverTarget.expectedReturnDate ?? '-' }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <template v-if="needsBinding(deliverTarget)">
+          <el-alert
+            class="ts-mt-16"
+            type="info"
+            :closable="false"
+            show-icon
+            title="这张单提交时没有绑定具体资产"
+            description="请扫描（或输入）要交给申请人的那台设备的资产编号。系统会按「分类 → 型号 → 是否空闲」逐项校验，不匹配会当场说明原因。"
+          />
+
+          <el-form class="ts-mt-16" label-width="90px">
+            <el-form-item label="资产编号" required>
+              <el-input
+                v-model="deliverAssetNo"
+                placeholder="扫描或输入资产编号，如 IT-2026-0001"
+                clearable
+                @keyup.enter="submitDeliver"
+              />
+            </el-form-item>
+            <el-form-item label="候选设备">
+              <el-select
+                :model-value="deliverAssetNo || null"
+                class="ts-op__deliver-select"
+                placeholder="可选：从符合要求的可用设备中挑一台"
+                filterable
+                clearable
+                :loading="deliverLoading"
+                @change="handleCandidatePick"
+              >
+                <el-option
+                  v-for="device in deliverCandidates"
+                  :key="device.id"
+                  :label="`${device.deviceName}（${device.assetNo}）${device.model ? ' · ' + device.model : ''}`"
+                  :value="device.assetNo"
+                />
+              </el-select>
+              <p class="ts-text-hint ts-op__deliver-hint">
+                {{
+                  deliverLoading
+                    ? '正在按申请内容筛选可用设备…'
+                    : deliverCandidates.length > 0
+                      ? `按申请内容筛出 ${deliverCandidates.length} 台可用设备`
+                      : '当前没有符合申请要求的可用设备，可换一台手输验证，或联系申请人确认'
+                }}
+              </p>
+            </el-form-item>
+          </el-form>
+        </template>
+
+        <el-alert
+          v-else
+          class="ts-mt-16"
+          type="info"
+          :closable="false"
+          show-icon
+          title="该单在提交时已绑定设备"
+          :description="`确认后设备「${deliverTarget.deviceName ?? '-'}」进入使用中，工单进入使用中状态。`"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="deliverVisible = false">取消</el-button>
+        <el-button type="primary" :loading="deliverSubmitting" @click="submitDeliver">确认交付</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 确认收回：登记设备状态（ 第二步）+ 归还照片 -->
     <el-dialog v-model="confirmVisible" title="确认收回设备" :width="isMobile ? '94%' : '520px'">
@@ -508,6 +688,17 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 
 .ts-op__confirm-select {
   width: 100%;
+}
+
+/* 交付弹窗：候选下拉铺满、提示语与说明栏同字号（与收回弹窗保持一致的排版节奏） */
+.ts-op__deliver-select {
+  width: 100%;
+}
+
+.ts-op__deliver-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .ts-op__confirm-effect {

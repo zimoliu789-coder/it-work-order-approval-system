@@ -7,7 +7,11 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
 import com.enterprise.ticket.module.device.entity.Device;
+import com.enterprise.ticket.module.device.entity.DeviceCategory;
+import com.enterprise.ticket.module.device.entity.DeviceModel;
+import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -46,6 +50,10 @@ class FormDataValidatorTest {
     private DeviceMapper deviceMapper;
     @Mock
     private DepartmentMapper departmentMapper;
+    @Mock
+    private DeviceCategoryMapper deviceCategoryMapper;
+    @Mock
+    private DeviceModelMapper deviceModelMapper;
 
     @InjectMocks
     private FormDataValidator validator;
@@ -322,6 +330,75 @@ class FormDataValidatorTest {
         when(departmentMapper.selectById(11L)).thenReturn(child);
 
         assertTrue(validator.validateAndCollect(schema(field), data("group", 11)).isEmpty());
+    }
+
+    // ------------------------------------------------------------------
+    // 设备域引用（V59 / 批次 3.5：借用单表单放开）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("★ 一级分类：只放行 level=1 —— 否则交付时的三层校验永远匹配不上，且不报错")
+    void validateDeviceCategoryRef() {
+        FormField field = field(FormFieldType.DEVICE_CATEGORY.name(), "primary_category_id", "设备类别");
+
+        DeviceCategory primary = new DeviceCategory();
+        primary.setId(1L);
+        primary.setCategoryName("电脑");
+        primary.setLevel(DeviceCategory.LEVEL_PRIMARY);
+        DeviceCategory secondary = new DeviceCategory();
+        secondary.setId(2L);
+        secondary.setCategoryName("笔记本");
+        secondary.setLevel(DeviceCategory.LEVEL_SECONDARY);
+
+        when(deviceCategoryMapper.selectById(1L)).thenReturn(primary);
+        when(deviceCategoryMapper.selectById(2L)).thenReturn(secondary);
+
+        assertTrue(validator.validateAndCollect(schema(field), data("primary_category_id", 1)).isEmpty());
+        assertTrue(validator.validateAndCollect(schema(field), data("primary_category_id", 2)).get(0)
+                .contains("只能选择一级设备分类"));
+        assertTrue(validator.validateAndCollect(schema(field), data("primary_category_id", 999)).get(0)
+                .contains("不存在"));
+        assertTrue(validator.validateAndCollect(schema(field), data("primary_category_id", "abc")).get(0)
+                .contains("必须是设备分类 id"));
+    }
+
+    @Test
+    @DisplayName("★ 二级分类：只放行 level=2 —— 与一级分类同值域，靠字段类型区分层级")
+    void validateDeviceSubCategoryRef() {
+        FormField field = field(FormFieldType.DEVICE_SUBCATEGORY.name(), "secondary_category_id", "二级分类");
+
+        DeviceCategory primary = new DeviceCategory();
+        primary.setId(1L);
+        primary.setCategoryName("电脑");
+        primary.setLevel(DeviceCategory.LEVEL_PRIMARY);
+        DeviceCategory secondary = new DeviceCategory();
+        secondary.setId(2L);
+        secondary.setCategoryName("笔记本");
+        secondary.setLevel(DeviceCategory.LEVEL_SECONDARY);
+
+        when(deviceCategoryMapper.selectById(1L)).thenReturn(primary);
+        when(deviceCategoryMapper.selectById(2L)).thenReturn(secondary);
+
+        assertTrue(validator.validateAndCollect(schema(field), data("secondary_category_id", 2)).isEmpty());
+        assertTrue(validator.validateAndCollect(schema(field), data("secondary_category_id", 1)).get(0)
+                .contains("只能选择二级设备分类"));
+    }
+
+    @Test
+    @DisplayName("★ 型号引用：必须是型号字典里存在的行（R3：比对 model_id，不做字符串比对）")
+    void validateDeviceModelRef() {
+        FormField field = field(FormFieldType.DEVICE_MODEL.name(), "model_id", "型号");
+
+        DeviceModel model = new DeviceModel();
+        model.setId(5L);
+        model.setModelName("ThinkPad X1");
+        when(deviceModelMapper.selectById(5L)).thenReturn(model);
+
+        assertTrue(validator.validateAndCollect(schema(field), data("model_id", 5)).isEmpty());
+        assertTrue(validator.validateAndCollect(schema(field), data("model_id", 999)).get(0)
+                .contains("所选设备型号不存在"));
+        assertTrue(validator.validateAndCollect(schema(field), data("model_id", "abc")).get(0)
+                .contains("必须是设备型号 id"));
     }
 
     // ------------------------------------------------------------------

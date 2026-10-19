@@ -285,6 +285,9 @@ function resolvePageComponent(path: string): RouteRecordSingleView['component'] 
       return () => import('@/views/asset/ledger/index.vue')
     case '/asset/category':
       return () => import('@/views/asset/category/index.vue')
+    case '/asset/model':
+      // V56 / R3 设备型号字典（借用单按型号申请的字典来源）
+      return () => import('@/views/asset/model/index.vue')
     case '/asset/fault':
       //  设备故障记录
       return () => import('@/views/asset/fault/index.vue')

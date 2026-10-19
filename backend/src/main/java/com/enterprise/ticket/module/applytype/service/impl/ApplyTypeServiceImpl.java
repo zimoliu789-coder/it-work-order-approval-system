@@ -36,6 +36,7 @@ import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowMapper;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
+import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
@@ -70,6 +71,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -158,9 +160,11 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     @Override
     public List<ApplyTypeVO> listAll() {
         List<ApplyType> types = applyTypeMapper.selectList(Wrappers.<ApplyType>lambdaQuery()
-                // 系统内置类型置顶（V48）：借用 / 报修是高频入口，且它们的表单与后置动作
-                // 都由代码提供、管理员改不了结构 —— 排在自建类型之前才符合阅读顺序。
-                .orderByDesc(ApplyType::getBuiltIn)
+                // 排序只认 sortOrder（同序按 id）—— 不再把内置类型钉在最前：
+                // 管理员可以拖拽调整顺序（含内置类型），置顶排序会让「拖了却没反应」，
+                // 而且表现是拖拽交互坏掉，不报错、不提示。
+                // 初始顺序由播种决定（内置 10/11、预置 100 起、自建追加到末尾），
+                // 之后完全由管理员在配置页掌控。
                 .orderByAsc(ApplyType::getSortOrder)
                 .orderByAsc(ApplyType::getId));
         if (types.isEmpty()) {
@@ -519,9 +523,13 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, ApplyTypeSaveRequest request) {
         ApplyType existing = requireType(id);
-        // 内置类型（V48）没有表单模板、编码即 OrderType 取值，整体覆盖只会写坏它。
-        // 它的可改面只有「说明 + 审批流程」，走 updateBuiltInConfig。
-        assertNotBuiltIn(existing, "系统内置类型不支持整体覆盖，请在「配置」里修改说明与审批流程");
+        // V59 / 批次 3.5：内置类型（D3「表单、审批流程完全放开可自定义」）不再一律拒绝，
+        // 而是走一条**收窄的更新路径** —— 可改表单与流程，不可改编码 / 提交权限 / 单据前缀，
+        // 也不可删除（delete 仍恒拒）。收窄的理由见 updateBuiltInType 的方法注释。
+        if (Boolean.TRUE.equals(existing.getBuiltIn())) {
+            updateBuiltInType(existing, request);
+            return;
+        }
         String typeCode = request.getTypeCode().trim();
         FormSchemaValidator.validateTypeCode(typeCode);
         assertTypeCodeAvailable(typeCode, id);
@@ -545,6 +553,77 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         log.info("申请类型 {} 已更新（code {} → {}）", id, existing.getTypeCode(), typeCode);
     }
 
+    /**
+     * 内置类型的更新路径（V59 / D3「表单、审批流程完全放开可自定义」）。
+     *
+     * <h2>为什么必须是收窄的，而不能直接走通用 update</h2>
+     * 内置类型有三样东西是**后端链路的定位符**，改一个就静默失联：
+     * <ul>
+     *   <li><b>typeCode</b> —— 它同时是 {@code OrderType} 的取值（{@code BORROW}）
+     *       与 {@code device_fault} 的判别依据。改编码 = 后端认不出这张卡；</li>
+     *   <li><b>提交权限</b> —— 内置卡片对全员开放是产品设定（提交页按 sortOrder 平铺渲染），
+     *       收窄到某个部门会让「卡片看得见、点进去报无权限」；</li>
+     *   <li><b>单据前缀</b> —— 工单号的命名约定，改了历史单与新单的号段会断。</li>
+     * </ul>
+     * 因此这里只放开四类字段：名称 / 图标 / 说明 / 排序、**表单版本**、审批方式与流程绑定。
+     *
+     * <h2>表单版本不允许置空</h2>
+     * 「放开」指的是「改表单」，不是「去掉表单」：内置类型没有表单就没有提交入口，
+     * 而提交页的数据源就是 {@code /enabled}（它只收「内置且有表单模板」的类型）。
+     *
+     * <h2>报修为什么仍不能绑审批流</h2>
+     * 与 {@link #updateBuiltInConfig} 同一条口径（D2）：报修不产生工单，
+     * 绑了也没有人审批，只会给管理员一个「配了但不生效」的假开关。
+     */
+    private void updateBuiltInType(ApplyType existing, ApplyTypeSaveRequest request) {
+        BuiltInApplyCatalog.BuiltIn meta = BuiltInApplyCatalog.of(existing.getTypeCode());
+
+        // 1) 编码必须原样回传（前端编辑器对内置类型隐藏该输入框；直调接口改编码一律拒绝）
+        String typeCode = request.getTypeCode() == null ? null : request.getTypeCode().trim();
+        if (!existing.getTypeCode().equals(typeCode)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "系统内置类型的编码不可修改（" + existing.getTypeCode() + "）");
+        }
+
+        // 2) 必须保留表单绑定；借 resolve 复用「必须已发布」与「流程与表单字段相容」两处校验
+        if (request.getFormTemplateVersionId() == null) {
+            throw new BusinessException(ErrorCode.FORM_TEMPLATE_NO_PUBLISHED_VERSION,
+                    "系统内置类型必须绑定一个已发布的表单版本");
+        }
+        // 内置类型的提交权限 / 审批方式若未传（编辑器对这两项只读），用存量值兜底 ——
+        // 不传不等于「要改」，让 resolve 因缺字段而报错会把「只想改个表单」卡死。
+        if (request.getSubmitPermissionType() == null) {
+            request.setSubmitPermissionType(existing.getSubmitPermissionType());
+        }
+        if (request.getSubmitPermissionValues() == null) {
+            request.setSubmitPermissionValues(new ArrayList<>());
+        }
+        if (request.getApprovalMode() == null) {
+            request.setApprovalMode(existing.getApprovalMode());
+        }
+        Resolved resolved = resolve(request);
+
+        // 3) 报修不产生工单 ⇒ 不允许绑审批流（与内置配置面板同一错误码，便于前端统一提示）
+        if (meta != null && !meta.flowEditable()
+                && (ApprovalMode.FLOW == resolved.mode() || resolved.flowVersionId() != null)) {
+            throw new BusinessException(ErrorCode.APPLY_TYPE_BUILT_IN_FLOW_FIXED,
+                    "「" + existing.getTypeName() + "」不产生工单，不能配置审批流程");
+        }
+
+        applyTypeMapper.update(null, Wrappers.<ApplyType>lambdaUpdate()
+                .eq(ApplyType::getId, existing.getId())
+                .set(ApplyType::getTypeName, request.getTypeName().trim())
+                .set(ApplyType::getIcon, trimToNull(request.getIcon()))
+                .set(ApplyType::getDescription, trimToNull(request.getDescription()))
+                .set(ApplyType::getSortOrder, request.getSortOrder() == null ? 100 : request.getSortOrder())
+                .set(ApplyType::getFormTemplateVersionId, resolved.formVersionId())
+                .set(ApplyType::getApprovalMode, resolved.mode().name())
+                .set(ApplyType::getApprovalFlowVersionId, resolved.flowVersionId()));
+        log.info("系统内置申请类型 {}（{}）已更新：表单版本={} 审批方式={} 流程版本={}",
+                existing.getId(), existing.getTypeCode(), resolved.formVersionId(),
+                resolved.mode().name(), resolved.flowVersionId());
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateStatus(Long id, String status) {
@@ -561,6 +640,29 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 .eq(ApplyType::getId, id)
                 .set(ApplyType::getStatus, target.name()));
         log.info("申请类型 {}（{}）状态 {} → {}", id, type.getTypeName(), type.getStatus(), target.name());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void sort(ApplyTypeSortRequest request) {
+        List<Long> orderedIds = request.getOrderedIds() == null ? List.of()
+                : request.getOrderedIds().stream().filter(Objects::nonNull).distinct().toList();
+        Set<Long> currentIds = applyTypeMapper.selectList(Wrappers.<ApplyType>lambdaQuery()
+                        .select(ApplyType::getId))
+                .stream()
+                .map(ApplyType::getId)
+                .collect(Collectors.toSet());
+        // 必须与库里的**全量**集合一致：少一个就说明前端拿着过期列表在拖，
+        // 此时按下标重写会让没提交的那些停在旧排序值上，与新值交错成「看起来随机」的顺序。
+        if (!currentIds.equals(new HashSet<>(orderedIds))) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "排序列表与当前申请类型不一致，请刷新后重试");
+        }
+        for (int i = 0; i < orderedIds.size(); i++) {
+            applyTypeMapper.update(null, Wrappers.<ApplyType>lambdaUpdate()
+                    .eq(ApplyType::getId, orderedIds.get(i))
+                    .set(ApplyType::getSortOrder, i + 1));
+        }
+        log.info("申请类型排序已更新（{} 项）", orderedIds.size());
     }
 
     @Override
@@ -959,6 +1061,14 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         if (builtIn.hasHandler()) {
             vo.setHandler(faultRepairHandlerConfigService.describe());
         }
+
+        // V59 / D3「表单完全放开」：把内置类型自己那份表单的版本指针、schema、
+        // 模板 id 一起下发 —— 面板上的表单编辑区要用它们「改草稿 → 发布 → 重绑」。
+        vo.setFormTemplateVersionId(type.getFormTemplateVersionId());
+        vo.setFormSchema(ownSchema);
+        if (type.getFormTemplateVersionId() != null) {
+            vo.setFormTemplateId(templateIdOfVersion(type.getFormTemplateVersionId()));
+        }
         return vo;
     }
 
@@ -1013,6 +1123,22 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 .eq(ApplyType::getTypeCode, BuiltInApplyCatalog.CODE_BORROW)
                 .last("LIMIT 1"));
         return borrow == null ? null : borrow.getApprovalFlowVersionId();
+    }
+
+    @Override
+    public Long borrowBuiltInFormVersionId() {
+        return builtInFormVersionId(BuiltInApplyCatalog.CODE_BORROW);
+    }
+
+    @Override
+    public Long builtInFormVersionId(String typeCode) {
+        if (typeCode == null || typeCode.isBlank()) {
+            return null;
+        }
+        ApplyType type = applyTypeMapper.selectOne(Wrappers.<ApplyType>lambdaQuery()
+                .eq(ApplyType::getTypeCode, typeCode)
+                .last("LIMIT 1"));
+        return type == null ? null : type.getFormTemplateVersionId();
     }
 
     /** 内置类型的默认借用流程：与 OrderServiceImpl 的预置流程同源，阈值现读系统参数 */

@@ -5,6 +5,7 @@ import com.enterprise.ticket.common.log.AuditLog;
 import com.enterprise.ticket.common.log.RiskLevel;
 import com.enterprise.ticket.module.device.dto.DeviceCategorySaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceCategorySortRequest;
+import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryOptionVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryVO;
 import com.enterprise.ticket.module.device.service.DeviceCategoryService;
 import jakarta.validation.Valid;
@@ -42,6 +43,29 @@ public class DeviceCategoryController {
     @PreAuthorize("@perm.has('device:category:manage')")
     public ApiResponse<List<DeviceCategoryVO>> list() {
         return ApiResponse.success(deviceCategoryService.listTree());
+    }
+
+    /**
+     * 分类下拉选项（一级 + 二级扁平列表，仅启用中的分类）。
+     *
+     * <h2>为什么这个端点只要求登录</h2>
+     * 借用单放开表单自定义（V59 / D3）后，「设备分类 / 二级分类」是 schema 里的
+     * <b>系统字段</b>，由<b>普通员工</b>在提交页选择。而上面的分类树挂在
+     * {@code device:category:manage} 上（只有资产管理员有）—— 复用树接口会让
+     * 普通员工的下拉恒为空。
+     *
+     * <p>这不是新问题：改造前的提交页就在调树接口，前端 catch 吞掉 403 之后
+     * 下拉是空的、且没有任何提示 —— 「借用单没法提交但看不到原因」。
+     * 本端点一并修掉它。
+     *
+     * <p>只返回 id / 名称 / 层级 / 父级四项，不含设备数与备注（管理面信息）。
+     *
+     * <p>路径段 {@code /options} 是字面量，与 {@code /{id}} 不冲突。
+     */
+    @GetMapping("/options")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<DeviceCategoryOptionVO>> options() {
+        return ApiResponse.success(deviceCategoryService.enabledOptions());
     }
 
     /** 新增分类：parentId 为空或 0 表示一级分类 */

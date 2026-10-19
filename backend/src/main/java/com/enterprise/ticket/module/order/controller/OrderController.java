@@ -11,6 +11,7 @@ import com.enterprise.ticket.module.order.dto.OrderAllQuery;
 import com.enterprise.ticket.module.order.dto.OrderApproveRequest;
 import com.enterprise.ticket.module.order.dto.OrderCancelRequest;
 import com.enterprise.ticket.module.order.dto.OrderConfirmReturnRequest;
+import com.enterprise.ticket.module.order.dto.OrderDeliverRequest;
 import com.enterprise.ticket.module.order.dto.OrderCreateRequest;
 import com.enterprise.ticket.module.order.dto.OrderReturnRequest;
 import com.enterprise.ticket.module.order.dto.vo.DeviceOptionVO;
@@ -95,6 +96,10 @@ public class OrderController {
      *
      * <p>未绑定流程或无分组时返回 {@code bound=false}，前端回退展示固定审批人列表。
      *
+     * <p><b>V56</b>：入参由 {@code deviceId} 改为 {@code primaryCategoryId} ——
+     * 提交时已不再挑选具体资产（设备绑定延后到交付扫码），预览必须和提交侧用同一个
+     * 「设备分类」口径，否则条件分支会算出与实际不一致的路径。
+     *
      * <p>测试路径：GET http://localhost:8080/api/orders/borrow-flow-preview?useType=SHORT_TERM
      */
     @GetMapping("/borrow-flow-preview")
@@ -102,8 +107,8 @@ public class OrderController {
     public ApiResponse<BorrowFlowPreviewVO> borrowFlowPreview(
             @RequestParam(required = false) String useType,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedReturnDate,
-            @RequestParam(required = false) Long deviceId) {
-        return ApiResponse.success(orderService.previewBorrowFlow(useType, expectedReturnDate, deviceId));
+            @RequestParam(required = false) Long primaryCategoryId) {
+        return ApiResponse.success(orderService.previewBorrowFlow(useType, expectedReturnDate, primaryCategoryId));
     }
 
     /**
@@ -295,13 +300,18 @@ public class OrderController {
     /**
      * 实际执行人确认交付（：工单→使用中，设备→使用中）
      *
-     * <p>测试路径：PUT http://localhost:8080/api/orders/1/deliver
+     * <p><b>V56 / 第 9 项</b>：新单在提交时没有设备，交付必须带上要发出的资产编号
+     * （扫码或手输），服务端做三层校验（分类 → 型号 → 空闲）后绑定并置为使用中。
+     * V56 之前的历史工单（提交时已绑定设备）可以不传 body。
+     *
+     * <p>测试路径：PUT http://localhost:8080/api/orders/1/deliver  body: {"assetNo":"ZC-0001"}
      */
     @PutMapping("/{id}/deliver")
     @PreAuthorize("isAuthenticated()")
     @AuditLog(module = "ORDER", action = "ORDER_DELIVER", description = "确认交付设备")
-    public ApiResponse<Void> deliver(@PathVariable Long id) {
-        orderService.deliver(id);
+    public ApiResponse<Void> deliver(@PathVariable Long id,
+                                     @Valid @RequestBody(required = false) OrderDeliverRequest request) {
+        orderService.deliver(id, request);
         return ApiResponse.success("已确认交付，设备进入使用中", null);
     }
 

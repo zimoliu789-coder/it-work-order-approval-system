@@ -138,6 +138,27 @@ export interface OrderItem {
   deviceId?: number | null
   /** "设备名（资产编号）"；自定义申请为 null */
   deviceName?: string | null
+  /**
+   * 接什么（V56 / 第 9 项）：一级分类 / 二级分类 / 型号。
+   *
+   * <p>交付前 {@link deviceId} 为空，列表必须靠这三项回答「借的是哪一类」——
+   * 否则 IT 在待交付列表里看到的是一片空白。V56 之前的历史工单这三项为空，
+   * 此时应回落展示 {@link deviceName}。
+   */
+  primaryCategoryId?: number | null
+  primaryCategoryName?: string | null
+  secondaryCategoryId?: number | null
+  secondaryCategoryName?: string | null
+  modelId?: number | null
+  modelName?: string | null
+  /**
+   * 待交付且**尚未绑定设备**（V56 新单）。
+   *
+   * <p>交付弹窗据此判断「要不要先让执行人选一台设备」。
+   * 它与「数据缺失」是两件事：历史单在待交付时 deviceId 一定有值，
+   * 因此 pendingDeviceBinding=false 却 deviceId 为空属于异常数据。
+   */
+  pendingDeviceBinding?: boolean | null
   applicantId?: number | null
   applicantName?: string | null
   departmentName?: string | null
@@ -725,11 +746,23 @@ export interface DivisionPrefill {
   options: DepartmentOption[]
 }
 
-/** 借用申请提交载荷（，按需求方确认的简化模型） */
+/**
+ * 借用申请提交载荷（V56 / 第 9 项：从「挑一台设备」改为「挑一个类别」）
+ *
+ * <p><b>为什么不再有 deviceId / lockToken</b>：申请人只声明「借哪一类 + 什么型号」，
+ * 具体资产由 IT 在交付时扫码绑定。旧的两个字段已随后端迁移（V56）整体删除，
+ * 传了也不会被接收 —— 服务端 DTO 里根本没有这两个属性。
+ *
+ * <p><b>为什么金额不在里面</b>：审批发生在绑定设备之前，此刻不可能知道金额，
+ * 金额分档条件一律走默认分支（与后端 `OrderServiceImpl#create` 注释同一口径）。
+ */
 export interface OrderPayload {
-  deviceId: number
-  /** 临时锁令牌，提交时原样回传 */
-  lockToken: string
+  /** 一级分类 id（必填），决定「借哪一类」与流程条件 `borrow.deviceCategoryId` */
+  primaryCategoryId: number
+  /** 二级分类 id（选填；非空时必须归属所选一级分类） */
+  secondaryCategoryId?: number | null
+  /** 型号字典 id（选填；填了交付时按型号校验，留空表示同类别内哪台都行） */
+  modelId?: number | null
   useType: OrderUseType
   /** 用途（原「借用原因」）：选填，一句话说明即可 */
   reason?: string | null
@@ -803,13 +836,23 @@ export interface OrderAllQuery {
   applyTypeId?: number | null
 }
 
-/** 可申请设备选项（申请页「选择设备」） */
+/** 可申请设备选项（扫码结果回显 / 自定义表单的 DEVICE 字段下拉） */
 export interface DeviceOption {
   id: number
   deviceName: string
   assetNo: string
+  /**
+   * 分类 id（V56 起下发）。
+   *
+   * <p>借用申请页已不再选具体设备，扫码页仍要能「按扫到的设备带来一类」——
+   * 有了 id 就不必拿分类**名字**再猜一次（重名会静默选错）。
+   */
+  primaryCategoryId?: number | null
   primaryCategoryName?: string | null
+  secondaryCategoryId?: number | null
   secondaryCategoryName?: string | null
+  /** 型号字典 id（V56 / R3）；为空表示该设备型号尚未整理 */
+  modelId?: number | null
   brand?: string | null
   model?: string | null
   storageLocation?: string | null

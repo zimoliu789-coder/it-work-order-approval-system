@@ -12,6 +12,7 @@ import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.mapper.DeviceCategoryMapper;
+import com.enterprise.ticket.module.device.mapper.DeviceModelMapper;
 import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.message.service.MessageService;
@@ -86,6 +87,9 @@ class OrderReturnServiceImplTest {
     private DeviceMapper deviceMapper;
     @Mock
     private DeviceCategoryMapper categoryMapper;
+
+    @Mock
+    private DeviceModelMapper deviceModelMapper;
     @Mock
     private DepartmentMapper departmentMapper;
     @Mock
@@ -124,7 +128,7 @@ class OrderReturnServiceImplTest {
     void wireReferenceNames() {
         ReflectionTestUtils.setField(service, "referenceNames",
                 new OrderReferenceNames(userMapper, deviceMapper, categoryMapper,
-                        departmentMapper, applyTypeMapper));
+                        deviceModelMapper, departmentMapper, applyTypeMapper));
     }
 
     @AfterEach

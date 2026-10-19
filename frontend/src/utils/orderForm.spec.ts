@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   REASON_MAX_LENGTH,
-  formatCountdown,
   isExpectedReturnBeforeToday,
-  isLockExpired,
   isOrderFormValid,
-  parseDateTime,
-  remainingLockSeconds,
   todayString,
   validateOrderForm,
   type OrderFormState
@@ -15,12 +11,20 @@ import {
 /**
  * 借用申请表单规则单测（ 引入 Vitest）
  *
- * 覆盖重点（都是  那类「前端静默出错」的高风险区）：
- * 1. 三项化后的必填口径 —— 设备与归还日期必填、用途选填；
- * 2. 日期不能早于今天（时区处理）；
- * 3. 临时锁倒计时的解析与边界（'yyyy-MM-dd HH:mm:ss' 在 Safari 下会解析失败）。
+ * 覆盖重点（都是「前端静默出错」的高风险区）：
+ * 1. 三项化后的必填口径 —— 设备类别与归还日期必填、用途选填；
+ * 2. 日期不能早于今天（时区处理）。
  *
- *  删掉的三组用例（借用类型 → 日期必填联动 / 切类型丢弃残留日期）：
+ * <h2>V56（第 9 项）改了什么</h2>
+ * <ul>
+ *   <li>夹具里的 {@code deviceId} 换成 {@code primaryCategoryId} —— 申请人不再挑具体资产，
+ *       改为挑「借哪一类」，设备绑定延后到 IT 交付扫码；</li>
+ *   <li>整组「临时锁倒计时」用例删除：锁机制（前端倒计时 + 后端三列 +
+ *       超时释放任务）在 V56 一并移除，那几个纯函数已从 orderForm.ts 里删掉，
+ *       留着测试只会变成「测试一个不存在的函数」。</li>
+ * </ul>
+ *
+ * <p> 删掉的两组用例（借用类型 → 日期必填联动 / 切类型丢弃残留日期）：
  * 那两条规则随「借用类型选择器」一起退役 —— 现在没有可切换的类型，
  * 「长期领用」也不再是前端可达状态。规则本体在后端 `UseType` 与
  * `OrderServiceImpl#create` 里仍在（存量工单与旧调用方依赖它），只是前端不再有分支。
@@ -28,7 +32,9 @@ import {
 
 function form(overrides: Partial<OrderFormState> = {}): OrderFormState {
   return {
-    deviceId: 1,
+    primaryCategoryId: 1,
+    secondaryCategoryId: null,
+    modelId: null,
     reason: '出差需要',
     expectedReturnDate: '2026-09-20',
     ...overrides
@@ -71,8 +77,18 @@ describe('日期合法性', () => {
 })
 
 describe('必填与长度校验', () => {
-  it('设备未选时提示先选设备', () => {
-    expect(validateOrderForm(form({ deviceId: null }), TODAY)).toContain('请选择要借用的设备')
+  it('未选设备类别时提示先选类别', () => {
+    expect(validateOrderForm(form({ primaryCategoryId: null }), TODAY)).toContain('请选择要借用的设备类别')
+  })
+
+  it('二级分类与型号留空是合法的（表示同类别内哪台都行）', () => {
+    expect(
+      validateOrderForm(form({ secondaryCategoryId: null, modelId: null }), TODAY)
+    ).toEqual([])
+  })
+
+  it('二级分类与型号填了也不影响前端校验（归属由服务端查库判定）', () => {
+    expect(validateOrderForm(form({ secondaryCategoryId: 7, modelId: 9 }), TODAY)).toEqual([])
   })
 
   it('用途为纯空白时不算错误（ 起改为选填）', () => {
@@ -87,33 +103,5 @@ describe('必填与长度校验', () => {
   it('完整表单通过校验', () => {
     expect(validateOrderForm(form(), TODAY)).toEqual([])
     expect(isOrderFormValid(form(), TODAY)).toBe(true)
-  })
-})
-
-describe('临时锁倒计时', () => {
-  const now = parseDateTime('2026-09-17 21:00:00')
-
-  it('解析后端 yyyy-MM-dd HH:mm:ss 格式（Safari 兼容处理）', () => {
-    expect(Number.isNaN(parseDateTime('2026-09-17 21:00:00'))).toBe(false)
-    expect(parseDateTime('2026-09-17 21:00:00')).toBe(parseDateTime('2026-09-17T21:00:00'))
-  })
-
-  it('非法/缺失的到期时间按已过期处理，不倒计时到负数', () => {
-    expect(remainingLockSeconds(null, now)).toBe(0)
-    expect(remainingLockSeconds('not-a-date', now)).toBe(0)
-    expect(isLockExpired(null, now)).toBe(true)
-  })
-
-  it('剩余秒数与倒计时文案正确', () => {
-    expect(remainingLockSeconds('2026-09-17 21:05:00', now)).toBe(300)
-    expect(formatCountdown(300)).toBe('5:00')
-    expect(formatCountdown(299)).toBe('4:59')
-    expect(formatCountdown(9)).toBe('0:09')
-  })
-
-  it('已过期时剩余为 0 且判定为失效', () => {
-    expect(remainingLockSeconds('2026-09-17 20:59:59', now)).toBe(0)
-    expect(isLockExpired('2026-09-17 20:59:59', now)).toBe(true)
-    expect(isLockExpired('2026-09-17 21:00:01', now)).toBe(false)
   })
 })

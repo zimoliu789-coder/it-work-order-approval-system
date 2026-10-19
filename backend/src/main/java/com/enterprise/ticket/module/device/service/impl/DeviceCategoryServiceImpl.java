@@ -6,6 +6,7 @@ import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.device.dto.DeviceCategorySaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceCategorySortRequest;
+import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryOptionVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryVO;
 import com.enterprise.ticket.module.device.entity.Device;
 import com.enterprise.ticket.module.device.entity.DeviceCategory;
@@ -85,6 +86,24 @@ public class DeviceCategoryServiceImpl implements DeviceCategoryService {
             parent.getChildren().add(toVO(category, secondaryCounts.getOrDefault(category.getId(), 0L)));
         }
         return roots;
+    }
+
+    @Override
+    public List<DeviceCategoryOptionVO> enabledOptions() {
+        List<DeviceCategory> all = categoryMapper.selectList(Wrappers.<DeviceCategory>lambdaQuery()
+                .select(DeviceCategory::getId, DeviceCategory::getCategoryName,
+                        DeviceCategory::getParentId, DeviceCategory::getLevel)
+                .orderByAsc(DeviceCategory::getLevel)
+                .orderByAsc(DeviceCategory::getSortOrder)
+                .orderByAsc(DeviceCategory::getId));
+        return all.stream().map(category -> {
+            DeviceCategoryOptionVO vo = new DeviceCategoryOptionVO();
+            vo.setId(category.getId());
+            vo.setCategoryName(category.getCategoryName());
+            vo.setParentId(category.getParentId());
+            vo.setLevel(category.getLevel());
+            return vo;
+        }).toList();
     }
 
     @Override

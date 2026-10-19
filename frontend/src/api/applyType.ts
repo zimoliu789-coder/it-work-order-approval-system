@@ -60,6 +60,20 @@ export const applyTypeApi = {
     return http.put<void>(`/apply-types/${id}/status`, { status })
   },
 
+  /**
+   * 整体排序：按数组下标重写所有类型的 sort_order。
+   *
+   * <p>必须整组提交（含内置类型、含已停用类型）—— 后端会拿它与库里的全量集合比对，
+   * 少一个就 400「请刷新后重试」。这是故意的：只提交部分 ID 会让未提交的那些
+   * 停在旧排序值上，与新值交错成乱序，而这种错位在界面上毫无提示。
+   *
+   * <p>内置类型也在排序链里（V48 的「内置置顶」已废弃）——
+   * 提交页卡片顺序对每个员工都是同一份，管理员应当能自己决定。
+   */
+  sort(orderedIds: number[]) {
+    return http.post<void>('/apply-types/sort', { orderedIds })
+  },
+
   /** 删除（已被工单使用时后端拒绝，只能停用；系统内置类型恒拒绝，V48） */
   remove(id: number) {
     return http.delete<void>(`/apply-types/${id}`)

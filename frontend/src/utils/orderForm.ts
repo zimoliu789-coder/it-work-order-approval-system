@@ -3,8 +3,9 @@
  *
  * 为什么单独抽成纯函数： 的 Critical 缺陷（编辑弹窗二级分类被联动静默清空）
  * 正落在**表单联动与校验**上，而当时前端没有任何自动化测试，回归只能靠人工点。
- * 把「日期 → 合法性」「锁 → 倒计时」等规则抽离出组件，
+ * 把「日期 → 合法性」等规则抽离出组件，
  * 既能被单测覆盖，也让组件只负责把事件接到这些规则上。
+ * （原先还有一组「临时锁 → 倒计时」的规则，已随 V56 删锁一并退役，见文末说明。）
  *
  * <h2> 的收缩：三项化</h2>
  * 需求文档要求员工只填「借什么设备 / 还的日期 / 用途」三项，**借用类型从表单上拿掉**
@@ -24,8 +25,26 @@
 export const REASON_MAX_LENGTH = 500
 
 export interface OrderFormState {
-  /** 借什么设备（原「申请设备」； 的大白话标签） */
-  deviceId: number | null
+  /**
+   * 借哪一类设备（V56 / 第 9 项：由「挑一台具体设备」改为「挑一个类别」）。
+   *
+   * <p>申请人只声明「借哪一类 + 什么型号」，具体资产由 IT 交付扫码绑定 ——
+   * 这样审批期间不会占住设备，也不会出现「锁了设备却没提交」的资源浪费。
+   */
+  primaryCategoryId: number | null
+  /**
+   * 二级分类（选填）。
+   *
+   * <p>**不进校验**：它是否必须归属所选一级分类，只有服务端知道（要查库）。
+   * 前端只负责「一级变了就清空二级」，不在这里编造归属规则。
+   */
+  secondaryCategoryId?: number | null
+  /**
+   * 型号字典 id（选填）。
+   *
+   * <p>同样不进校验：留空的语义是「同类别内哪台都行」，是合法选择而非缺填。
+   */
+  modelId?: number | null
   /** 用途（原「借用原因」）：选填，一句话说明即可 */
   reason: string
   /** 还的日期（原「期望归还日期」）：必填 */
@@ -53,8 +72,8 @@ export function isExpectedReturnBeforeToday(value: string, today: string = today
  */
 export function validateOrderForm(form: OrderFormState, today: string = todayString()): string[] {
   const errors: string[] = []
-  if (form.deviceId == null) {
-    errors.push('请选择要借用的设备')
+  if (form.primaryCategoryId == null) {
+    errors.push('请选择要借用的设备类别')
   }
   // 用途为选填：空白一律放行，只拦「超长」（后端也会拦一次，此处是即时反馈）
   const reason = (form.reason ?? '').trim()
@@ -74,38 +93,15 @@ export function isOrderFormValid(form: OrderFormState, today: string = todayStri
   return validateOrderForm(form, today).length === 0
 }
 
-/**
- * 解析后端返回的日期时间字符串
- *
- * 后端 `@JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")` 输出的是 `2026-09-17 21:30:00`，
- * 这种带空格的形式在部分浏览器（Safari / 部分 iOS WebView）下 `new Date()` 会得到 Invalid Date，
- * 因此统一替换为 ISO 的 `T` 分隔形式再解析。
- */
-export function parseDateTime(value: string | null | undefined): number {
-  if (!value) {
-    return Number.NaN
-  }
-  return new Date(value.replace(' ', 'T')).getTime()
-}
-
-/** 临时锁剩余秒数；已过期或无法解析返回 0（ 倒计时展示） */
-export function remainingLockSeconds(expiresAt: string | null | undefined, now: number = Date.now()): number {
-  const expires = parseDateTime(expiresAt)
-  if (Number.isNaN(expires)) {
-    return 0
-  }
-  return Math.max(0, Math.floor((expires - now) / 1000))
-}
-
-/** 倒计时文案：`m:ss`（如 4:05）；不足 1 分钟仍按 0:xx 显示，便于用户感知迫近 */
-export function formatCountdown(totalSeconds: number): string {
-  const safe = Math.max(0, Math.floor(totalSeconds))
-  const minutes = Math.floor(safe / 60)
-  const seconds = safe % 60
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
-}
-
-/** 锁是否已生效超时（倒计时归零即视为失效，前端应重新选设备） */
-export function isLockExpired(expiresAt: string | null | undefined, now: number = Date.now()): boolean {
-  return remainingLockSeconds(expiresAt, now) === 0
-}
+// ----------------------------------------------------------------------
+// 临时锁相关的纯函数已随 V56（第 9 项）整体删除
+//
+// 原来这里有 parseDateTime / remainingLockSeconds / formatCountdown / isLockExpired
+// 四个函数，服务的是「选中设备 → 加 5 分钟临时锁 → 倒计时」这条链路。
+// V56 起申请人不再挑具体资产（设备绑定延后到 IT 交付扫码），后端连
+// locked_by / locked_at / lock_token 三列与 DeviceLockReleaseJob 都删了，
+// 前端留着一套算不出东西的倒计时只会误导后来人。
+//
+// 注意：`parseDateTime` 的 Safari 兼容处理（空格换 T）在别处若需要，
+// 请重新实现而不是从历史里翻 —— 它当时是专为锁到期时间写的。
+// ----------------------------------------------------------------------

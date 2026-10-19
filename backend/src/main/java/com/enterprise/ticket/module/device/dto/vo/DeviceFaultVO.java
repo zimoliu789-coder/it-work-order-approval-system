@@ -66,6 +66,24 @@ public class DeviceFaultVO {
 
     private String replacedParts;
 
+    // ------------------------------------------------------------------
+    // V59 / 批次 3.5：报修表单放开后的自定义字段
+    // ------------------------------------------------------------------
+
+    /** 填写时使用的表单模板版本 id（快照指针；为空表示这条记录没有自定义字段） */
+    private Long formTemplateVersionId;
+
+    /** 自定义字段值：{字段key: 值}。系统字段（设备 / 时间 / 描述 / 分部）在专用字段上 */
+    private java.util.Map<String, Object> formData;
+
+    /**
+     * 当初那一版表单的 schema（用于把 key 还原成显示名）。
+     *
+     * <p>**按版本快照下发**，不读申请类型当前绑定的版本 —— 否则管理员换绑表单后，
+     * 历史记录的回显会跟着变（与工单详情同一套快照语义）。
+     */
+    private com.enterprise.ticket.common.form.FormSchema formSchema;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 }

@@ -30,6 +30,18 @@ export type FormFieldTypeCode =
   | 'BIZ_GROUP'
   /** 一级分部选择（V53）：底层固定只能选组织树一级部门，无开关 */
   | 'ROOT_DEPT'
+  /**
+   * 设备分类选择（V59 / 第 9 项）：借用单的「一级分类」，值必须是 level=1 的分类。
+   *
+   * <p>与 {@link DEVICE_SUBCATEGORY} 分成两个类型而不是给一个类型加「层级」开关：
+   * 一级是必填的归类依据、二级是选填的细化，两者数据源与必填性都不同；
+   * 合成一个就要在前端按 key 猜语义，那是下一个 bug 的温床。
+   */
+  | 'DEVICE_CATEGORY'
+  /** 设备二级分类（V59）：选项随所选一级分类联动，值必须是 level=2 的分类 */
+  | 'DEVICE_SUBCATEGORY'
+  /** 设备型号选择（V59 / R3）：选项来自型号字典 device_model，存 model_id */
+  | 'DEVICE_MODEL'
   | 'DESCRIPTION'
   | 'DIVIDER'
 
@@ -54,6 +66,10 @@ export type ValueKind =
   | 'USER_REF'
   | 'DEVICE_REF'
   | 'GROUP_REF'
+  /** 设备分类 id（一级 / 二级两种语义，按字段类型区分层级） */
+  | 'CATEGORY_REF'
+  /** 设备型号 id（型号字典行） */
+  | 'MODEL_REF'
 
 /** 字段类型元数据（设计器面板 / 渲染器 / 校验器共用一份，避免三处各写一遍） */
 export interface FieldTypeMeta {
@@ -165,6 +181,30 @@ export const FIELD_TYPE_META: FieldTypeMeta[] = [
     category: 'ADVANCED',
     valueKind: 'GROUP_REF',
     supportsOptions: false
+  },
+  {
+    type: 'DEVICE_CATEGORY',
+    label: '设备分类选择',
+    category: 'ADVANCED',
+    valueKind: 'CATEGORY_REF',
+    supportsOptions: false,
+    hint: '只列一级分类；借用单交付时按它校验设备类别'
+  },
+  {
+    type: 'DEVICE_SUBCATEGORY',
+    label: '设备二级分类',
+    category: 'ADVANCED',
+    valueKind: 'CATEGORY_REF',
+    supportsOptions: false,
+    hint: '选项随「设备分类选择」联动，只列二级分类'
+  },
+  {
+    type: 'DEVICE_MODEL',
+    label: '设备型号选择',
+    category: 'ADVANCED',
+    valueKind: 'MODEL_REF',
+    supportsOptions: false,
+    hint: '选项来自型号字典；比对 model_id，不做字符串比对'
   },
   { type: 'DESCRIPTION', label: '说明文字', category: 'LAYOUT', valueKind: 'NONE', supportsOptions: false },
   { type: 'DIVIDER', label: '分隔线', category: 'LAYOUT', valueKind: 'NONE', supportsOptions: false }
@@ -452,6 +492,8 @@ export function validateField(field: FormField, value: unknown): string | null {
     case 'USER_REF':
     case 'DEVICE_REF':
     case 'GROUP_REF':
+    case 'CATEGORY_REF':
+    case 'MODEL_REF':
       // 存在性只能由服务端查库判定，前端不判
       return null
     default:

@@ -346,20 +346,18 @@ public class OrderForceOperationServiceImpl implements OrderForceOperationServic
     }
 
     /**
-     * 释放设备：把处于「锁定 / 审批中 / 使用中」的设备退回可用并清空临时锁三件套。
+     * 释放设备：把处于「审批中 / 使用中」的设备退回可用（V56 起不再有临时锁）。
      *
-     * <p>三态一次命中：强制终止可能发生在审批中（LOCKED/IN_APPROVAL）或使用中（IN_USE），
-     * 用 {@code IN (...)} 覆盖，调用方无需按工单状态分支。
+     * <p>覆盖审批中与使用中两态：强制终止可能发生在审批阶段（IN_APPROVAL）或已交付（IN_USE），
+     * 调用方无需按工单状态分支。{@code LOCKED} 仍列在条件里，是为了兼容 V56 之前
+     * 遗留在库里的历史行（迁移已统一放回 AVAILABLE，这里只是防御）。
      */
     private void releaseDevice(Long deviceId) {
         int updated = deviceMapper.update(null, Wrappers.<Device>lambdaUpdate()
                 .eq(Device::getId, deviceId)
                 .in(Device::getStatus, List.of(DeviceStatus.LOCKED.name(),
                         DeviceStatus.IN_APPROVAL.name(), DeviceStatus.IN_USE.name()))
-                .set(Device::getStatus, DeviceStatus.AVAILABLE.name())
-                .set(Device::getLockedBy, null)
-                .set(Device::getLockedAt, null)
-                .set(Device::getLockToken, null));
+                .set(Device::getStatus, DeviceStatus.AVAILABLE.name()));
         if (updated == 0) {
             // 设备可能已被其它流程处理（如已报废/维修中）：不阻断强制干预，仅告警
             log.warn("【强制干预】释放设备 {} 时未命中可释放状态（可能已被其它流程处理）", deviceId);

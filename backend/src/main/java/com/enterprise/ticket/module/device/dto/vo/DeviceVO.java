@@ -8,7 +8,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 设备台账视图（ / ， 追加「当前使用信息」与「临时锁信息」）
+ * 设备台账视图（ / ），V56/V57 追加「型号字典」与「负责人」。
+ *
+ * <p>V56 删除了「临时锁信息」（lockedByName / lockExpiresAt）：临时锁机制整体移除，
+ * 设备状态里不会再出现新的 LOCKED。
  *
  * <p>日期与时间统一格式化为字符串，前端无需再做格式化（ 表格/卡片直接展示）。
  */
@@ -32,7 +35,14 @@ public class DeviceVO {
 
     private String brand;
 
+    /** 型号原始文本（历史/可读原文；V56 起不参与任何比对） */
     private String model;
+
+    /** 型号字典 id（V56 / R3）；为空表示「型号待整理」 */
+    private Long modelId;
+
+    /** 型号字典名称（modelId 有值时才下发；为空时前端回退展示 {@link #model}） */
+    private String modelName;
 
     private String serialNo;
 
@@ -49,6 +59,16 @@ public class DeviceVO {
      */
     private BigDecimal amount;
 
+    /**
+     * 负责人 user_id（V57 / 第 10 项）。
+     *
+     * <p>资产归属责任人（长期固定，资产管理员维护），<b>不是借用人</b> ——
+     * 借用人见 {@link #usage} 里的 userId / userName（来自占用中的工单）。
+     */
+    private Long ownerId;
+
+    private String ownerName;
+
     /** 设备状态码（；BORROWED 已按需求方约定改名 IN_USE） */
     private String status;
 
@@ -64,13 +84,6 @@ public class DeviceVO {
      * <p>数据来自「占用中的工单」，非终态工单才占用设备。
      */
     private DeviceUsageVO usage;
-
-    /** 临时锁持有人姓名（仅 LOCKED 状态有值，供管理员判断是否需要强制解锁，） */
-    private String lockedByName;
-
-    /** 临时锁到期时间（仅 LOCKED 状态有值） */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
-    private LocalDateTime lockExpiresAt;
 
     private String remark;
 

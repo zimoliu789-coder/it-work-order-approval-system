@@ -21,7 +21,7 @@ import type { ScanLookupResult } from '@/types/scan'
  * <h2>分流规则</h2>
  * <p>扫到之后做什么**全部由服务端判定**（`/orders/scan-lookup`），前端只按 `action` 分支：
  * <ul>
- *   <li>{@code BORROW} → 跳申请页并预选该设备</li>
+ *   <li>{@code BORROW} → 跳申请页并预选「该设备的类别 / 型号」（V56 起不再预选具体设备）</li>
  *   <li>{@code RETURN} → **就地**弹归还确认（不跳页）</li>
  *   <li>{@code VIEW} → 跳我的工单（扫的是单据，只想看进度）</li>
  *   <li>{@code UNAVAILABLE} / {@code NONE} → 就地展示原因</li>
@@ -95,13 +95,34 @@ async function toggleCamera(): Promise<void> {
   await startScanner(handleScanned)
 }
 
-/** 借用：跳申请页并预选设备（申请页读 ?deviceId=） */
+/**
+ * 借用：跳申请页并按「扫到的设备」预选类别（申请页读 ?primaryCategoryId= 等）。
+ *
+ * <h2>V56 起为什么不传 deviceId</h2>
+ * <p>借用申请已经不再挑具体资产 —— 申请人只声明「借哪一类 + 什么型号」，
+ * 具体哪一台由 IT 在交付时扫码绑定。所以这里能替用户预填的只有
+ * 「一级分类 / 二级分类 / 型号」，传 deviceId 会被后端直接忽略
+ * （DTO 里已无此字段），等于按钮点了没反应。
+ *
+ * <p>预填不到分类（老数据分类缺失）时退化为只打开申请页，让用户自己选 ——
+ * 宁多少点两下，也不要带一个猜出来的分类进去。
+ */
 function goBorrow(): void {
-  const deviceId = result.value?.device?.id
-  if (deviceId == null) {
+  const device = result.value?.device
+  if (!device) {
     return
   }
-  void router.push({ path: '/order/apply', query: { deviceId: String(deviceId) } })
+  const query: Record<string, string> = {}
+  if (device.primaryCategoryId != null) {
+    query.primaryCategoryId = String(device.primaryCategoryId)
+  }
+  if (device.secondaryCategoryId != null) {
+    query.secondaryCategoryId = String(device.secondaryCategoryId)
+  }
+  if (device.modelId != null) {
+    query.modelId = String(device.modelId)
+  }
+  void router.push({ path: '/order/apply', query })
 }
 
 /** 查看：扫的是单据，跳我的工单看进度 */
@@ -289,6 +310,7 @@ function scanAgain(): void {
       <h3 class="ts-scan__note-title">说明</h3>
       <ul class="ts-scan__note-list">
         <li>扫到<b>资产编号</b>：若这台正在被你借用，会直接进入归还确认；否则按设备当前状态提示借用或不可借用的原因。</li>
+        <li>「去填写借用申请」只会带上<b>这台设备的类别与型号</b>，不会锁定这一台 —— 具体发哪一台由 IT 在交付时扫码确定。</li>
         <li>扫到<b>工单号</b>：只会跳到工单查看，<b>不会</b>顺手触发任何归还 —— 扫单据多半只是想看进度。</li>
         <li>摄像头需要 <b>https 或 localhost</b> 才能调用（浏览器安全策略）；其它情况请用手动输入，功能完全一致。</li>
       </ul>

@@ -63,7 +63,7 @@ public interface SystemConfigService extends IService<SystemConfig> {
     // ---------------- 业务语义化快捷方法 ----------------
 
     /** 设备临时锁超时（分钟）， */
-    int lockTimeoutMinutes();
+    // V56：lockTimeoutMinutes() 随临时锁机制一并删除（设备不再被「填表期间锁定」）
 
     /** 自动顺延最大次数， */
     int autoExtendMaxCount();
@@ -315,6 +315,17 @@ public interface SystemConfigService extends IService<SystemConfig> {
 
     /** 导出临时文件保留天数，配置键 {@code export_retention_days}，默认 7 */
     int exportRetentionDays();
+
+    /**
+     * 故障照片单张上限（MB），配置键 {@code attachment_fault_photo_max_mb}，默认 10。
+     *
+     * <p>与「借用申请附件」分开取值（V58 / 第 10 项 R2）：改造前两者共用一个全局上限，
+     * 想放宽手机现场拍的照片就得连带放宽随单长期留存的附件。
+     */
+    int faultPhotoMaxSizeMb();
+
+    /** 借用申请附件单张上限（MB），配置键 {@code attachment_apply_attachment_max_mb}，默认 10 */
+    int applyAttachmentMaxSizeMb();
 
     // ------------------------------------------------------------------
     // 异常告警

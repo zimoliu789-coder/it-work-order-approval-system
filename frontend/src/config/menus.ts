@@ -88,6 +88,11 @@ export const APP_MENUS: MenuItem[] = [
     children: [
       { path: '/asset/ledger', title: '设备台账', perm: 'device:ledger:view', ready: true },
       { path: '/asset/category', title: '设备分类管理', perm: 'device:category:manage', ready: true },
+      // V56 / R3 设备型号字典：与台账共用 `device:ledger:view`（读）与
+      // `device:ledger:manage`（增改 / 启停 / 从台账补齐）。
+      // **刻意不新造权限码**：新码要写授权迁移、要同步角色页勾选树，而这一页的
+      // 使用者和「设备台账」完全是同一批人 —— 多一个码只是多一处要维护的授权。
+      { path: '/asset/model', title: '设备型号管理', perm: 'device:ledger:view', ready: true },
       //  设备故障记录：汇总上报 / 台账登记 / 归还登记三类故障。
       // 需求的「设备维修记录」（维修中列表 + 维修历史）在它基础上扩展，属 P2 排期。
       // 兼作「报修处理人」的待办入口（V50）：他们只有这一条子项可见，
