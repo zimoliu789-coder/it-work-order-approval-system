@@ -279,6 +279,51 @@ class FormDataValidatorTest {
         assertTrue(validator.validateAndCollect(schema(field), data("group", 8)).get(0).contains("不存在"));
     }
 
+    @Test
+    @DisplayName("★ 一级分部引用（V53）：一级放行，二级/三级一律拒绝 —— 前端只列一级，直调接口拦在这里")
+    void validateRootDeptRef() {
+        FormField field = field(FormFieldType.ROOT_DEPT.name(), "trip_target_dept", "目标分部");
+
+        Department root = new Department();
+        root.setId(10L);
+        root.setDeptName("研发中心");
+        root.setParentId(null);
+        Department child = new Department();
+        child.setId(11L);
+        child.setDeptName("前端组");
+        child.setParentId(10L);
+        Department grandChild = new Department();
+        grandChild.setId(12L);
+        grandChild.setDeptName("组件小组");
+        grandChild.setParentId(11L);
+
+        when(departmentMapper.selectById(10L)).thenReturn(root);
+        when(departmentMapper.selectById(11L)).thenReturn(child);
+        when(departmentMapper.selectById(12L)).thenReturn(grandChild);
+
+        assertTrue(validator.validateAndCollect(schema(field), data("trip_target_dept", 10)).isEmpty());
+        assertTrue(validator.validateAndCollect(schema(field), data("trip_target_dept", 11)).get(0)
+                .contains("只能选择一级分部"));
+        // 报错要带上是哪一个部门：只说「不是一级部门」，用户在一棵大树上根本找不到自己填错的是哪条
+        assertTrue(validator.validateAndCollect(schema(field), data("trip_target_dept", 12)).get(0)
+                .contains("组件小组"));
+    }
+
+    @Test
+    @DisplayName("部门选择（BIZ_GROUP）：任意层级都放行 —— 不能被 ROOT_DEPT 的新规则误伤")
+    void validateDepartmentRefAllowsAnyLevel() {
+        FormField field = field(FormFieldType.BIZ_GROUP.name(), "group", "分组");
+
+        Department child = new Department();
+        child.setId(11L);
+        child.setDeptName("前端组");
+        child.setParentId(10L);
+
+        when(departmentMapper.selectById(11L)).thenReturn(child);
+
+        assertTrue(validator.validateAndCollect(schema(field), data("group", 11)).isEmpty());
+    }
+
     // ------------------------------------------------------------------
     // validate()：错误汇总与截断
     // ------------------------------------------------------------------

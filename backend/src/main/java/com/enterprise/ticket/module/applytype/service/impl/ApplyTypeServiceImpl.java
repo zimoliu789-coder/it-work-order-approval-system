@@ -200,7 +200,13 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 // 系统内置类型不进这里（V48）：借用设备 / 故障报修在提交页由前端固定渲染成
                 // **内置卡片**（它们有专属表单与后置动作）。若不排除，提交页会把它们渲染两次，
                 // 而且「自定义」那一张点进去是通用动态表单 —— 直接坏掉。
-                .eq(ApplyType::getBuiltIn, false)
+                // V53 修正口径：「内置且**没有**表单模板」才排除 —— 出差申请是内置类型，
+                // 但它的表单是播种出来的真实模板版本，提交走的正是本列表 → 通用动态表单链路
+                // （与预置类无异）。若仍排除一切内置，它既进不了列表又没有专属卡片，
+                // 类型种进库也等于不可提交。
+                .and(w -> w.eq(ApplyType::getBuiltIn, false)
+                        .or()
+                        .isNotNull(ApplyType::getFormTemplateVersionId))
                 .orderByAsc(ApplyType::getSortOrder)
                 .orderByAsc(ApplyType::getId));
         // 权限过滤放在服务端：前端过滤等于没过滤（直调接口即可绕过）
@@ -918,6 +924,13 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
         Long boundVersionId = type.getApprovalFlowVersionId();
         vo.setFlowBound(boundVersionId != null);
         vo.setApprovalFlowVersionId(boundVersionId);
+        // 有自己表单模板的内置类型（V53 出差申请）：条件分支必须引用**它自己的表单字段**。
+        // 借用域字段（applicant/deviceId/useType…）在出差单里根本不存在 ——
+        // 拿错目录配出来的条件在提交求值时会报「字段不存在」，或静默恒不命中。
+        FormSchema ownSchema = type.getFormTemplateVersionId() == null
+                ? null
+                : formTemplateService.requirePublishedSchema(type.getFormTemplateVersionId());
+
         if (boundVersionId != null) {
             vo.setFlowDefinition(approvalFlowService.requirePublishedDefinition(boundVersionId));
             Long flowTemplateId = flowIdOfVersion(boundVersionId);
@@ -927,11 +940,15 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 vo.setFlowCode(flow.getFlowCode());
                 vo.setFlowName(flow.getFlowName());
             }
-        } else if (builtIn.flowEditable()) {
+        } else if (builtIn.flowEditable() && ownSchema == null) {
+            // 只有「表单在代码里」的内置类型（借用）才需要借用默认流程兜底展示；
+            // 自带表单的类型（出差）未绑流程时就是走分组审批，给一张借用流程反而误导。
             vo.setFlowDefinition(defaultBorrowFlow());
         }
 
-        if (builtIn.flowEditable()) {
+        if (ownSchema != null) {
+            vo.setFieldSchema(ownSchema);
+        } else if (builtIn.flowEditable()) {
             // 条件分支只能引用「借用域字段」（BorrowFieldCatalog 是借用表单的事实源），
             // 与 OrderServiceImpl 提交时喂给 FlowPathResolver 的 schema 是同一份 ——
             // 两处若不同源，管理员配出来的条件会在提交那一刻报「字段不存在」。

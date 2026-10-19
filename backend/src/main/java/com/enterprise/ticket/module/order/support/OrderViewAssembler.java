@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.common.constant.ApprovalNodeStatus;
+import com.enterprise.ticket.common.constant.DivisionSource;
 import com.enterprise.ticket.common.constant.OrderStatus;
 import com.enterprise.ticket.common.constant.OrderType;
 import com.enterprise.ticket.common.constant.ReturnCondition;
@@ -344,6 +345,14 @@ public class OrderViewAssembler {
         vo.setStatus(order.getStatus());
         vo.setStatusLabel(OrderStatus.labelOf(order.getStatus()));
         vo.setHandlerGroupName(OrderReferenceNames.mapGet(departmentNames, order.getHandlerDepartmentId()));
+        // V54 / D5：当前所在分部（一审可查「这张单为什么派给了这个组」）。
+        // 名称走 departmentNames 批量字典，不额外查库；字典缺失（部门已删）时名称为空，
+        // 但 id 与来源照旧下发 —— 审计要的是「当时选了什么」，而不是「现在还查不查得到」。
+        vo.setCurrentDivisionId(order.getCurrentDivisionId());
+        vo.setCurrentDivisionName(
+                OrderReferenceNames.mapGet(departmentNames, order.getCurrentDivisionId()));
+        vo.setDivisionSource(order.getDivisionSource());
+        vo.setDivisionSourceLabel(DivisionSource.labelOf(order.getDivisionSource()));
         vo.setActualFinalHandlerId(order.getActualFinalHandlerId());
         vo.setActualFinalHandlerName(OrderReferenceNames.mapGet(userNames, order.getActualFinalHandlerId()));
         vo.setPlannedEndTime(order.getPlannedEndTime());

@@ -87,6 +87,14 @@ class DeviceFaultServiceImplTest {
             faultRepairAssigneeResolver;
     @Mock
     private com.enterprise.ticket.module.message.service.UserNotificationService userNotificationService;
+    /**
+     * V54：「当前所在分部」预填/来源判定。
+     *
+     * <p>不加这个 mock，{@code @InjectMocks} 会注入 null，写入前那一步直接 NPE ——
+     * 表现是「所有报修入口全部失败」，而错误与分部毫无关系（V50 加通知依赖时踩过同一个坑）。
+     */
+    @Mock
+    private com.enterprise.ticket.module.order.support.DivisionPrefillService divisionPrefillService;
 
     @InjectMocks
     private DeviceFaultServiceImpl service;
@@ -175,6 +183,10 @@ class DeviceFaultServiceImplTest {
             ((DeviceFault) invocation.getArgument(0)).setId(FAULT_ID);
             return 1;
         });
+        // V54：分部预填/来源判定（写入前最后一步；校验全过才会被调用）
+        when(divisionPrefillService.resolve(any(), any()))
+                .thenReturn(new com.enterprise.ticket.module.order.support.DivisionPrefillService
+                        .ResolvedDivision(10L, "HR_PRIMARY"));
 
         service.report(reportRequest(DEVICE_ID, ORDER_ID, "屏幕出现竖线", occurred));
 
@@ -186,6 +198,8 @@ class DeviceFaultServiceImplTest {
         assertEquals(occurred, saved.getOccurredAt(), "应记录用户填报的故障发生时间，而非登记时刻");
         assertEquals(ORDER_ID, saved.getOrderId());
         assertEquals(FaultStatus.PENDING_REPAIR.name(), saved.getStatus());
+        assertEquals(10L, saved.getCurrentDivisionId(), "V54：报修也要落「当前所在分部」");
+        assertEquals("HR_PRIMARY", saved.getDivisionSource());
     }
 
     @Test
@@ -247,6 +261,9 @@ class DeviceFaultServiceImplTest {
             ((DeviceFault) invocation.getArgument(0)).setId(FAULT_ID);
             return 1;
         });
+        when(divisionPrefillService.resolve(any(), any()))
+                .thenReturn(new com.enterprise.ticket.module.order.support.DivisionPrefillService
+                        .ResolvedDivision(10L, "MANUAL"));
 
         service.report(reportRequest(DEVICE_ID, null, "开不了机", LocalDateTime.now().minusHours(1)));
 
@@ -254,6 +271,7 @@ class DeviceFaultServiceImplTest {
         ArgumentCaptor<DeviceFault> captor = ArgumentCaptor.forClass(DeviceFault.class);
         verify(faultMapper).insert(captor.capture());
         assertNull(captor.getValue().getOrderId(), "台账登记不关联工单");
+        assertEquals("MANUAL", captor.getValue().getDivisionSource());
     }
 
     @Test

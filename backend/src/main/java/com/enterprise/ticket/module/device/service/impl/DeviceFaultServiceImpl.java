@@ -27,6 +27,7 @@ import com.enterprise.ticket.module.device.mapper.DeviceMapper;
 import com.enterprise.ticket.module.device.service.DeviceFaultService;
 import com.enterprise.ticket.module.order.entity.Order;
 import com.enterprise.ticket.module.order.mapper.OrderMapper;
+import com.enterprise.ticket.module.order.support.DivisionPrefillService;
 import com.enterprise.ticket.module.user.entity.User;
 import com.enterprise.ticket.module.user.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
@@ -66,6 +67,14 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
     private final FaultRepairAssigneeResolver faultRepairAssigneeResolver;
     /** 处理流程的站内通知（报修待处理 / 已接单 / 已处理） */
     private final UserNotificationService userNotificationService;
+    /**
+     * 「当前所在分部」预填与来源判定（V54 / D5）。
+     *
+     * <p>报修**不按分部派单**（维修人由「报修处理设置」决定，V50 的设计不动），
+     * 但分部必须留痕：否则「各分部报修量」「某分部设备故障率」这些报表没有数据源。
+     * 方向是 device → order.support 的单向依赖（本类原本就已依赖 order 的实体与 Mapper）。
+     */
+    private final DivisionPrefillService divisionPrefillService;
 
     // ------------------------------------------------------------------
     // 上报
@@ -104,7 +113,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
                         "设备当前状态为「" + DeviceStatus.labelOf(device.getStatus()) + "」，与使用中的工单不一致");
             }
             // 工单内上报**不改变设备状态**：设备仍在借用中，去向（维修 / 可用）由归还登记决定
-            Long id = insert(device, orderId, currentUserId, request, now);
+            Long id = insert(device, orderId, currentUserId, request, now,
+                    resolveDivision(currentUserId, request));
             log.info("工单 {} 上报设备 {} 故障，记录 id={}（设备保持使用中）",
                     order.getOrderNo(), device.getId(), id);
             return id;
@@ -121,13 +131,28 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
                             + "」，仅「可用」设备可直接登记故障（使用中的设备请从工单上报）");
         }
         changeDeviceStatus(device, DeviceStatus.AVAILABLE, DeviceStatus.MAINTENANCE);
-        Long id = insert(device, null, currentUserId, request, now);
+        Long id = insert(device, null, currentUserId, request, now,
+                resolveDivision(currentUserId, request));
         log.info("台账直接登记设备 {} 故障，记录 id={}，设备 可用 → 维修中", device.getId(), id);
         return id;
     }
 
+    /**
+     * 判定「当前所在分部」并落库（V54 / D5）。
+     *
+     * <p><b>只在真正要写库的那一刻调用</b>：它要查用户主部门、甚至回看出差单，
+     * 而绝大多数非法请求（越权 / 状态不符 / 设备不匹配）在那之前就被拒了 ——
+     * 把判定提前，等于让每个被拒绝的请求也白查一遍库。放在写入前一刻还有一个好处：
+     * 这里抛出的「分部非法」错误是最后一道门，前面所有业务校验的错误码都不会被它盖掉。
+     */
+    private DivisionPrefillService.ResolvedDivision resolveDivision(Long currentUserId,
+                                                                    DeviceFaultRequest request) {
+        return divisionPrefillService.resolve(currentUserId, request.getCurrentDivisionId());
+    }
+
     private Long insert(Device device, Long orderId, Long reporterId, DeviceFaultRequest request,
-                        LocalDateTime fallbackOccurredAt) {
+                        LocalDateTime fallbackOccurredAt,
+                        DivisionPrefillService.ResolvedDivision division) {
         DeviceFault fault = new DeviceFault();
         fault.setDeviceId(device.getId());
         fault.setOrderId(orderId);
@@ -136,6 +161,8 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         // 采用用户填报的「故障发生时间」；缺失时才用登记时刻兜底（否则上报时间会退化成登记时间）
         fault.setOccurredAt(request.getOccurredAt() != null ? request.getOccurredAt() : fallbackOccurredAt);
         fault.setStatus(FaultStatus.PENDING_REPAIR.name());
+        fault.setCurrentDivisionId(division.divisionId());
+        fault.setDivisionSource(division.source());
         faultMapper.insert(fault);
         // V50：登记即通知维修人。改造前报修提交后**没有任何通知** ——
         // 维修人只能靠不断刷新列表才发现有新单，等于整条处理流程没有起点。

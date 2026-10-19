@@ -1,7 +1,10 @@
 package com.enterprise.ticket.module.department.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.enterprise.ticket.common.alert.AlertLevel;
+import com.enterprise.ticket.common.alert.AlertService;
 import com.enterprise.ticket.common.api.ErrorCode;
+import com.enterprise.ticket.common.constant.MessageType;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlowVersion;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
@@ -9,11 +12,14 @@ import com.enterprise.ticket.module.department.dto.DepartmentSaveRequest;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentDeleteResultVO;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentNodeVO;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentOptionVO;
+import com.enterprise.ticket.module.department.dto.vo.DivisionHandlerConfigVO;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.entity.DepartmentManager;
+import com.enterprise.ticket.module.department.entity.DivisionHandlerGroup;
 import com.enterprise.ticket.module.department.entity.UserDepartment;
 import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
+import com.enterprise.ticket.module.department.mapper.DivisionHandlerGroupMapper;
 import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.user.dto.UserOptionVO;
@@ -69,6 +75,28 @@ public class DepartmentServiceImpl implements DepartmentService {
     private final DepartmentManagerMapper departmentManagerMapper;
     private final UserDepartmentMapper userDepartmentMapper;
     private final UserMapper userMapper;
+    /** 分部 ↔ 处理小组绑定（V53）：逐级匹配的事实源 */
+    private final DivisionHandlerGroupMapper divisionHandlerGroupMapper;
+    /**
+     * 运维告警出口（V53）：仅在「分部没绑处理小组、用默认组兜底」时使用。
+     *
+     * <p>依赖是单向的（{@code AlertService} 只依赖 message / log / mail / 系统配置），
+     * 不会与本模块形成环。
+     */
+    private final AlertService alertService;
+
+    /**
+     * 兜底告警去重：分部 id → 上次告警的毫秒时间戳。
+     *
+     * <p>为什么必须去重：这条告警挂在<b>每一次提交</b>的路径上。一个漏配的分部
+     * 一天可能有几十张单子，不去重会把超管的站内消息与邮箱刷成一片 ——
+     * 告警疲劳之后真故障会被直接忽略。30 分钟内同一分部只提醒一次，足够推动配置修复。
+     * 进程内 Map 即可：重启后重发一次无害（且那时往往正好有人去看配置）。
+     */
+    private final Map<Long, Long> fallbackAlertedAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 兜底告警的最小间隔 */
+    private static final long FALLBACK_ALERT_INTERVAL_MS = 30L * 60L * 1000L;
 
     /**
      * 流程版本出口（ 全量回归补丁）：仅用于**校验**部门绑定的版本确实存在且已发布。
@@ -170,11 +198,316 @@ public class DepartmentServiceImpl implements DepartmentService {
 
     @Override
     public Long handlerDepartmentId() {
-        Department handler = departmentMapper.selectOne(Wrappers.<Department>lambdaQuery()
+        // V53 起「全局唯一组」这个概念已被「分部绑定 + 全局默认」取代。
+        // 本方法保留给尚未改造的调用方，语义收敛为「默认处理小组」—— 迁移会把
+        // V53 之前那个唯一的组标成 default，因此升级后行为与升级前逐字一致。
+        return defaultHandlerDepartmentId();
+    }
+
+    @Override
+    public Long defaultHandlerDepartmentId() {
+        Department marked = departmentMapper.selectOne(Wrappers.<Department>lambdaQuery()
+                .eq(Department::getHandlerDefault, true)
+                .orderByAsc(Department::getId)
+                .last("LIMIT 1"));
+        if (marked != null) {
+            return marked.getId();
+        }
+        // 兜底：标记被手工清掉 / V53 迁移未跑到时，退回「id 最小的处理小组」，
+        // 与 V53 之前完全一致 —— 不让一次配置事故把整条分配链断成「无处理部门」
+        Department oldest = departmentMapper.selectOne(Wrappers.<Department>lambdaQuery()
                 .eq(Department::getHandlerGroup, true)
                 .orderByAsc(Department::getId)
                 .last("LIMIT 1"));
-        return handler == null ? null : handler.getId();
+        if (oldest != null) {
+            log.warn("未找到标记为全局默认的处理小组，已回退为 id 最小的处理小组 id={}（"
+                    + "请到组织与人员页把某个处理小组设为默认）", oldest.getId());
+        }
+        return oldest == null ? null : oldest.getId();
+    }
+
+    @Override
+    public Long handlerDepartmentOf(Long startDepartmentId) {
+        Long current = startDepartmentId;
+        // 环保护：正常部门树不会有环（move 里禁止移到自己的子树），但脏数据/并发改动
+        // 一旦造出环，这个 while 会变成死循环 —— 在请求线程里死循环比报错严重得多。
+        Set<Long> visited = new LinkedHashSet<>();
+        while (current != null && visited.add(current)) {
+            Long bound = boundHandlerDepartmentOf(current);
+            if (bound != null) {
+                return bound;
+            }
+            Department dept = departmentMapper.selectById(current);
+            if (dept == null) {
+                return null;
+            }
+            current = dept.getParentId();
+        }
+        if (current != null) {
+            log.error("部门树向上遍历出现环，逐级匹配处理小组提前终止：start={} 再次遇到 {}",
+                    startDepartmentId, current);
+        }
+        return null;
+    }
+
+    @Override
+    public Long rootDivisionIdOf(Long departmentId) {
+        Department dept = departmentId == null ? null : departmentMapper.selectById(departmentId);
+        if (dept == null) {
+            return null;
+        }
+        List<Long> chain = idChainOf(dept);
+        // path 形如 "/1/10/20/"：第 1 段是根（公司），第 2 段才是一级分部。
+        // 深度 1 的部门 chain 长度恰为 2，get(1) 就是它自己 —— 调用方不必区分「传的是分部还是子部门」。
+        return chain.size() >= 2 ? chain.get(1) : null;
+    }
+
+    @Override
+    public Long boundHandlerDepartmentOf(Long divisionId) {
+        if (divisionId == null) {
+            return null;
+        }
+        DivisionHandlerGroup binding = divisionHandlerGroupMapper.selectOne(
+                Wrappers.<DivisionHandlerGroup>lambdaQuery()
+                        .eq(DivisionHandlerGroup::getDivisionId, divisionId)
+                        .last("LIMIT 1"));
+        return binding == null ? null : binding.getHandlerDepartmentId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void bindHandlerGroup(Long divisionId, Long handlerDepartmentId) {
+        Department division = divisionId == null ? null : departmentMapper.selectById(divisionId);
+        if (division == null) {
+            throw new BusinessException(ErrorCode.DEPARTMENT_NOT_FOUND);
+        }
+        if (!Objects.equals(division.getDepth(), 1)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "处理小组只能绑定在一级分部上，「" + division.getDeptName() + "」不是一级分部");
+        }
+        if (handlerDepartmentId == null) {
+            divisionHandlerGroupMapper.delete(Wrappers.<DivisionHandlerGroup>lambdaQuery()
+                    .eq(DivisionHandlerGroup::getDivisionId, divisionId));
+            log.info("已解除一级分部 {} 的处理小组绑定", divisionId);
+            return;
+        }
+        if (Objects.equals(divisionId, handlerDepartmentId)) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不能把分部绑定到它自己");
+        }
+        Department handler = departmentMapper.selectById(handlerDepartmentId);
+        if (handler == null) {
+            throw new BusinessException(ErrorCode.DEPARTMENT_NOT_FOUND);
+        }
+        if (!Boolean.TRUE.equals(handler.getHandlerGroup())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "「" + handler.getDeptName() + "」不是处理小组，请先在部门标记中把它设为处理小组");
+        }
+        if (!Boolean.TRUE.equals(handler.getStatus())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "处理小组「" + handler.getDeptName() + "」已停用，不能绑定");
+        }
+
+        DivisionHandlerGroup existing = divisionHandlerGroupMapper.selectOne(
+                Wrappers.<DivisionHandlerGroup>lambdaQuery()
+                        .eq(DivisionHandlerGroup::getDivisionId, divisionId)
+                        .last("LIMIT 1"));
+        if (existing == null) {
+            DivisionHandlerGroup created = new DivisionHandlerGroup();
+            created.setDivisionId(divisionId);
+            created.setHandlerDepartmentId(handlerDepartmentId);
+            divisionHandlerGroupMapper.insert(created);
+        } else {
+            divisionHandlerGroupMapper.update(null, Wrappers.<DivisionHandlerGroup>lambdaUpdate()
+                    .eq(DivisionHandlerGroup::getId, existing.getId())
+                    .set(DivisionHandlerGroup::getHandlerDepartmentId, handlerDepartmentId));
+        }
+        // 成员为空只告警不拦：配置可以先于人员到位（新分部刚成立时常见），
+        // 拦死会让管理员无法先把绑定关系建起来
+        if (activeMemberIdsOf(handlerDepartmentId).isEmpty()) {
+            log.warn("分部 {} 绑定的处理小组 {} 暂无在职成员，该分部的工单将在审批通过后分配失败",
+                    divisionId, handlerDepartmentId);
+        }
+        log.info("一级分部 {} 已绑定处理小组 {}", divisionId, handlerDepartmentId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void setDefaultHandlerDepartment(Long handlerDepartmentId) {
+        // ① 先清掉全部标记。必须显式 set(false)：全局 update-strategy=not_null 会跳过
+        //    非 null 之外的一切，而 Boolean.FALSE 不是 null —— 但 updateById 的字段策略
+        //    对 false 的写入依赖具体实现，显式 lambdaUpdate().set(...) 最稳妥。
+        //    where 加 isNotNull(id) 只为避开「无任何条件」的全表更新写法（部分 MP 版本会拦）。
+        departmentMapper.update(null, Wrappers.<Department>lambdaUpdate()
+                .isNotNull(Department::getId)
+                .set(Department::getHandlerDefault, false));
+        if (handlerDepartmentId == null) {
+            log.info("已清除全局默认处理小组标记，解析时将回退为 id 最小的处理小组");
+            return;
+        }
+        Department handler = departmentMapper.selectById(handlerDepartmentId);
+        if (handler == null) {
+            throw new BusinessException(ErrorCode.DEPARTMENT_NOT_FOUND);
+        }
+        if (!Boolean.TRUE.equals(handler.getHandlerGroup())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "「" + handler.getDeptName() + "」不是处理小组，不能设为全局默认");
+        }
+        if (!Boolean.TRUE.equals(handler.getStatus())) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID,
+                    "处理小组「" + handler.getDeptName() + "」已停用，不能设为全局默认");
+        }
+        departmentMapper.update(null, Wrappers.<Department>lambdaUpdate()
+                .eq(Department::getId, handlerDepartmentId)
+                .set(Department::getHandlerDefault, true));
+        log.info("全局默认处理小组已设为 {}（{}）", handlerDepartmentId, handler.getDeptName());
+    }
+
+    @Override
+    public Map<Long, Long> handlerGroupBindings() {
+        Map<Long, Long> result = new LinkedHashMap<>();
+        for (DivisionHandlerGroup binding : divisionHandlerGroupMapper.selectList(null)) {
+            if (binding.getDivisionId() != null && binding.getHandlerDepartmentId() != null) {
+                result.put(binding.getDivisionId(), binding.getHandlerDepartmentId());
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public List<DepartmentOptionVO> handlerGroupOptions() {
+        List<Department> all = departmentMapper.selectList(Wrappers.<Department>lambdaQuery()
+                .eq(Department::getHandlerGroup, true)
+                .orderByAsc(Department::getSortOrder)
+                .orderByAsc(Department::getId));
+        Map<Long, Department> index = all.stream()
+                .collect(Collectors.toMap(Department::getId, d -> d, (a, b) -> a, LinkedHashMap::new));
+        List<DepartmentOptionVO> options = new ArrayList<>();
+        for (Department dept : all) {
+            options.add(DepartmentOptionVO.of(dept, displayPathOf(dept, index)));
+        }
+        return options;
+    }
+
+    @Override
+    public DivisionHandlerConfigVO handlerGroupConfig() {
+        List<Department> all = departmentMapper.selectList(Wrappers.<Department>lambdaQuery()
+                .orderByAsc(Department::getDepth)
+                .orderByAsc(Department::getSortOrder)
+                .orderByAsc(Department::getId));
+        Map<Long, Department> index = all.stream()
+                .collect(Collectors.toMap(Department::getId, d -> d, (a, b) -> a, LinkedHashMap::new));
+
+        DivisionHandlerConfigVO vo = new DivisionHandlerConfigVO();
+        Long defaultId = defaultHandlerDepartmentId();
+        vo.setDefaultHandlerDepartmentId(defaultId);
+        Department defaultDept = defaultId == null ? null : index.get(defaultId);
+        vo.setDefaultHandlerDepartmentName(defaultDept == null ? null : defaultDept.getDeptName());
+
+        Map<Long, Long> bindings = handlerGroupBindings();
+        for (Department dept : all) {
+            // 「分部」= 部门树 depth = 1 的节点（用户裁决 D6=A），根节点（公司）不参与绑定
+            if (!Objects.equals(dept.getDepth(), 1)) {
+                continue;
+            }
+            DivisionHandlerConfigVO.DivisionBinding binding = new DivisionHandlerConfigVO.DivisionBinding();
+            binding.setDivisionId(dept.getId());
+            binding.setDivisionName(dept.getDeptName());
+            Long handlerId = bindings.get(dept.getId());
+            binding.setHandlerDepartmentId(handlerId);
+            Department handler = handlerId == null ? null : index.get(handlerId);
+            binding.setHandlerDepartmentName(handler == null ? null : handler.getDeptName());
+            vo.getDivisions().add(binding);
+        }
+        return vo;
+    }
+
+    @Override
+    public Long resolveHandlerDepartment(Long startDepartmentId) {
+        Long matched = handlerDepartmentOf(startDepartmentId);
+        if (matched != null) {
+            return matched;
+        }
+        Long fallback = defaultHandlerDepartmentId();
+        if (fallback == null) {
+            // 连默认组都没有：这不是「漏配一个分部」，而是系统未初始化处理小组，
+            // 由调用方抛 HANDLER_DEPARTMENT_NOT_CONFIGURED（与 V53 之前一致）
+            return null;
+        }
+        notifyHandlerFallbackOnce(startDepartmentId, fallback);
+        return fallback;
+    }
+
+    /**
+     * 「分部漏配、用默认组兜底」的告警（30 分钟内同一分部只发一次）。
+     *
+     * <p>告警失败绝不影响主流程：{@link AlertService#alert} 自身已约定不抛，
+     * 这里再加一层兜底是因为它挂在<b>提交工单</b>的链路上 —— 一个通知问题
+     * 不该让用户提交不了单。
+     */
+    private void notifyHandlerFallbackOnce(Long startDepartmentId, Long fallbackId) {
+        Long divisionId = rootDivisionIdOf(startDepartmentId);
+        Long key = divisionId == null ? 0L : divisionId;
+        long now = System.currentTimeMillis();
+        Long last = fallbackAlertedAt.get(key);
+        if (last != null && now - last < FALLBACK_ALERT_INTERVAL_MS) {
+            return;
+        }
+        fallbackAlertedAt.put(key, now);
+
+        Department division = divisionId == null ? null : departmentMapper.selectById(divisionId);
+        Department fallback = departmentMapper.selectById(fallbackId);
+        String divisionName = division == null ? "（申请人未分配部门）" : division.getDeptName();
+        String fallbackName = fallback == null ? ("#" + fallbackId) : fallback.getDeptName();
+        log.warn("分部「{}」(id={}) 未绑定处理小组，本次用默认组「{}」(id={}) 兜底 —— "
+                        + "工单仍可正常流转，但该分部的单子会全部落到默认组，请到组织与人员页补配置",
+                divisionName, divisionId, fallbackName, fallbackId);
+        try {
+            alertService.alert(AlertLevel.P1, MessageType.HANDLER_GROUP_FALLBACK,
+                    "分部「" + divisionName + "」未绑定处理小组",
+                    "该分部的工单已自动转给默认处理小组「" + fallbackName + "」处理。\n"
+                            + "若这不是预期结果，请到「组织与人员 → 部门树」把该分部绑定到它自己的 IT 处理小组。\n"
+                            + "同一分部 30 分钟内只提醒一次。",
+                    "HANDLER_GROUP_FALLBACK",
+                    "division=" + divisionName + "(id=" + divisionId + ")"
+                            + " | fallback=" + fallbackName + "(id=" + fallbackId + ")");
+        } catch (RuntimeException e) {
+            log.warn("处理小组兜底告警发送失败（不影响工单提交）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 某部门从根到自身的 id 链（含首尾）。
+     *
+     * <p>优先解析物化路径 {@code path}（一次查询即可）；path 缺失/脏数据时退回
+     * {@code parent_id} 逐级向上 —— 后者每次一跳一次查询，但正常数据不会走到这条分支。
+     */
+    private List<Long> idChainOf(Department dept) {
+        String path = dept.getPath();
+        if (StringUtils.hasText(path)) {
+            List<Long> ids = new ArrayList<>();
+            try {
+                for (String raw : path.split("/")) {
+                    if (!raw.isBlank()) {
+                        ids.add(Long.parseLong(raw.trim()));
+                    }
+                }
+                if (!ids.isEmpty()) {
+                    return ids;
+                }
+            } catch (NumberFormatException e) {
+                log.warn("部门 {} 的物化路径不合法（{}），回退为逐级向上解析", dept.getId(), path);
+            }
+        }
+        List<Long> ids = new ArrayList<>();
+        Set<Long> guard = new LinkedHashSet<>();
+        Long cursor = dept.getId();
+        while (cursor != null && guard.add(cursor)) {
+            ids.add(cursor);
+            Department node = departmentMapper.selectById(cursor);
+            cursor = node == null ? null : node.getParentId();
+        }
+        java.util.Collections.reverse(ids);
+        return ids;
     }
 
     @Override

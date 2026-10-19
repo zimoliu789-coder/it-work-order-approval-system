@@ -34,6 +34,7 @@ import com.enterprise.ticket.common.flow.FlowPathResolver;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
+import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
@@ -55,6 +56,7 @@ import com.enterprise.ticket.module.order.dto.OrderReturnRequest;
 import com.enterprise.ticket.module.order.dto.vo.AssignCandidateVO;
 import com.enterprise.ticket.module.order.dto.vo.BorrowFlowPreviewVO;
 import com.enterprise.ticket.module.order.dto.vo.DeviceOptionVO;
+import com.enterprise.ticket.module.order.dto.vo.DivisionPrefillVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderDetailVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderFormDataVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderVO;
@@ -67,6 +69,7 @@ import com.enterprise.ticket.module.order.mapper.OrderApprovalNodeMapper;
 import com.enterprise.ticket.module.order.mapper.OrderFormDataMapper;
 import com.enterprise.ticket.module.order.mapper.OrderMapper;
 import com.enterprise.ticket.module.order.support.BorrowFlowPreviewer;
+import com.enterprise.ticket.module.order.support.DivisionPrefillService;
 import com.enterprise.ticket.module.order.support.FlowInputResolver;
 import com.enterprise.ticket.module.order.support.OrderApprovalNodeSupport;
 import com.enterprise.ticket.module.order.support.OrderConcurrencyGuard;
@@ -74,6 +77,7 @@ import com.enterprise.ticket.module.order.support.OrderReferenceNames;
 import com.enterprise.ticket.module.order.support.OrderViewAssembler;
 import com.enterprise.ticket.module.order.support.PendingAssignSupport;
 import com.enterprise.ticket.module.order.support.ScanCodeParser;
+import com.enterprise.ticket.module.order.support.TripOverlapGuard;
 import com.enterprise.ticket.module.order.support.FlowNodeMaterializer;
 import com.enterprise.ticket.module.order.support.FlowNodeMaterializer.LeaderNotice;
 import com.enterprise.ticket.module.order.service.FlowActivationService;
@@ -192,6 +196,24 @@ public class OrderServiceImpl implements OrderService {
     /** 动态表单数据校验器：按 schema 校验用户提交的值 */
     private final FormDataValidator formDataValidator;
 
+    /**
+     * 出差申请提交闸门（V53）：「同一员工只能有一份生效出差」的查询与拦截。
+     *
+     * <p>独立组件而非本类私有方法：生效出差的查询口径（TRIP + COMPLETED + 闭区间重叠）
+     * 将来会被「当前所在分部」预填复用，收在 {@code support} 包里才有单一参照实现。
+     */
+    private final TripOverlapGuard tripOverlapGuard;
+
+    /**
+     * 「当前所在分部」的预填与来源判定（V54 / D5）。
+     *
+     * <p>它同时承担两件事：给提交页下发预填值（出差中 ⇒ 目标分部），
+     * 以及提交时判定「这个分部是系统给的还是员工改的」。
+     * 两件事必须共用同一份预填计算 —— 否则审计里会出现「前端显示未改、落库却记成手动改」
+     * 这种无法解释的组合。
+     */
+    private final DivisionPrefillService divisionPrefillService;
+
     /** 工单自定义表单数据 */
     private final OrderFormDataMapper orderFormDataMapper;
     /**
@@ -220,8 +242,6 @@ public class OrderServiceImpl implements OrderService {
      */
     private final com.enterprise.ticket.module.message.service.UserNotificationService
             userNotificationService;
-
-    /** 申请类型 Mapper：仅供列表批量取「申请类型名称」，不做业务判定 */
 
     /**
      * 审批流程出口：仅用于取「该版本已冻结的流程定义」。
@@ -649,6 +669,13 @@ public class OrderServiceImpl implements OrderService {
     // ------------------------------------------------------------------
 
     @Override
+    public DivisionPrefillVO divisionPrefill() {
+        // 按当前登录用户算 —— 不接受「传 userId 进来」：那等于给了任何人查看他人
+        // 出差行程（目标分部）的入口，而预填本身只需要自己的数据。
+        return divisionPrefillService.prefill(requireCurrentUserId());
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public Long create(OrderCreateRequest request) {
         Long applicantId = requireCurrentUserId();
@@ -691,10 +718,24 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ErrorCode.DEPARTMENT_NOT_FOUND, "所属部门不存在，请联系管理员");
         }
 
-        // 3) 最终处理部门（：全局唯一的「IT运维组」，departments.handler_group = 1）。
-        //    改造前是「每个业务分组各自绑定一个最终处理小组」，改造后全系统只有一个 ——
-        //    因此这里不再从申请人部门上取，而是问部门服务要那唯一的一个。
-        Long handlerGroupId = departmentService.handlerDepartmentId();
+        // 2.5) 当前所在分部（V54 / D5）：员工可选，留空由服务端预填（出差中 ⇒ 目标分部，
+        //      否则 ⇒ 人事主部门所属分部）。它既落库（供审计与统计），又是下面
+        //      「匹配处理小组」的**起点** —— 出差在外的人应当由目的地分部接单。
+        //      来源由服务端比对判定，不接受前端自报（见 DivisionPrefillService 类注释）。
+        DivisionPrefillService.ResolvedDivision division =
+                divisionPrefillService.resolve(applicantId, request.getCurrentDivisionId());
+        Long handlerStartId = division.divisionId() != null
+                ? division.divisionId()
+                : applicant.getDepartmentId();
+
+        // 3) 最终处理部门（V53：按「当前所在分部」沿组织树逐级向上匹配处理小组）。
+        //    改造前这里是「全局唯一的 IT运维组」，于是北京分部的单子必然落到上海那个组 ——
+        //    分配错误是确定性发生的。现在交给部门服务按组织树匹配；
+        //    该分部没配绑定时它回落「全局默认处理小组」并发一条 P1 运维告警
+        //    （告警去重 30 分钟，见 DepartmentServiceImpl#resolveHandlerDepartment）。
+        //    注意：起点优先用**表单选中的分部**（V54），取不到才退回申请人主部门 ——
+        //    兼职部门始终不参与匹配（D5.4），它只用于「谁能看这张单」。
+        Long handlerGroupId = departmentService.resolveHandlerDepartment(handlerStartId);
         if (handlerGroupId == null) {
             throw new BusinessException(ErrorCode.HANDLER_DEPARTMENT_NOT_CONFIGURED,
                     "系统尚未配置最终处理部门（IT运维组），请联系管理员");
@@ -787,6 +828,10 @@ public class OrderServiceImpl implements OrderService {
         order.setExpectedReturnDate(expectedReturnDate);
         order.setStatus(initialStatus.name());
         order.setHandlerDepartmentId(handlerGroupId);
+        // 当前所在分部 + 取值来源（V54）：来源是审计数据，必须与分部同一次提交落库，
+        // 否则会出现「有分部、无来源」的半截记录，事后无法判定是预填还是人工改的。
+        order.setCurrentDivisionId(division.divisionId());
+        order.setDivisionSource(division.source());
         order.setBorrowTimeout(false);
         order.setAutoExtendCount(0);
         // 流程定义快照（M1）：与节点行互补 —— 节点行是「执行结果」，这份 JSON 是「当时的规则」。
@@ -906,6 +951,14 @@ public class OrderServiceImpl implements OrderService {
         assertPermissionCodesApplicable(formData);
         formDataValidator.validate(schema, formData);
 
+        // V53：出差申请（TRIP）——「同一员工只能有一份生效出差」的提交闸门。
+        // 位置有讲究：在表单校验**之后**（字段级错误先报，提示更具体），
+        // 在建单**之前**（重叠拦截不产生半截数据，与整个方法的事务语义一致）。
+        boolean tripOrder = BuiltInApplyCatalog.CODE_TRIP.equals(applyType.getTypeCode());
+        if (tripOrder) {
+            tripOverlapGuard.assertSubmittable(applicantId, formData);
+        }
+
         ApprovalMode mode = ApprovalMode.of(applyType.getApprovalMode());
         if (mode == null) {
             // 配置脏数据兜底：审批方式解析不出来时按「无审批」处理而不是报错。
@@ -937,7 +990,8 @@ public class OrderServiceImpl implements OrderService {
                 throw new BusinessException(ErrorCode.DEPARTMENT_NOT_FOUND, "所属部门不存在，请联系管理员");
             }
             departmentId = department.getId();
-            handlerGroupId = departmentService.handlerDepartmentId();
+            // V53：按「申请人主部门所属一级分部」逐级向上匹配处理小组（与借用单同一口径）
+            handlerGroupId = departmentService.resolveHandlerDepartment(department.getId());
             nodes = buildSnapshot(applicant, department.getId());
         } else if (mode == ApprovalMode.FLOW) {
             // 独立审批流程
@@ -979,7 +1033,9 @@ public class OrderServiceImpl implements OrderService {
         OrderStatus initialStatus = needApproval ? OrderStatus.PENDING_APPROVAL : OrderStatus.COMPLETED;
 
         Order order = new Order();
-        order.setOrderType(OrderType.CUSTOM.name());
+        // 出差申请单独落 TRIP 类型（V53）：重叠校验与将来的分部预填都按 order_type 捞单，
+        // 不必经 apply_type 反查；其余自定义申请维持 CUSTOM。
+        order.setOrderType((tripOrder ? OrderType.TRIP : OrderType.CUSTOM).name());
         order.setApplyTypeId(applyType.getId());
         // 流程定义快照：与节点行互补 —— 节点行是「执行结果」，这份 JSON 是「当时的规则」
         order.setApprovalFlowJson(frozenFlow == null ? null : FlowDefinitionCodec.write(frozenFlow));
@@ -1077,7 +1133,9 @@ public class OrderServiceImpl implements OrderService {
         Order order = requireOrder(orderId);
         // 可见性与工单详情完全同一套判定：申请人 / 审批人 / 实际执行人 / admin 以上
         assertCanView(order, currentUserId, role);
-        if (!OrderType.CUSTOM.name().equals(order.getOrderType())) {
+        // 表单驱动的单据（自定义申请 / V53 的出差申请）才有 order_form_data；
+        // 借用单的「表单」是 orders 上的固定列，另走详情接口。
+        if (!OrderType.isFormDriven(order.getOrderType())) {
             throw new BusinessException(ErrorCode.ORDER_NOT_CUSTOM);
         }
         OrderFormData row = orderFormDataMapper.selectOne(Wrappers.<OrderFormData>lambdaQuery()
@@ -1884,10 +1942,14 @@ public class OrderServiceImpl implements OrderService {
         // 以库中最新状态判断是否还有未完成节点（或签批量跳过 / 会签全部通过）
         boolean hasPending = hasOpenApproval(orderId, order);
         if (!hasPending) {
-            if (OrderType.CUSTOM.name().equals(order.getOrderType())) {
-                // 自定义申请没有设备交付环节：审批通过即流程终点（已完成）。
+            if (OrderType.isFormDriven(order.getOrderType())) {
+                // 表单驱动的单据（自定义申请 / V53 出差申请）没有设备交付环节：
+                // 审批通过即流程终点（已完成）。
                 // 借用单在这里是「进入待交付并分配执行人」，两者刻意不同 ——
-                // 硬套借用单流程会造出一笔「待交付但无设备可交付」的死单。
+                // 硬套借用单流程会造出一笔「待交付但无设备可交付」的死单：
+                // 交付入口要求 device_id 非空（见 requireDevice），出差单只会一直抛
+                // DEVICE_NOT_FOUND，永久卡在待交付；连带还让 TripOverlapGuard 查不到
+                // 任何 COMPLETED 的出差单，重叠闸门形同虚设。
                 completeCustomOrder(order);
                 return;
             }

@@ -132,7 +132,9 @@ public class FormDataValidator {
             case FILE -> validateFiles(field, label, value, errors);
             case USER_REF -> validateUserRef(field, label, value, errors);
             case DEVICE_REF -> validateDeviceRef(field, label, value, errors);
-            case GROUP_REF -> validateGroupRef(field, label, value, errors);
+            // GROUP_REF 有两种语义：部门选择（任意层级）与一级分部选择（只能选一级）。
+            // 两者取值相同（都是部门 id），故在此按**字段类型**分流，而不是再开一个 ValueKind。
+            case GROUP_REF -> validateGroupRef(field, type, label, value, errors);
             default -> {
                 // NONE（布局类）已在上游过滤，不会走到这里
             }
@@ -273,7 +275,22 @@ public class FormDataValidator {
         }
     }
 
-    private void validateGroupRef(FormField field, String label, Object value, List<String> errors) {
+    /**
+     * 部门引用校验。
+     *
+     * <h2>为什么一定要在这里区分 ROOT_DEPT（V53）</h2>
+     * <p>「一级分部选择」的语义是<b>固定只能选组织树一级部门</b>：前端渲染器只列出一级节点，
+     * 但那只是体验层。任何人都可以直接调提交接口塞一个三级部门 id —— 若不在此拦下：
+     * <ul>
+     *   <li>出差单的「目标分部」会变成某个小组，后续按分部做的统计 / 匹配全部落空；</li>
+     *   <li>更隐蔽的是<b>不会报错</b>：工单照常提交成功，数据也已经错了，只能靠人事事后发现。</li>
+     * </ul>
+     * 判定依据是 {@code parent_id IS NULL}（组织树根 = 公司；一级分部即根的直接下级或无根场景的顶层），
+     * 与 {@code DepartmentServiceImpl} 维护 {@code depth} 的口径一致，但不读 depth ——
+     * depth 是派生字段，一旦历史数据被手工改过，读它会给出与树结构矛盾的结论。
+     */
+    private void validateGroupRef(FormField field, FormFieldType type,
+                                  String label, Object value, List<String> errors) {
         Long groupId = longValue(value);
         if (groupId == null) {
             errors.add("「" + label + "」必须是部门 id");
@@ -282,6 +299,11 @@ public class FormDataValidator {
         Department group = departmentMapper.selectById(groupId);
         if (group == null) {
             errors.add("「" + label + "」所选部门不存在");
+            return;
+        }
+        if (type == FormFieldType.ROOT_DEPT && group.getParentId() != null) {
+            String name = group.getDeptName() == null ? String.valueOf(groupId) : group.getDeptName();
+            errors.add("「" + label + "」只能选择一级分部（「" + name + "」不是一级部门）");
         }
     }
 

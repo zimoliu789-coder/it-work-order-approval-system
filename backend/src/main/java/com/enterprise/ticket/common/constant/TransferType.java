@@ -25,7 +25,16 @@ public enum TransferType {
      * 与 {@link #MANUAL} 区分，是为了让转交历史能回答「这笔是执行人自己交接的，
      * 还是超管强制指派的」——责任归属不同。
      */
-    FORCE_ADMIN("强制转交");
+    FORCE_ADMIN("强制转交"),
+
+    /**
+     * 跨组转单（V55 / D5.7）：整笔工单连同**处理小组**一起移交到另一个小组。
+     *
+     * <p>与 {@link #MANUAL} 的关键差别是「小组也变了」：manual 只换人，
+     * 而本类型生效时 {@code handler_department_id} 会被改成目标小组 ——
+     * 事后查「这单为什么进了上海组的队列」，只有这个类型值能解释。
+     */
+    CROSS_GROUP("跨组转单");
 
     private final String label;
 

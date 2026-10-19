@@ -36,6 +36,17 @@ public class DeviceFault {
     /** 关联工单 orders.id（无工单直接登记时为 null） */
     private Long orderId;
 
+    /**
+     * 当前所在分部（一级分部 {@code department.id}，V54 / D5）。
+     *
+     * <p>报修**不产生工单**，因此分部信息只能落在本表 —— 如果只在 borrow_order 上存，
+     * 「各分部报修量」这张报表就没有数据源。允许为空（存量记录没有该信息）。
+     */
+    private Long currentDivisionId;
+
+    /** 分部取值来源，取值见 {@link com.enterprise.ticket.common.constant.DivisionSource} */
+    private String divisionSource;
+
     /** 上报人 user_id */
     private Long reporterId;
 

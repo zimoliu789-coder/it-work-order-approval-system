@@ -428,4 +428,45 @@ class FormTemplateServiceImplTest {
         assertTrue(service.listTemplates().isEmpty());
         verify(versionMapper, never()).selectList(any());
     }
+
+    // ------------------------------------------------------------------
+    // publish：系统内置字段守卫（V53）
+    // ------------------------------------------------------------------
+
+    /** 已发布版本：一个 DATE 类型的系统内置字段 */
+    private static final String PUBLISHED_SYSTEM_SCHEMA =
+            "{\"fields\":[{\"key\":\"trip_start_date\",\"label\":\"出差开始日期\","
+                    + "\"type\":\"DATE\",\"width\":1,\"systemField\":true}]}";
+
+    /** 新草稿把系统字段删了，只剩下一个普通字段 */
+    private static final String DRAFT_WITHOUT_SYSTEM_SCHEMA =
+            "{\"fields\":[{\"key\":\"reason\",\"label\":\"出差事由\",\"type\":\"TEXT\",\"width\":1}]}";
+
+    @Test
+    @DisplayName("发布：新版本删掉了系统内置字段 → 拒绝，且不写库")
+    void publish_rejectsRemovedSystemField() {
+        when(templateMapper.selectById(TEMPLATE_ID)).thenReturn(template(FormTemplateStatus.PUBLISHED.name()));
+        when(versionMapper.selectList(any())).thenReturn(List.of(
+                version(1L, 1, PUBLISHED_SYSTEM_SCHEMA, LocalDateTime.now()),
+                version(2L, 2, DRAFT_WITHOUT_SYSTEM_SCHEMA, null)));
+
+        assertEquals(ErrorCode.FORM_SCHEMA_INVALID, codeOf(() -> service.publish(TEMPLATE_ID)));
+        verify(versionMapper, never()).update(any(), any());
+        verify(templateMapper, never()).update(any(), any());
+    }
+
+    @Test
+    @DisplayName("发布：只改系统字段的显示名 → 放行（允许改标签，不允许删/改类型）")
+    void publish_allowsRenamingSystemFieldLabel() {
+        when(templateMapper.selectById(TEMPLATE_ID)).thenReturn(template(FormTemplateStatus.PUBLISHED.name()));
+        when(versionMapper.selectList(any())).thenReturn(List.of(
+                version(1L, 1, PUBLISHED_SYSTEM_SCHEMA, LocalDateTime.now()),
+                version(2L, 2,
+                        "{\"fields\":[{\"key\":\"trip_start_date\",\"label\":\"出发日\","
+                                + "\"type\":\"DATE\",\"width\":1,\"systemField\":true}]}", null)));
+        when(versionMapper.update(any(), any())).thenReturn(1);
+        when(templateMapper.update(any(), any())).thenReturn(1);
+
+        assertEquals(2L, service.publish(TEMPLATE_ID));
+    }
 }

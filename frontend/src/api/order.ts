@@ -6,6 +6,7 @@ import type {
   AssignCandidate,
   CustomOrderPayload,
   DeviceOption,
+  DivisionPrefill,
   OrderAllQuery,
   OrderDetail,
   OrderExtendItem,
@@ -20,7 +21,11 @@ import type {
   OrderTransferPayload,
   OrderUrgeItem,
   ReturnConditionCode,
-  TransferCandidate
+  TransferCandidate,
+  TransferGroupOption,
+  TransferRequestCreatePayload,
+  TransferRequestDecidePayload,
+  TransferRequestItem
 } from '@/types/order'
 
 /**
@@ -73,6 +78,21 @@ export const orderApi = {
       expectedReturnDate: query.expectedReturnDate ?? undefined,
       deviceId: query.deviceId ?? undefined
     })
+  },
+
+  /**
+   * 「当前所在分部」预填（V54 / D5.2）。
+   *
+   * 返回三样东西：默认选哪个分部、这个默认值是哪来的、
+   * 以及**可选的全部分部**（仅启用的一级分部）。
+   *
+   * <p>刻意不接受 userId 参数：按当前登录用户算。允许传别人的 id 等于
+   * 开了一个「查他人出差行程」的入口，而预填只需要自己的数据。
+   *
+   * <p>只读、不落库；调用失败不阻断提交（真正的判定在 `create`）。
+   */
+  divisionPrefill() {
+    return http.get<DivisionPrefill>('/orders/division-prefill')
   },
 
   // ------------------------------------------------------------------
@@ -275,6 +295,45 @@ export const orderApi = {
   /** 转交候选对象（弹窗下拉）：普通执行人=同组其他在职成员；super_admin=全部有效用户 */
   transferCandidates(id: number) {
     return http.get<TransferCandidate[]>(`/orders/${id}/transfer-candidates`)
+  },
+
+  // ------------------------------------------------------------------
+  // 转单申请（V55 / D5.7：同组 / 跨组三态流转）
+  // ------------------------------------------------------------------
+
+  /**
+   * 发起转单申请
+   *
+   * 同组：当前执行人发起 → 本组管理员审批（发起人本人是管理员时当场生效）；
+   * 跨组：仅本组管理员发起 → 目标组管理员接收并分配，或拒绝退回。
+   */
+  createTransferRequest(id: number, data: TransferRequestCreatePayload) {
+    return http.post<number>(`/orders/${id}/transfer-requests`, data)
+  },
+
+  /** 处理转单申请：同意（同组通过 / 跨组接收并分配）或拒绝 */
+  decideTransferRequest(requestId: number, data: TransferRequestDecidePayload) {
+    return http.put<void>(`/orders/transfer-requests/${requestId}/decide`, data)
+  },
+
+  /** 某工单的转单申请记录（含被拒绝的历史，按时间升序） */
+  listTransferRequests(id: number) {
+    return http.get<TransferRequestItem[]>(`/orders/${id}/transfer-requests`)
+  },
+
+  /** 待我处理的转单申请（我是审批人 / 接收人且仍待处理） */
+  myTransferRequestTodo() {
+    return http.get<TransferRequestItem[]>('/orders/transfer-requests/todo')
+  },
+
+  /** 跨组转单可选的目标小组（含各自管理员；未配管理员的小组不可选） */
+  transferGroups() {
+    return http.get<TransferGroupOption[]>('/orders/transfer-requests/groups')
+  },
+
+  /** 某处理小组的在职成员（跨组「接收并分配」时的执行人下拉） */
+  transferGroupMembers(departmentId: number) {
+    return http.get<TransferCandidate[]>(`/orders/transfer-requests/groups/${departmentId}/members`)
   },
 
   // ------------------------------------------------------------------

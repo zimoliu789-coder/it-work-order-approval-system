@@ -18,7 +18,7 @@ import {
 } from '@/utils/deptTree'
 import { ROLE_OPTIONS } from '@/types/user'
 import type { UserAccount, UserAccountQuery, UserOption, UserUpdatePayload } from '@/types/user'
-import type { DepartmentNode, DepartmentOption } from '@/types/department'
+import type { DepartmentNode, DepartmentOption, DivisionHandlerConfig } from '@/types/department'
 import type { AllowDropType, TableInstance, TreeInstance } from 'element-plus'
 import type { ColumnDef } from '@/types/table'
 import { AUTH_TYPE_OPTIONS, type AccountAuthType, type AdAccountConvertVO } from '@/types/ad'
@@ -718,6 +718,106 @@ async function submitManagers(): Promise<void> {
 }
 
 // ------------------------------------------------------------------
+// 分部 → 处理小组（V53）
+// ------------------------------------------------------------------
+/**
+ * 配置总览 + 下拉数据源。
+ *
+ * <h2>配置改完就重拉，而不是就地改本地值</h2>
+ * 与部门树拖拽同一个理由：后端会做校验（不分部 / 组未启用 / 绑到自己），
+ * 就地改本地值就得手写回滚，写错了界面还与库不一致。重拉最省事也最不会骗人。
+ */
+const handlerGroupDialog = reactive<{
+  visible: boolean
+  loading: boolean
+  saving: boolean
+  config: DivisionHandlerConfig | null
+  /** 默认组下拉的本地值：config 可能为 null，模板里没法对可选链做 v-model */
+  defaultHandlerId: number | null
+}>({
+  visible: false,
+  loading: false,
+  saving: false,
+  config: null,
+  defaultHandlerId: null
+})
+
+/** 可选的处理小组（`handler_group = 1` 的部门） */
+const handlerGroupOptions = ref<DepartmentOption[]>([])
+
+function openHandlerGroupDialog(): void {
+  handlerGroupDialog.visible = true
+  void loadHandlerGroupConfig()
+}
+
+async function loadHandlerGroupConfig(): Promise<void> {
+  handlerGroupDialog.loading = true
+  try {
+    const [config, options] = await Promise.all([
+      departmentApi.handlerGroups(),
+      departmentApi.handlerGroupOptions()
+    ])
+    handlerGroupDialog.config = config
+    handlerGroupDialog.defaultHandlerId = config.defaultHandlerDepartmentId
+    handlerGroupOptions.value = options
+  } catch {
+    handlerGroupDialog.config = null
+    handlerGroupDialog.defaultHandlerId = null
+    handlerGroupOptions.value = []
+  } finally {
+    handlerGroupDialog.loading = false
+  }
+}
+
+/**
+ * el-select 的 change 载荷归一到 `number | null`。
+ *
+ * 清空选择时 Element Plus 给出的是 `undefined` / `''`（取决于是否 clearable 与初值），
+ * 后端只认「数字或 null」，直接透传会让 `{}` 报文命中 `@RequestBody` 的空值分支 ——
+ * 看起来「解绑成功」，实际发出去的是 `handlerDepartmentId: ""`。
+ */
+function normalizeHandlerId(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** 某分部的绑定变更（清空 = 解绑） */
+async function saveDivisionHandler(divisionId: number, value: unknown): Promise<void> {
+  if (handlerGroupDialog.saving) {
+    return
+  }
+  handlerGroupDialog.saving = true
+  const handlerDepartmentId = normalizeHandlerId(value)
+  try {
+    await departmentApi.bindHandlerGroup(divisionId, handlerDepartmentId)
+    ElMessage.success(handlerDepartmentId == null ? '已解除该分部的处理小组绑定' : '已保存该分部的处理小组')
+  } catch {
+    // 错误由请求层统一提示
+  } finally {
+    handlerGroupDialog.saving = false
+    // 成败都重拉：失败时把下拉回滚成库里的值（否则界面显示与事实不符）
+    await loadHandlerGroupConfig()
+  }
+}
+
+/** 全局默认组变更（清空 = 清除标记，回退为最早创建的处理小组） */
+async function saveDefaultHandler(value: unknown): Promise<void> {
+  if (handlerGroupDialog.saving) {
+    return
+  }
+  handlerGroupDialog.saving = true
+  const handlerDepartmentId = normalizeHandlerId(value)
+  try {
+    await departmentApi.setDefaultHandlerGroup(handlerDepartmentId)
+    ElMessage.success(handlerDepartmentId == null ? '已清除默认处理小组标记' : '已设为默认处理小组')
+  } catch {
+    // 错误由请求层统一提示
+  } finally {
+    handlerGroupDialog.saving = false
+    await loadHandlerGroupConfig()
+  }
+}
+
+// ------------------------------------------------------------------
 // 批量操作（P3）：批量调整部门
 // ------------------------------------------------------------------
 
@@ -1344,9 +1444,12 @@ async function handleToLdap(row: UserAccount): Promise<void> {
       <aside v-show="deptAsideVisible" v-loading="deptLoading" class="ts-card ts-org__aside">
         <div class="ts-flex-between ts-org__aside-head">
           <h3 class="ts-org__aside-title">部门</h3>
-          <el-button v-if="isSuperAdmin" link type="primary" @click="openCreateDept(null)">
-            新增部门
-          </el-button>
+          <!-- 二级入口成组：单放「新增部门」时，「分部绑处理小组」这个配置项没有任何入口，
+               而这恰恰是决定「工单派给谁」的配置（V53） -->
+          <div v-if="isSuperAdmin" class="ts-org__aside-actions">
+            <el-button link type="primary" @click="openCreateDept(null)">新增部门</el-button>
+            <el-button link type="primary" @click="openHandlerGroupDialog">处理小组</el-button>
+          </div>
         </div>
         <!-- 部门搜索：部门一多，靠展开/折叠找比滚动还慢 -->
         <el-input
@@ -2008,6 +2111,84 @@ async function handleToLdap(row: UserAccount): Promise<void> {
       </template>
     </el-dialog>
 
+    <!-- 分部 → 处理小组（V53）：工单审批通过后按申请人的一级分部派单 -->
+    <el-dialog
+      v-model="handlerGroupDialog.visible"
+      title="分部处理小组配置"
+      :width="isMobile ? '96%' : '620px'"
+      append-to-body
+    >
+      <p class="ts-text-secondary ts-org__dialog-desc">
+        工单审批通过后，按申请人的<b>一级分部</b>派给对应处理小组。
+        某个分部没绑定时，会兜底给下面的默认组，并给管理员发一条告警（同一分部 30 分钟内只提醒一次）。
+      </p>
+
+      <el-form label-width="104px" class="ts-mt-16">
+        <el-form-item label="默认处理小组">
+          <el-select
+            v-model="handlerGroupDialog.defaultHandlerId"
+            class="ts-org__full"
+            clearable
+            filterable
+            placeholder="未设置（回退为最早创建的处理小组）"
+            :disabled="handlerGroupDialog.loading || handlerGroupDialog.saving"
+            @change="saveDefaultHandler($event)"
+          >
+            <el-option
+              v-for="item in handlerGroupOptions"
+              :key="item.id"
+              :label="item.displayPath"
+              :value="item.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <p class="ts-text-hint ts-org__form-hint">
+        清除选择 ≠ 取消兜底：清除后回退为「最早创建的处理小组」（V53 之前的既有行为）。
+      </p>
+
+      <el-divider content-position="left">一级分部 → 处理小组</el-divider>
+
+      <div v-loading="handlerGroupDialog.loading" class="ts-org__bindings">
+        <el-empty
+          v-if="handlerGroupDialog.config && handlerGroupDialog.config.divisions.length === 0"
+          :image-size="60"
+          description="没有一级分部 —— 请先在部门树里、根部门（公司）下建出分部"
+        />
+        <div
+          v-for="item in handlerGroupDialog.config?.divisions ?? []"
+          :key="item.divisionId"
+          class="ts-org__binding"
+        >
+          <span class="ts-org__binding-name" :title="item.divisionName">{{ item.divisionName }}</span>
+          <el-select
+            v-model="item.handlerDepartmentId"
+            class="ts-org__binding-select"
+            size="small"
+            clearable
+            filterable
+            placeholder="未绑定（用默认组兜底）"
+            :disabled="handlerGroupDialog.saving"
+            @change="saveDivisionHandler(item.divisionId, $event)"
+          >
+            <el-option
+              v-for="option in handlerGroupOptions"
+              :key="option.id"
+              :label="option.displayPath"
+              :value="option.id"
+            />
+          </el-select>
+          <el-tag v-if="item.handlerDepartmentId == null" type="warning" size="small" effect="plain">
+            未绑定
+          </el-tag>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="handlerGroupDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 批量调整部门（P3） -->
     <el-dialog v-model="batchDeptVisible" title="批量调整部门" :width="isMobile ? '94%' : '460px'">
       <el-alert
@@ -2085,6 +2266,47 @@ async function handleToLdap(row: UserAccount): Promise<void> {
   margin: 0;
   font-size: 15px;
   font-weight: 500;
+}
+
+/* 部门树头部的二级操作（新增部门 / 处理小组）：窄宽度下允许换行，避免把标题挤成两行 */
+.ts-org__aside-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0 8px;
+  flex: 0 1 auto;
+}
+
+/* 分部 → 处理小组：一行一个分部，名称与下拉左右分布 */
+.ts-org__bindings {
+  min-height: 60px;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.ts-org__binding {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.ts-org__binding:last-child {
+  border-bottom: none;
+}
+
+.ts-org__binding-name {
+  flex: 0 0 132px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-org__binding-select {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .ts-org__search {

@@ -3,6 +3,7 @@
  */
 
 import type { FlowNodeTypeCode } from '@/types/approvalFlow'
+import type { DepartmentOption } from '@/types/department'
 import type { FormData, FormSchema } from '@/types/form'
 import type { UserOption } from '@/types/user'
 
@@ -42,8 +43,8 @@ export type OrderUseType = 'SHORT_TERM' | 'LONG_TERM'
  */
 export const DEFAULT_USE_TYPE: OrderUseType = 'SHORT_TERM'
 
-/** 工单类型（； 追加 CUSTOM 自定义申请） */
-export type OrderTypeCode = 'BORROW' | 'RETURN' | 'REPAIR' | 'EXCHANGE' | 'CUSTOM'
+/** 工单类型（； 追加 CUSTOM 自定义申请；V53 追加 TRIP 出差申请） */
+export type OrderTypeCode = 'BORROW' | 'RETURN' | 'REPAIR' | 'EXCHANGE' | 'CUSTOM' | 'TRIP'
 
 /** 归还触发来源（， / ） */
 export type OrderReturnTrigger = 'USER_INITIATED' | 'DIMISSION' | 'ADMIN_FORCE'
@@ -90,11 +91,34 @@ export type ApprovalNodeStatusCode =
 /** 签署模式 */
 export type SignTypeCode = 'ALL_SIGN' | 'ANY_SIGN'
 
-/** 转交类型（， + 需求方） */
-export type TransferTypeCode = 'MANUAL' | 'AUTO_DIMISSION' | 'FORCE_ADMIN'
+/** 转交类型（， + 需求方；V55 追加跨组转单） */
+export type TransferTypeCode = 'MANUAL' | 'AUTO_DIMISSION' | 'FORCE_ADMIN' | 'CROSS_GROUP'
+
+/**
+ * 转单范围（V55 / D5.7）。
+ *
+ * <p>同组与跨组是两套完全不同的规则（谁能发起、谁批、生效时换不换小组），
+ * 因此由发起人显式选择，而不是让系统按目标推断 —— 推断会让「没权限的人先选后拒」。
+ */
+export type TransferScopeCode = 'SAME_GROUP' | 'CROSS_GROUP'
+
+/** 转单申请状态（V55 三态 + 作废） */
+export type TransferRequestStatusCode = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'CANCELLED'
 
 /** 催办类型（，需求方） */
 export type UrgeTypeCode = 'APPROVAL' | 'RETURN'
+
+/**
+ * 「当前所在分部」的取值来源（V54 / D5.3）。
+ *
+ * <p><b>来源由服务端比对判定，前端不参与</b>：前端只回传「最终选了哪个分部」，
+ * 服务端拿它与「此刻的预填值」比较 —— 相同记预填来源（人事主部门 / 出差自动带入），
+ * 不同记「手动修改」。审计数据一旦允许前端自报，它就不再是审计数据。
+ *
+ * <p>V54 之前的历史工单**不回填**该列（迁移刻意留空），因此它的空值
+ * 含义是「这张单提交时还没有这个概念」，而不是「员工没选」。
+ */
+export type DivisionSourceCode = 'HR_PRIMARY' | 'TRIP_PREFILL' | 'MANUAL'
 
 /**
  * 工单列表项
@@ -235,6 +259,29 @@ export interface OrderItem {
   returnUrgeCooldownSeconds?: number | null
   /** 当前登录者能否「强制操作」（服务端判定：super_admin 且工单非终态，前端只渲染按钮） */
   canForceOperate?: boolean | null
+
+  // ------------------------------------------------------------------
+  // V54 / D5：「当前所在分部」
+  // ------------------------------------------------------------------
+
+  /**
+   * 当前所在分部 id（**一级分部**）。
+   *
+   * <h2>它和 {@link departmentName} 不是一回事</h2>
+   * <p>`departmentName` 是**人事主部门**，决定「谁是我的审批上级」；
+   * 本字段是**这张单实际发生在哪儿**，决定「由哪个处理小组接单」。
+   * 出差在外的人两者天然不同 —— 把两者合并，就会出现「北京出差的人
+   * 由上海 IT 组发设备」这类分配错误。
+   *
+   * <p>V54 之前的历史工单为空（迁移刻意不回填）。
+   */
+  currentDivisionId?: number | null
+  /** 当前所在分部名称（服务端回填，前端不再查一次部门表） */
+  currentDivisionName?: string | null
+  /** 分部取值来源；V54 之前的历史单为空 */
+  divisionSource?: DivisionSourceCode | null
+  /** 来源中文名（服务端下发，避免前端再维护一份枚举映射） */
+  divisionSourceLabel?: string | null
 }
 
 /** 审批快照节点 */
@@ -422,12 +469,107 @@ export interface OrderTransferItem {
   createdAt: string
 }
 
+// ----------------------------------------------------------------------
+// V55：同组 / 跨组转单申请（D5.7）
+// ----------------------------------------------------------------------
+
+/**
+ * 转单申请记录（工单详情「转单记录」时间线）。
+ *
+ * <p>与 {@link OrderTransferItem}（转交历史）刻意分开：转交是**已经发生**的事实，
+ * 转单申请是**可以有状态**的过程 —— 被拒绝的那几条同样要显示出来，
+ * 否则「这单为什么在组里挂了三天」无法解释。
+ */
+export interface TransferRequestItem {
+  id: number
+  orderId: number
+  orderNo?: string | null
+  /** SAME_GROUP 同组转单 / CROSS_GROUP 跨组转单 */
+  transferScope: TransferScopeCode
+  transferScopeLabel?: string | null
+  fromDepartmentId?: number | null
+  fromDepartmentName?: string | null
+  toDepartmentId?: number | null
+  toDepartmentName?: string | null
+  fromHandlerId?: number | null
+  fromHandlerName?: string | null
+  /** 目标执行人；跨组在「接收并分配」之前为空 */
+  toHandlerId?: number | null
+  toHandlerName?: string | null
+  /** 待处理人（同组=本组管理员；跨组=目标组管理员） */
+  toAdminId?: number | null
+  toAdminName?: string | null
+  status: TransferRequestStatusCode
+  statusLabel?: string | null
+  reason: string
+  operatorId?: number | null
+  operatorName?: string | null
+  decideBy?: number | null
+  decideByName?: string | null
+  decideAt?: string | null
+  decideComment?: string | null
+  /** 发起时间（服务端必定写入，故非可空 —— 时间线的 timestamp 不接受 null） */
+  createdAt: string
+  updatedAt?: string | null
+  /** 当前登录者能否处理这条申请（服务端判定，前端只渲染按钮） */
+  canDecide?: boolean | null
+}
+
+/**
+ * 跨组转单的目标小组选项。
+ *
+ * <p>管理员没配（或组内没有在职成员）时 `selectable=false`：前端置灰并说明原因，
+ * 而不是让发起人选中后才收到「目标小组未配置管理员」。
+ */
+export interface TransferGroupOption {
+  departmentId: number
+  departmentName: string
+  adminId?: number | null
+  adminName?: string | null
+  adminCount?: number | null
+  memberCount?: number | null
+  selectable?: boolean | null
+}
+
+/** 发起转单申请载荷（POST /orders/{id}/transfer-requests） */
+export interface TransferRequestCreatePayload {
+  scope: TransferScopeCode
+  /** 同组：本组内的目标执行人 */
+  targetHandlerId?: number | null
+  /** 跨组：目标处理小组 id */
+  targetDepartmentId?: number | null
+  reason: string
+}
+
+/** 处理转单申请载荷（PUT /orders/transfer-requests/{id}/decide） */
+export interface TransferRequestDecidePayload {
+  accepted: boolean
+  /** 跨组接收时必填：目标小组内的执行人 */
+  targetHandlerId?: number | null
+  comment?: string | null
+}
+
+/** 转单申请状态标签样式：待接收=警示，已接收分配=成功，拒绝/作废=灰 */
+export function transferRequestStatusTagType(
+  status: TransferRequestStatusCode
+): 'success' | 'info' | 'warning' | 'danger' {
+  switch (status) {
+    case 'ACCEPTED':
+      return 'success'
+    case 'REJECTED':
+      return 'danger'
+    case 'PENDING':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
 /**
  * 工单催办记录（，需求方）
  *
  * 用于工单详情「催办时间线」。催办不改变工单状态，仅留痕 + 发消息。
- */
-export interface OrderUrgeItem {
+ */export interface OrderUrgeItem {
   id: number
   orderId: number
   orderNo?: string | null
@@ -554,6 +696,35 @@ export interface OrderTransferPayload {
   comment: string
 }
 
+/**
+ * 「当前所在分部」的预填结果（GET /api/orders/division-prefill，V54 / D5.2）。
+ *
+ * <h2>为什么下拉选项也由这个接口下发</h2>
+ * <p>下拉只允许「启用中的一级分部」。若前端拿 `/departments/options` 自己按
+ * `depth === 1` 过滤，会漏掉「启用状态」这一维 —— 下拉里出现已停用的分部，
+ * 员工选中后提交被后端拒绝，却看不出原因。这里把列表与预填值一起下发，
+ * 等于告诉前端「这就是你能选的全部」，也顺带省一次请求。
+ */
+export interface DivisionPrefill {
+  /** 预填的分部 id；null = 取不到（未分配部门，或部门树里没有一级分部） */
+  divisionId: number | null
+  /** 预填的分部名称（用于提示文案） */
+  divisionName: string | null
+  /**
+   * 预填来源：`HR_PRIMARY` / `TRIP_PREFILL`；null = 没有预填值。
+   *
+   * <p>注意这是「系统给的默认值」的来源，**不是**最终落库的来源 ——
+   * 员工手动改过之后，落库来源是 `MANUAL`（由服务端比对判定）。
+   */
+  source: DivisionSourceCode | null
+  /** 来源中文名（服务端下发） */
+  sourceLabel: string | null
+  /** 出差自动带入时的出差单号；仅 `TRIP_PREFILL` 有值 */
+  tripOrderNo: string | null
+  /** 可选择的一级分部（**仅启用**），顺序与组织页一致 */
+  options: DepartmentOption[]
+}
+
 /** 借用申请提交载荷（，按需求方确认的简化模型） */
 export interface OrderPayload {
   deviceId: number
@@ -564,6 +735,14 @@ export interface OrderPayload {
   reason?: string | null
   /** 短期借用必填；长期领用传 null */
   expectedReturnDate: string | null
+  /**
+   * 当前所在分部 id（V54 / D5）。
+   *
+   * <p>传 null / 不传 = 「接受服务端预填」（出差中 ⇒ 出差目标分部，
+   * 否则 ⇒ 人事主部门所属分部）；传值则必须是启用中的一级分部，
+   * 否则服务端返回参数错误。<b>只传 id，不要传来源</b> —— 来源由服务端比对得出。
+   */
+  currentDivisionId?: number | null
 }
 
 /** 延期申请提交载荷（，） */
@@ -856,9 +1035,18 @@ export function isDueOrTimeout(
 // ：自定义申请
 // ----------------------------------------------------------------------
 
-/** 是否为自定义申请工单（有 applyTypeId 即自定义） */
+/**
+ * 是否为「表单驱动」的工单（自定义申请 / 出差申请）—— 后端
+ * `OrderType.isFormDriven()` 的前端镜像。
+ *
+ * 判定口径是「有没有动态表单可回显」，而不是「叫什么名字」：这类单没有设备，
+ * 详情页要靠 `order_form_data` 渲染表单区，而不是借用单的固定列。
+ * `applyTypeId != null` 是历史兜底（早期 CUSTOM 单可能没写 orderType），
+ * 但**不能只靠它**：一旦哪天有人为了「简化」把它去掉，TRIP 详情页会立刻
+ * 退化成借用单视图（表单区空白）。
+ */
 export function isCustomOrder(order: Pick<OrderItem, 'orderType' | 'applyTypeId'>): boolean {
-  return order.orderType === 'CUSTOM' || order.applyTypeId != null
+  return order.orderType === 'CUSTOM' || order.orderType === 'TRIP' || order.applyTypeId != null
 }
 
 /** 提交自定义申请请求载荷（POST /orders/custom） */

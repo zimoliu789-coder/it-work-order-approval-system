@@ -201,6 +201,31 @@ class ApplyTypeServiceImplBuiltInTest {
     }
 
     @Test
+    @DisplayName("★ 出差申请配置面板：字段目录用它自己的表单（不是借用域），未绑流程时不给借用默认流程")
+    void tripBuiltInUsesOwnFormSchema() {
+        ApplyType trip = builtIn(BuiltInApplyCatalog.CODE_TRIP);
+        trip.setFormTemplateVersionId(9L);
+        when(applyTypeMapper.selectById(BUILT_IN_ID)).thenReturn(trip);
+        when(formTemplateService.requirePublishedSchema(9L))
+                .thenReturn(BuiltInApplyCatalog.formSchemaOf(BuiltInApplyCatalog.CODE_TRIP));
+
+        BuiltInConfigVO vo = service.builtInConfig(BUILT_IN_ID);
+
+        assertTrue(vo.isFlowEditable());
+        assertFalse(vo.isFlowBound());
+        // 出差未绑流程时走的是「分组审批」，套用借用单的三级流程会误导管理员
+        assertNull(vo.getFlowDefinition(),
+                "自带表单的内置类型未绑流程时不应下发借用默认流程");
+        assertNotNull(vo.getFieldSchema());
+        java.util.List<String> keys = vo.getFieldSchema().getFields().stream()
+                .map(com.enterprise.ticket.common.form.FormField::getKey)
+                .toList();
+        assertTrue(keys.contains(com.enterprise.ticket.common.trip.BusinessTripRules.FIELD_START_DATE),
+                "条件分支只能引用出差自己的字段（借用域字段在出差单里不存在）");
+        assertTrue(keys.contains(com.enterprise.ticket.common.trip.BusinessTripRules.FIELD_TARGET_DEPT));
+    }
+
+    @Test
     @DisplayName("非内置类型调内置配置接口：按不存在处理（不暴露「这不是内置类型」这一可枚举口径）")
     void customTypeTreatedAsNotFound() {
         when(applyTypeMapper.selectById(CUSTOM_ID)).thenReturn(custom());

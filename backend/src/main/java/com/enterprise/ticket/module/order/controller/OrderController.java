@@ -14,6 +14,7 @@ import com.enterprise.ticket.module.order.dto.OrderConfirmReturnRequest;
 import com.enterprise.ticket.module.order.dto.OrderCreateRequest;
 import com.enterprise.ticket.module.order.dto.OrderReturnRequest;
 import com.enterprise.ticket.module.order.dto.vo.DeviceOptionVO;
+import com.enterprise.ticket.module.order.dto.vo.DivisionPrefillVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderDetailVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderFormDataVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderVO;
@@ -103,6 +104,22 @@ public class OrderController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedReturnDate,
             @RequestParam(required = false) Long deviceId) {
         return ApiResponse.success(orderService.previewBorrowFlow(useType, expectedReturnDate, deviceId));
+    }
+
+    /**
+     * 「当前所在分部」预填值 + 可选分部（V54 / D5.2）
+     *
+     * <p>按当前登录用户计算：今天在出差中 ⇒ 出差单的目标分部；否则 ⇒ 人事主部门所属分部。
+     * 同时下发「启用中的一级分部」，前端直接用，不要自己过滤部门选项。
+     *
+     * <p>仅要求已登录：它是「我自己要提交的单」的辅助信息，不涉及他人数据。
+     *
+     * <p>测试路径：GET http://localhost:8080/api/orders/division-prefill
+     */
+    @GetMapping("/division-prefill")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<DivisionPrefillVO> divisionPrefill() {
+        return ApiResponse.success(orderService.divisionPrefill());
     }
 
     /**

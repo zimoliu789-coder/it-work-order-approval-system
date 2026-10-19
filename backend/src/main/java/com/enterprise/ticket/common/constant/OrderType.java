@@ -46,7 +46,19 @@ public enum OrderType {
      *       它本身就是「可扩展」这一能力的载体。</li>
      * </ul>
      */
-    CUSTOM("自定义申请");
+    CUSTOM("自定义申请"),
+
+    /**
+     * 出差申请（V53 新增的系统内置申请类型）
+     *
+     * <p>由 {@code BuiltInApplyCatalog} 播种、{@code OrderServiceImpl#submitCustomOrder}
+     * 按类型编码分流产生：表单是播种出来的真实模板版本（起止日期 + 目标一级分部三个系统内置字段），
+     * 审批走分组模式（与借用单同款）。单独成枚举值的理由与 CUSTOM 的注释互补：
+     * 「同一员工只能有一份生效出差」的重叠校验、以及将来的「当前所在分部」预填，
+     * 都要**按类型捞历史单** —— 有独立的 type 值，{@code WHERE order_type = 'TRIP'}
+     * 就不必再经 apply_type 反查，也天然与采购 / 请假等 CUSTOM 单区分开。
+     */
+    TRIP("出差申请");
 
     private final String label;
 
@@ -68,6 +80,30 @@ public enum OrderType {
             }
         }
         return null;
+    }
+
+    /**
+     * 是否为「表单驱动」的单据：{@link #CUSTOM} 与 {@link #TRIP}。
+     *
+     * <h2>为什么必须有这个谓词，而不是各处写 {@code "CUSTOM".equals(...)}</h2>
+     * 有一类判定问的不是「这是什么单」，而是「**这张单走哪条生命周期**」：
+     * 无设备 ⇒ 不交付、不归还、不延期、不超时顺延，审批全部通过即 {@code COMPLETED}。
+     * 符合这条的，在 V53 之前只有 CUSTOM，于是全仓有四处直接写了 {@code CUSTOM} 字面量
+     * （工单详情取表单数据、审批终态分流、流程条件求值的输入与 schema）。
+     *
+     * <p>新增 TRIP 时，这四处若继续只认 CUSTOM，会出现**最坏的一类缺陷**：
+     * 出差单审批通过后落进借用单分支 ⇒ 状态被置成 PENDING_DELIVERY（待交付）、
+     * 分配「最终处理人」，而交付动作要求 {@code device_id} 非空 ⇒ 必然抛 DEVICE_NOT_FOUND。
+     * 工单从此<b>永久卡死</b>，且没有任何正向操作能结束它（只能撤回）。
+     * 更隐蔽的连带后果：TRIP 永远到不了 COMPLETED ⇒ 出差重叠校验查不到任何历史单 ⇒
+     * 闸门形同虚设，同一人可以提交无限条时间重叠的出差。
+     *
+     * <p>因此把这条语义收敛成一句谓词：以后再加「有表单、无设备」的单据类型，
+     * 只需在 {@link #isFormDriven} 里登记一次，四处判定同源生效。
+     */
+    public static boolean isFormDriven(String value) {
+        OrderType type = of(value);
+        return type == CUSTOM || type == TRIP;
     }
 
     /**

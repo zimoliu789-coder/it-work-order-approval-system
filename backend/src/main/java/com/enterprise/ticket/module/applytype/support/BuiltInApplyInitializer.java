@@ -3,8 +3,15 @@ package com.enterprise.ticket.module.applytype.support;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.enterprise.ticket.common.constant.ApplyTypeStatus;
 import com.enterprise.ticket.common.constant.SubmitPermissionType;
+import com.enterprise.ticket.common.form.FormSchema;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.mapper.ApplyTypeMapper;
+import com.enterprise.ticket.module.form.dto.FormTemplateSaveRequest;
+import com.enterprise.ticket.module.form.entity.FormTemplate;
+import com.enterprise.ticket.module.form.entity.FormTemplateVersion;
+import com.enterprise.ticket.module.form.mapper.FormTemplateMapper;
+import com.enterprise.ticket.module.form.mapper.FormTemplateVersionMapper;
+import com.enterprise.ticket.module.form.service.FormTemplateService;
 import com.enterprise.ticket.module.system.service.SystemConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +51,10 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
 
     private final ApplyTypeMapper applyTypeMapper;
     private final SystemConfigService systemConfigService;
+    private final FormTemplateService formTemplateService;
+    /** 播种表单模板需要按名字查重（幂等，见 {@link #seedFormTemplate}） */
+    private final FormTemplateMapper templateMapper;
+    private final FormTemplateVersionMapper templateVersionMapper;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -60,6 +71,79 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
         if (created > 0) {
             log.info("系统内置申请类型：本次新建 {} 个（共 {} 个内置）", created, BuiltInApplyCatalog.all().size());
         }
+    }
+
+    /**
+     * 给内置类型准备表单模板。
+     *
+     * <h2>V53：内置类型从此分成两类</h2>
+     * <ul>
+     *   <li><b>无表单</b>（借用 / 报修）：表单是代码内置页面，
+     *       {@code form_template_version_id} 保持 NULL（V48 已放开该列 NOT NULL）；</li>
+     *   <li><b>有表单</b>（V53 起的出差申请）：目录给出 schema
+     *       （{@link BuiltInApplyCatalog#formSchemaOf}，三个系统内置字段），
+     *       这里建<b>真实的表单模板 + 首发版本</b>并绑定到类型 ——
+     *       与 {@link PresetApplyInitializer} 的产出物同构，
+     *       管理员后续（表单放开后）可以像改预置类一样改它，提交侧走通用动态表单链路。</li>
+     * </ul>
+     *
+     * <h2>中断后的重试必须是幂等的</h2>
+     * 先建模板再插类型行；若插类型失败（如迁移未跑、约束冲突），会留下「有模板、没类型」的残局。
+     * <b>此时重试绝不能再直接调 {@code createTemplate}</b>：{@code form_template.template_name}
+     * 有唯一约束，重名会抛 {@code FORM_TEMPLATE_NAME_EXISTS}，而标记又没有置位 ⇒
+     * 每次启动都失败、永远重试 —— 只能人工进库删模板才能恢复。
+     * 因此这里先按模板名查重：已有已发布版本就复用；只留下草稿就用内置 schema
+     * 覆盖它再发布（不能直接发布，否则可能把「半途被人工改过的草稿」当成内置表单发出去）。
+     */
+    private void seedFormTemplate(ApplyType type, BuiltInApplyCatalog.BuiltIn builtIn) {
+        FormSchema schema = BuiltInApplyCatalog.formSchemaOf(builtIn.typeCode());
+        if (schema == null) {
+            // 借用 / 报修：表单由代码提供，没有模板版本
+            type.setFormTemplateVersionId(null);
+            return;
+        }
+
+        String templateName = builtIn.typeName() + " · 表单";
+        FormTemplate existing = templateMapper.selectOne(Wrappers.<FormTemplate>lambdaQuery()
+                .eq(FormTemplate::getTemplateName, templateName)
+                .last("LIMIT 1"));
+        if (existing != null) {
+            Long publishedVersionId = latestPublishedVersionIdOf(existing.getId());
+            if (publishedVersionId != null) {
+                log.warn("内置申请类型「{}」的表单模板已存在（上次播种中断残留），复用它而不新建",
+                        builtIn.typeName());
+                type.setFormTemplateVersionId(publishedVersionId);
+                return;
+            }
+            // 只剩草稿：用目录给的 schema 覆盖后再发布，保证内容与代码一致
+            formTemplateService.updateTemplate(existing.getId(), formRequest(builtIn, schema));
+            type.setFormTemplateVersionId(formTemplateService.publish(existing.getId()));
+            log.warn("内置申请类型「{}」的表单模板只有草稿（上次发布中断），已用内置 schema 覆盖并发布",
+                    builtIn.typeName());
+            return;
+        }
+
+        Long templateId = formTemplateService.createTemplate(formRequest(builtIn, schema));
+        type.setFormTemplateVersionId(formTemplateService.publish(templateId));
+    }
+
+    /** 该模板最新的已发布版本 id；没有已发布版本返回 {@code null} */
+    private Long latestPublishedVersionIdOf(Long templateId) {
+        FormTemplateVersion published = templateVersionMapper.selectOne(
+                Wrappers.<FormTemplateVersion>lambdaQuery()
+                        .eq(FormTemplateVersion::getTemplateId, templateId)
+                        .isNotNull(FormTemplateVersion::getPublishedAt)
+                        .orderByDesc(FormTemplateVersion::getVersionNo)
+                        .last("LIMIT 1"));
+        return published == null ? null : published.getId();
+    }
+
+    private FormTemplateSaveRequest formRequest(BuiltInApplyCatalog.BuiltIn builtIn, FormSchema schema) {
+        FormTemplateSaveRequest request = new FormTemplateSaveRequest();
+        request.setTemplateName(builtIn.typeName() + " · 表单");
+        request.setDescription("随系统内置申请类型「" + builtIn.typeName() + "」一并创建");
+        request.setSchema(schema);
+        return request;
     }
 
     /** @return 是否真的创建了 */
@@ -80,6 +164,20 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
                     log.info("系统内置申请类型：编码已存在，补标 built_in id={} code={}",
                             existing.getId(), builtIn.typeCode());
                 }
+                // V53：带表单的内置类型若缺绑定（历史手工建的同编码类型 / 上次播种中断），
+                // 必须补上表单 —— 否则它会同时「有卡片、进不了 /enabled」（该接口排除
+                // 「内置且无表单模板」），表现为管理页看得到、提交页永远点不到，且不报错。
+                if (existing.getFormTemplateVersionId() == null
+                        && BuiltInApplyCatalog.formSchemaOf(builtIn.typeCode()) != null) {
+                    ApplyType patch = new ApplyType();
+                    patch.setId(existing.getId());
+                    seedFormTemplate(patch, builtIn);
+                    if (patch.getFormTemplateVersionId() != null) {
+                        applyTypeMapper.updateById(patch);
+                        log.warn("系统内置申请类型：编码已存在但缺表单绑定，已补建并绑定 id={} code={} version={}",
+                                existing.getId(), builtIn.typeCode(), patch.getFormTemplateVersionId());
+                    }
+                }
                 systemConfigService.updateValue(flagKey, FLAG_DONE);
                 return false;
             }
@@ -92,8 +190,7 @@ public class BuiltInApplyInitializer implements ApplicationRunner {
             type.setSortOrder(builtIn.sortOrder());
             type.setStatus(ApplyTypeStatus.ENABLED.name());
             type.setBuiltIn(true);
-            // 表单由代码提供 ⇒ 没有表单模板版本（V48 已放开该列 NOT NULL）
-            type.setFormTemplateVersionId(null);
+            seedFormTemplate(type, builtIn);
             type.setApprovalMode(builtIn.approvalMode().name());
             type.setSubmitPermissionType(SubmitPermissionType.ALL.name());
             type.setSubmitPermissionValue("[]");

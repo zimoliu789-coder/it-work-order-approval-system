@@ -10,6 +10,7 @@ import com.enterprise.ticket.module.order.dto.OrderReturnRequest;
 import com.enterprise.ticket.module.order.dto.vo.AssignCandidateVO;
 import com.enterprise.ticket.module.order.dto.vo.BorrowFlowPreviewVO;
 import com.enterprise.ticket.module.order.dto.vo.DeviceOptionVO;
+import com.enterprise.ticket.module.order.dto.vo.DivisionPrefillVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderDetailVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderFormDataVO;
 import com.enterprise.ticket.module.order.dto.vo.OrderVO;
@@ -69,6 +70,17 @@ public interface OrderService {
      * @param deviceId           设备 id，用于取设备分类参与条件求值；可空
      */
     BorrowFlowPreviewVO previewBorrowFlow(String useType, java.time.LocalDate expectedReturnDate, Long deviceId);
+
+    /**
+     * 「当前所在分部」的预填值 + 可选分部列表（V54 / D5.2）。
+     *
+     * <p>按**当前登录用户**计算：今天在出差中 ⇒ 出差单的目标分部；否则 ⇒ 人事主部门
+     * 所属的一级分部。同时下发「启用中的一级分部」列表 —— 前端不要自己拿
+     * {@code /departments/options} 过滤，那份列表不保证只含启用部门。
+     *
+     * <p>只读、不落库。纯前端展示用；提交时的来源判定另由服务端在写入时完成。
+     */
+    DivisionPrefillVO divisionPrefill();
 
     /**
      * 「上一节点指定审批人」的候选名单与原因说明。

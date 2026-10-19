@@ -6,6 +6,7 @@ import com.enterprise.ticket.common.permission.PermissionCatalog;
 import com.enterprise.ticket.module.department.dto.DepartmentManagerRequest;
 import com.enterprise.ticket.module.department.dto.DepartmentMoveRequest;
 import com.enterprise.ticket.module.department.dto.DepartmentSaveRequest;
+import com.enterprise.ticket.module.department.dto.HandlerGroupBindRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -42,7 +43,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  *       漏了 {@code @AuditLog} 或误标 {@code NORMAL}（异步）都会让「谁改了组织」查不到；</li>
  *   <li><b>引用的权限码必须真实存在</b>：{@code @perm.has} 对不存在的码恒为 false ——
  *       权限码拼错会让接口对所有人恒 403，而编译期毫无提示；</li>
- *   <li><b>端点数量恒为 8</b>：新增端点必然要在本测试里显式登记，无法悄悄带上一道没挂闸门的口子。</li>
+ *   <li><b>端点数量恒定（V53 起为 12）</b>：新增端点必然要在本测试里显式登记，无法悄悄带上一道没挂闸门的口子。</li>
  * </ol>
  *
  * <h2>P4-C 增补：admin 默认集合只有读码</h2>
@@ -109,10 +110,16 @@ class DepartmentControllerPermissionTest {
             method("update", Long.class, DepartmentSaveRequest.class),
             method("move", Long.class, DepartmentMoveRequest.class),
             method("setManagers", Long.class, DepartmentManagerRequest.class),
-            method("delete", Long.class));
+            method("delete", Long.class),
+            // V53：分部 → 处理小组绑定（直接决定工单派给谁，同属组织结构变更）
+            method("bindHandlerGroup", Long.class, HandlerGroupBindRequest.class),
+            // V53：全局默认处理小组（漏配分部的兜底，同样是「工单派给谁」）
+            method("setDefaultHandlerGroup", HandlerGroupBindRequest.class));
 
     private static final List<Method> READ_ENDPOINTS = List.of(
-            method("tree"), method("options"), method("members", Long.class));
+            method("tree"), method("options"), method("members", Long.class),
+            // V53：配置读取（走 department:manage，见 readConfigEndpointsRequireDepartmentManage）
+            method("handlerGroups"), method("handlerGroupOptions"));
 
     // ------------------------------------------------------------------
     // 一、读端点 → staff:view
@@ -185,17 +192,27 @@ class DepartmentControllerPermissionTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("端点数量恒为 8，且每个都挂了权限注解（新增端点漏挂闸门会被此测试拦下）")
+    @DisplayName("端点数量恒为 12，且每个都挂了权限注解（新增端点漏挂闸门会被此测试拦下）")
     void endpointInventoryIsPinned() {
         List<String> names = endpoints().stream().map(Method::getName).sorted().toList();
-        assertEquals(8, names.size(), "部门接口应由 8 个端点组成，实际：" + names);
+        assertEquals(12, names.size(), "部门接口应由 12 个端点组成，实际：" + names);
         assertTrue(names.containsAll(Arrays.asList(
-                        "tree", "options", "members", "create", "update", "move", "setManagers", "delete")),
+                        "tree", "options", "members", "create", "update", "move", "setManagers", "delete",
+                        "handlerGroups", "handlerGroupOptions", "bindHandlerGroup", "setDefaultHandlerGroup")),
                 "端点清单发生了变化：" + names);
         for (Method m : endpoints()) {
             assertNotNull(m.getAnnotation(PreAuthorize.class),
                     "端点 " + m.getName() + " 没有权限注解 —— 新增端点时漏挂闸门");
         }
+    }
+
+    @Test
+    @DisplayName("V53 配置端点：读也走 department:manage（配置信息对普通员工无收益，不必开放 staff:view）")
+    void readConfigEndpointsRequireDepartmentManage() {
+        assertPermission(method("handlerGroups"), WRITE_PERM);
+        assertPermission(method("handlerGroupOptions"), WRITE_PERM);
+        assertPermission(method("bindHandlerGroup", Long.class, HandlerGroupBindRequest.class), WRITE_PERM);
+        assertPermission(method("setDefaultHandlerGroup", HandlerGroupBindRequest.class), WRITE_PERM);
     }
 
     @Test

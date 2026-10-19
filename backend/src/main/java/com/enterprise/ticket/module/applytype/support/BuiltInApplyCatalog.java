@@ -1,7 +1,12 @@
 package com.enterprise.ticket.module.applytype.support;
 
 import com.enterprise.ticket.common.constant.ApprovalMode;
+import com.enterprise.ticket.common.constant.FormFieldType;
+import com.enterprise.ticket.common.form.FormField;
+import com.enterprise.ticket.common.form.FormSchema;
+import com.enterprise.ticket.common.trip.BusinessTripRules;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -52,6 +57,18 @@ public final class BuiltInApplyCatalog {
     /** 故障报修：对应 {@code device_fault} 模块（**不产生工单**） */
     public static final String CODE_FAULT_REPORT = "FAULT_REPORT";
 
+    /**
+     * 出差申请（V53）：对应 {@code OrderType.TRIP}。
+     *
+     * <p>它是第三个内置类型，但与前两个有一处本质差异：它的表单<b>不是</b>代码内置页面，
+     * 而是<b>播种出来的真实表单模板版本</b>（三个系统内置字段：起止日期 + 目标一级分部），
+     * 提交走的正是 {@code submitCustomOrder} 通用动态表单链路 —— 与预置类只差一个
+     * 「不可删除」标记。因此 {@link #formSchemaOf} 对它返回 schema、播种器据此建模板；
+     * 也因此 {@code /api/apply-types/enabled} 的排除条件是「内置且<b>没有</b>表单模板」
+     * 而不是「一切内置」—— 否则它既进不了提交页列表、又没有专属卡片，等于不可提交。
+     */
+    public static final String CODE_TRIP = "TRIP";
+
     /** 一次性的播种标记前缀；与该项目的 {@code preset_apply_seeded:} 同一套约定 */
     public static final String SEED_FLAG_PREFIX = "builtin_apply_seeded:";
 
@@ -87,7 +104,7 @@ public final class BuiltInApplyCatalog {
      * 它没有审批节点，但确实有「通知给谁」这一项需要管理员配置。
      */
     public static List<BuiltIn> all() {
-        return List.of(borrow(), faultReport());
+        return List.of(borrow(), faultReport(), trip());
     }
 
     /** 借用设备：默认走「按部门逐级审批 / 系统预置三级流程」，两者都可被管理员换成自定义流程 */
@@ -125,6 +142,27 @@ public final class BuiltInApplyCatalog {
                         + "提交后不经过审批，而是直接进入维修处理 —— 通知谁、谁接单，由下方「处理流程」决定。");
     }
 
+    /**
+     * 出差申请（V53）：走分组审批（与借用单同款，{@code flowEditable} 允许换成自定义流程）。
+     *
+     * <p>排序取 12：仍居内置区（10/11/12），排在借用与报修之后 —— 出差频次低于前两者，
+     * 且它是唯一带动态表单的内置类，放最后与自定义区的视觉过渡更自然。
+     */
+    public static BuiltIn trip() {
+        return new BuiltIn(
+                CODE_TRIP,
+                "出差申请",
+                "Suitcase",
+                "登记出差起止日期与目标一级分部",
+                12,
+                ApprovalMode.GROUP,
+                true,
+                false,
+                "出差表单的三个字段（开始 / 结束日期、目标一级分部）是重叠校验与"
+                        + "「当前所在分部」预填的数据依据，由系统提供、不可删除；"
+                        + "审批流程可在下方调整。");
+    }
+
     /** 按编码取内置类型；不是内置类型时返回 {@code null} */
     public static BuiltIn of(String typeCode) {
         if (typeCode == null) {
@@ -136,6 +174,56 @@ public final class BuiltInApplyCatalog {
             }
         }
         return null;
+    }
+
+    /**
+     * 内置类型自带的表单 schema；没有表单模板的内置类型（借用 / 报修）返回 {@code null}。
+     *
+     * <h2>为什么 schema 放在目录里而不是播种器里</h2>
+     * 表单字段 key 是**业务逻辑的读取依据**（{@code BusinessTripRules} 按固定 key 读数），
+     * 它必须与目录中的类型元数据同源演进 —— 播种器只负责「拿目录给的 schema 建模板」，
+     * 不应该自己再长出一份字段定义（两处各写一份迟早漂移）。
+     *
+     * <h2>三个字段的 systemField 标记是本 schema 的灵魂</h2>
+     * 设计器据此禁止删除（片1 已落地的机制）；后端据此读数。key 与
+     * {@link BusinessTripRules} 的常量**逐字一致** —— 写错一个字母，
+     * 重叠校验就会以「读不到值」的方式静默失效。
+     */
+    public static FormSchema formSchemaOf(String typeCode) {
+        if (CODE_TRIP.equals(typeCode)) {
+            return tripFormSchema();
+        }
+        return null;
+    }
+
+    /** 出差申请表单：起止日期（半行 × 2）+ 目标一级分部（整行），全部必填、全部系统内置字段 */
+    private static FormSchema tripFormSchema() {
+        FormField start = field(BusinessTripRules.FIELD_START_DATE, "出差开始日期",
+                FormFieldType.DATE, true, 2);
+        start.setHelp("同一时间只能有一份生效出差：与已审批通过的出差单日期重叠时无法提交");
+        FormField end = field(BusinessTripRules.FIELD_END_DATE, "出差结束日期",
+                FormFieldType.DATE, true, 2);
+        end.setHelp("出差结束日期不得早于开始日期");
+        FormField target = field(BusinessTripRules.FIELD_TARGET_DEPT, "目标一级分部",
+                FormFieldType.ROOT_DEPT, true, 1);
+        target.setHelp("只能选择组织树的一级分部；报修 / 借用单的「当前所在分部」会按在途出差自动预填");
+
+        FormSchema schema = new FormSchema();
+        schema.setFields(new ArrayList<>(List.of(start, end, target)));
+        return schema;
+    }
+
+    private static FormField field(String key, String label, FormFieldType type,
+                                   boolean required, int width) {
+        FormField f = new FormField();
+        f.setKey(key);
+        f.setLabel(label);
+        f.setType(type.name());
+        f.setRequired(required);
+        f.setWidth(width);
+        // 系统内置字段：设计器禁止删除，允许改显示名 / 必填 / 排序（片1 机制）
+        f.setSystemField(true);
+        return f;
     }
 
     /** 是否为内置类型编码 */

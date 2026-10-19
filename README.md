@@ -163,27 +163,27 @@ npm run dev
 
 「看系统跑得怎么样」的观测面：**数据类 + 日志类**集中在这里，与「系统设置」的**配置项**分开。
 
-| 菜单   | 说明             | 权限码                 |
-| ---- | -------------- | ------------------- |
-| 使用记录 | 设备借用历史查询       | `usage:view`        |
-| 统计报表 | 借用频次/审批时效/故障统计 | `asset:report:view` |
-| 流程监控 | 审批效率观测         | `flow_monitor:view` |
-| 操作日志 | 操作审计           | `log:view`          |
-| 异常日志 | 异常堆栈检索         | `exception:view`（✅ 仅超管） |
-| 安全日志 | 登录失败/账号锁定/IP 封禁检索与解封 | `security:view`（✅ 仅超管） |
+| 菜单   | 说明                   | 权限码                     |
+| ---- | -------------------- | ----------------------- |
+| 使用记录 | 设备借用历史查询             | `usage:view`            |
+| 统计报表 | 借用频次/审批时效/故障统计       | `asset:report:view`     |
+| 流程监控 | 审批效率观测               | `flow_monitor:view`     |
+| 操作日志 | 操作审计                 | `log:view`              |
+| 异常日志 | 异常堆栈检索               | `exception:view`（✅ 仅超管） |
+| 安全日志 | 登录失败/账号锁定/IP 封禁检索与解封 | `security:view`（✅ 仅超管）  |
 
 ### 系统设置
 
 只保留**配置类**（配系统怎么跑）。
 
-| 菜单      | 说明                   | 是否仅超管          |
-| ------- | -------------------- | -------------- |
-| 系统参数    | 全系统参数查看              | 查看：admin；修改：超管 |
-| 角色与权限   | 角色维护 + 权限勾选树         | 查看：admin；维护：超管 |
-| AD 域控配置 | 域控对接（测试连接/同步）        | ✅ 仅超管          |
-| 主备配置    | 添加备节点/切换/同步          | ✅ 仅超管          |
-| 在线升级    | 上传包/应用/回滚            | ✅ 仅超管          |
-| 备份记录    | 备份历史 + 手动触发备份        | ✅ 仅超管          |
+| 菜单      | 说明                                           | 是否仅超管          |
+| ------- | -------------------------------------------- | -------------- |
+| 系统参数    | 全系统参数查看                                      | 查看：admin；修改：超管 |
+| 角色与权限   | 角色维护 + 权限勾选树                                 | 查看：admin；维护：超管 |
+| AD 域控配置 | 域控对接（测试连接/同步）                                | ✅ 仅超管          |
+| 主备配置    | 添加备节点/切换/同步                                  | ✅ 仅超管          |
+| 在线升级    | 上传包/应用/回滚                                    | ✅ 仅超管          |
+| 备份记录    | 备份历史 + 手动触发备份                                | ✅ 仅超管          |
 | 申请类型与流程 | 自定义申请类型 + 表单设计 + 审批流设计/发布（完整流程设计器从页内进入，不占菜单） | ✅ 仅超管          |
 
 ---
@@ -246,8 +246,8 @@ spring:
 
 应用镜像（backend / frontend / backup）已由 GitHub Actions 自动构建并推送到 **GHCR（GitHub Container Registry）**，支持 `linux/amd64` + `linux/arm64` 双架构，**飞牛 / 群晖等 NAS 可直接拉取，无需本地编译**。
 
-> ⚠️ **先用对文件**：`.github/workflows/docker-build.yml` 是 GitHub Actions 的**流水线**配置（负责构建并推送镜像），**不是** compose 文件。把它交给 `docker compose` 会报
-> `invalid interpolation format for env.IMAGE_NAME ... ${{ github.repository }}`。
+> ⚠️ **先用对文件**：`.github/workflows/docker-build.yml` 是 GitHub Actions 的**流水线**配置（负责构建并推送镜像），**不是** compose 文件。把它交给 `docker compose` 会报  
+> `invalid interpolation format for env.IMAGE_NAME ... ${{ github.repository }}`。  
 > **启动服务只用 `deploy/docker-compose.yml`。**
 
 ```bash
@@ -272,7 +272,7 @@ ghcr.io/zimoliu789-coder/it-work-order-approval-system/{backend,frontend,backup}
 ```
 
 - 不指定 `IMAGE_TAG` 时拉取 `latest`；设置 `IMAGE_TAG=v1.0.0` 则拉取对应版本（推 `v*` tag 会自动产出对应版本镜像）。
-- 保留 `build` 段作为本地构建 fallback：`docker compose up -d --build` 可改为本地编译。
+- 保留 `build` 段作为本地构建 fallback：`docker compose up -d --build` 可改为本地编译。  
   **正因保留了 `build` 段，必须先执行 `docker compose pull`** —— 否则本地没有镜像时，compose 会按 `../backend` / `../frontend` 相对路径尝试编译。
 - ⚠️ 镜像包必须是 **Public**，否则 NAS 拉取会报权限错误。本项目的三个包**已设为 public**，可匿名拉取，无需 `docker login`。
 - 📁 **为什么不能「只粘贴一个 compose 文件」**：本编排除镜像外，还依赖 `deploy/` 下的配套文件 —— `nginx/`（边缘网关配置）、`mysql/conf.d/`（数据库调优）、`backup/`（备份脚本），以及 `.env`。必须把**整个仓库**放到 NAS 上再进 `deploy/` 执行；只贴 compose 会因找不到这些路径而启动失败。
@@ -302,18 +302,19 @@ ghcr.io/zimoliu789-coder/it-work-order-approval-system/{backend,frontend,backup}
 
 权限目录以 `PermissionCatalog.java` 为**唯一事实来源**，共 **6 个分组、45 个权限节点**（25 个菜单 + 20 个动作）：
 
-| 分组    | 权限码前缀                                                                                                                                                                    | 说明                  |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
-| 审批中心  | `order:*`、`dashboard:view`                                                                                                                                               | 提交/审批/待办/全部工单 + 仪表盘 |
-| 消息中心  | `message:list`                                                                                                                                                           | 我的消息                |
-| 资产管理  | `device:*`、`inventory:*`                                                                                                                                                 | 台账/分类/故障/盘点         |
-| 监控与报表 | `usage:view`、`asset:report:view`、`flow_monitor:view`、`log:view`、`exception:view`、`security:view`                                                                                                                                         | 使用记录/统计报表           |
-| 组织与人员 | `staff:*`、`department:manage`                                                                                                                                            | 员工维护/导入/部门维护        |
+| 分组    | 权限码前缀                                                                                                       | 说明                  |
+| ----- | ----------------------------------------------------------------------------------------------------------- | ------------------- |
+| 审批中心  | `order:*`、`dashboard:view`                                                                                  | 提交/审批/待办/全部工单 + 仪表盘 |
+| 消息中心  | `message:list`                                                                                              | 我的消息                |
+| 资产管理  | `device:*`、`inventory:*`                                                                                    | 台账/分类/故障/盘点         |
+| 监控与报表 | `usage:view`、`asset:report:view`、`flow_monitor:view`、`log:view`、`exception:view`、`security:view`            | 使用记录/统计报表           |
+| 组织与人员 | `staff:*`、`department:manage`                                                                               | 员工维护/导入/部门维护        |
 | 系统设置  | `role:*`、`config:*`、`ha:*`、`backup:*`、`ad:*`、`upgrade:*`、`apply_type:*`、`approval_flow:*`、`form_template:*` | 平台级运维               |
 
 权限码命名约定 `<模块>:<对象>:<动作>`，动作只有三种：`view`（看）、`manage`（改）、`import`（导入）。
 
 ### 7.2 角色矩阵
+
 
 系统共 **6 个角色**：
 

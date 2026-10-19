@@ -108,6 +108,32 @@ export interface DepartmentDeleteResult {
   movedToDepartmentName: string | null
 }
 
+/**
+ * 「分部 → 处理小组」配置总览（对应后端 `DivisionHandlerConfigVO`，V53）。
+ *
+ * <h2>为什么把三样东西塞在一个响应里</h2>
+ * 配置页要同时渲染「分部列表」「每个分部绑了谁」「默认组叫什么」。分三个接口取，
+ * 就会出现「列表已渲染、默认组还没回来」的中间态 —— 而这个页面恰恰是用来发现
+ * 「哪个分部漏配了」的，中间态下「未绑定」与「还没加载」长得一模一样。
+ */
+export interface DivisionHandlerConfig {
+  /** 全局默认处理小组 id；null = 未标记（解析时回退为最早创建的处理小组） */
+  defaultHandlerDepartmentId: number | null
+  /** 全局默认处理小组名称 */
+  defaultHandlerDepartmentName: string | null
+  /** 一级分部（部门树 depth = 1）及其绑定情况；根部门不在其中 */
+  divisions: DivisionHandlerBinding[]
+}
+
+/** 一个一级分部的绑定情况 */
+export interface DivisionHandlerBinding {
+  divisionId: number
+  divisionName: string
+  /** 当前绑定的处理小组 id；null = 未绑定（提交时用全局默认组兜底并告警） */
+  handlerDepartmentId: number | null
+  handlerDepartmentName: string | null
+}
+
 // ---------------------------------------------------------------------
 // 借用单审批流程预览（原 M1）
 // ---------------------------------------------------------------------

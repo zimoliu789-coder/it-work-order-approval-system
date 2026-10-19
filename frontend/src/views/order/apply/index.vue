@@ -14,7 +14,7 @@ import {
   shouldShowBorrowPath,
   type BorrowFlowPreview
 } from '@/types/department'
-import { DEFAULT_USE_TYPE, type DeviceOption } from '@/types/order'
+import { DEFAULT_USE_TYPE, type DeviceOption, type DivisionPrefill } from '@/types/order'
 import type { DeviceFaultSelectable, DeviceLockInfo } from '@/types/device'
 import {
   formatCountdown,
@@ -124,6 +124,82 @@ function backToSelect(): void {
   void releaseLock()
   applyType.value = null
   step.value = 'select'
+}
+
+// ------------------------------------------------------------------
+// 当前所在分部（V54 / D5）
+//
+// 「这张单发生在哪儿」决定由哪个处理小组接单，与「人事主部门」（决定审批上级）
+// 是两件事 —— 出差在外的人两者天然不同。
+//
+// 分工约定（刻意如此）：
+// - 服务端负责**预填**（出差中 ⇒ 出差目标分部，否则 ⇒ 人事主部门所属分部）
+//   和**来源判定**（拿回传值跟此刻的预填值比对）；
+// - 前端只做两件事：把预填值显示出来、把员工改过的值原样回传。
+// 前端**不传来源** —— 可被篡改的审计字段等于没有审计。
+// ------------------------------------------------------------------
+
+const divisionPrefill = ref<DivisionPrefill | null>(null)
+const divisionLoading = ref(false)
+/** 员工当前选中的分部；null = 没取到预填（提交时由服务端兜底） */
+const divisionId = ref<number | null>(null)
+/**
+ * 员工是否动过这个下拉。
+ *
+ * 用途只有一个：重新拉预填时**不要覆盖**用户的手动选择 ——
+ * 否则一次刷新就把「我明明改成了上海」悄悄改回北京，而提交后才发现派错了组。
+ */
+const divisionTouched = ref(false)
+
+/** 可选分部（服务端只给「启用中的一级分部」，前端不得自行过滤） */
+const divisionOptions = computed(() => divisionPrefill.value?.options ?? [])
+
+/** 下拉下方的来源提示：告诉员工「这个值哪来的、什么时候该改」 */
+const divisionHint = computed(() => {
+  const prefill = divisionPrefill.value
+  if (!prefill) {
+    return '无法获取分部信息，提交时按你的人事主部门处理'
+  }
+  if (divisionOptions.value.length === 0) {
+    return '组织里还没有配置一级分部，请联系管理员'
+  }
+  if (divisionId.value == null) {
+    return '未取到你的所属分部，请联系管理员确认部门配置'
+  }
+  if (divisionTouched.value && divisionId.value !== prefill.divisionId) {
+    return '已手动修改：审批与派工会按你选择的分部匹配处理小组'
+  }
+  if (prefill.source === 'TRIP_PREFILL') {
+    return prefill.tripOrderNo
+      ? `出差自动带入（来自出差单 ${prefill.tripOrderNo}）`
+      : '出差自动带入'
+  }
+  if (prefill.source === 'HR_PRIMARY') {
+    return '按人事主部门自动带入；出差在外请改为目的地分部'
+  }
+  return ''
+})
+
+async function loadDivisionPrefill(): Promise<void> {
+  divisionLoading.value = true
+  try {
+    const prefill = await orderApi.divisionPrefill()
+    divisionPrefill.value = prefill
+    if (!divisionTouched.value) {
+      divisionId.value = prefill.divisionId
+    }
+  } catch {
+    // 预填是体验增强：拉不到不影响提交（服务端会用同一套规则兜底），
+    // 只是员工看不到「默认值哪来的」这条提示
+    divisionPrefill.value = null
+  } finally {
+    divisionLoading.value = false
+  }
+}
+
+/** 员工手动改分部（只记「动过」，落库来源仍由服务端判定） */
+function handleDivisionChange(): void {
+  divisionTouched.value = true
 }
 
 // ------------------------------------------------------------------
@@ -285,6 +361,8 @@ onMounted(async () => {
   await loadDevices()
   // 自定义申请类型：与服务端权限过滤后的可用类型
   await loadCustomTypes()
+  // 当前所在分部预填（V54）：两种内置表单共用，进入页面就取一次
+  await loadDivisionPrefill()
   // 恢复上次未提交的草稿（在设备列表就绪后，避免恢复出的设备项无法匹配）
   restoreDraft()
   // 扫码借还跳转带来的 ?deviceId=（P1）：放在草稿恢复**之后** ——
@@ -514,7 +592,10 @@ async function handleSubmit(): Promise<void> {
       useType: DEFAULT_USE_TYPE,
       // 用途（原「借用原因」）选填：空白一律提交 null，避免落库一串空格
       reason: form.reason.trim() ? form.reason.trim() : null,
-      expectedReturnDate: form.expectedReturnDate
+      expectedReturnDate: form.expectedReturnDate,
+      // 当前所在分部（V54）：只在员工改过时传自己选的值；
+      // 没改过就传预填值（等价于「接受默认」），来源一律交服务端比对判定
+      currentDivisionId: divisionId.value
     })
     // 申请附件：随单提交；附件可选，失败不阻断申请
     const attached =
@@ -550,6 +631,10 @@ function resetFormAfterSubmit(): void {
   // 表单已清空，路径预览随之失效（下一次选择设备时会重新拉取）
   borrowPreview.value = null
   borrowPreviewSeq += 1
+  // 分部回到默认：清掉「动过」标记并重新预填 —— 预填本身取决于
+  // 「今天是否在出差」，隔几个小时再填一单，默认值可能已经变了
+  divisionTouched.value = false
+  void loadDivisionPrefill()
 }
 
 function handleReset(): void {
@@ -619,7 +704,9 @@ async function submitFault(): Promise<void> {
       // 选中设备若在使用中工单内（带 orderId）则带上；可用设备（台账登记）为 null
       orderId: selectedFaultDevice.value?.orderId ?? null,
       faultDescription: faultForm.faultDescription.trim(),
-      occurredAt: faultForm.occurredAt
+      occurredAt: faultForm.occurredAt,
+      // 报修不产生工单，分部只能落在故障记录上（V54）—— 否则「各分部报修量」没有数据源
+      currentDivisionId: divisionId.value
     })
     // 故障照片：绑定故障记录 id，随登记一并上传；照片可选
     const attached =
@@ -637,6 +724,9 @@ async function submitFault(): Promise<void> {
     faultDeviceOptions.value = []
     // 已成功登记，清除草稿
     clearDraft()
+    // 分部回到默认（理由同借用表单：预填随「今天是否在出差」变化）
+    divisionTouched.value = false
+    void loadDivisionPrefill()
     backToSelect()
   } catch {
     // 设备状态已变化等冲突由请求层统一提示
@@ -786,6 +876,26 @@ onBeforeUnmount(() => {
               />
             </el-form-item>
 
+            <!-- V54 / D5：当前所在分部（决定由哪个处理小组接单；预填值员工可改） -->
+            <el-form-item label="当前所在分部">
+              <el-select
+                v-model="divisionId"
+                class="ts-order__field"
+                placeholder="请选择当前所在分部"
+                :loading="divisionLoading"
+                :disabled="divisionOptions.length === 0"
+                @change="handleDivisionChange"
+              >
+                <el-option
+                  v-for="item in divisionOptions"
+                  :key="item.id"
+                  :label="item.deptName"
+                  :value="item.id"
+                />
+              </el-select>
+              <div class="ts-text-hint">{{ divisionHint }}</div>
+            </el-form-item>
+
             <!-- ：申请附件（，随单提交，可选；需求方决策 3 保留） -->
             <el-form-item label="申请附件">
               <PendingAttachmentPicker v-model="applyFiles" biz-type="APPLY_ATTACHMENT" label="随申请提交的材料" />
@@ -870,6 +980,26 @@ onBeforeUnmount(() => {
 
             <el-form-item label="关联工单">
               <span class="ts-text-hint">{{ faultOrderText }}</span>
+            </el-form-item>
+
+            <!-- V54 / D5：报修同样按「当前所在分部」匹配处理小组 -->
+            <el-form-item label="当前所在分部">
+              <el-select
+                v-model="divisionId"
+                class="ts-order__field"
+                placeholder="请选择当前所在分部"
+                :loading="divisionLoading"
+                :disabled="divisionOptions.length === 0"
+                @change="handleDivisionChange"
+              >
+                <el-option
+                  v-for="item in divisionOptions"
+                  :key="item.id"
+                  :label="item.deptName"
+                  :value="item.id"
+                />
+              </el-select>
+              <div class="ts-text-hint">{{ divisionHint }}</div>
             </el-form-item>
 
             <el-form-item label="故障发生时间" required>

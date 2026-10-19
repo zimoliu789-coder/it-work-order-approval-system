@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.exception.BusinessException;
+import com.enterprise.ticket.common.alert.AlertService;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlowVersion;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
 import com.enterprise.ticket.module.department.dto.DepartmentSaveRequest;
@@ -13,9 +14,11 @@ import com.enterprise.ticket.module.department.dto.vo.DepartmentNodeVO;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentOptionVO;
 import com.enterprise.ticket.module.department.entity.Department;
 import com.enterprise.ticket.module.department.entity.DepartmentManager;
+import com.enterprise.ticket.module.department.entity.DivisionHandlerGroup;
 import com.enterprise.ticket.module.department.entity.UserDepartment;
 import com.enterprise.ticket.module.department.mapper.DepartmentManagerMapper;
 import com.enterprise.ticket.module.department.mapper.DepartmentMapper;
+import com.enterprise.ticket.module.department.mapper.DivisionHandlerGroupMapper;
 import com.enterprise.ticket.module.department.mapper.UserDepartmentMapper;
 import com.enterprise.ticket.module.user.dto.UserOptionVO;
 import com.enterprise.ticket.module.user.entity.User;
@@ -43,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -84,13 +88,20 @@ class DepartmentServiceImplTest {
     private UserService userService;
     @Mock
     private ApprovalFlowVersionMapper approvalFlowVersionMapper;
+    /** V53：分部 ↔ 处理小组绑定 */
+    @Mock
+    private DivisionHandlerGroupMapper divisionHandlerGroupMapper;
+    /** V53：兜底告警出口（只在「分部漏配」时被调用） */
+    @Mock
+    private AlertService alertService;
 
     @InjectMocks
     private DepartmentServiceImpl service;
 
     @BeforeAll
     static void initMyBatisLambdaCache() {
-        MyBatisLambdaCache.init(Department.class, DepartmentManager.class, UserDepartment.class, User.class);
+        MyBatisLambdaCache.init(Department.class, DepartmentManager.class, UserDepartment.class, User.class,
+                DivisionHandlerGroup.class);
     }
 
     // ------------------------------------------------------------------
@@ -814,5 +825,200 @@ class DepartmentServiceImplTest {
         List<UserOptionVO> empty = List.of();
         assertTrue(empty.isEmpty(), "空列表必须被判为空，否则上面的用例等于恒真");
         assertEquals(0, empty.size(), "空列表长度为 0 —— 说明 isEmpty 断言不是恒真");
+    }
+
+    // ==================================================================
+    // 七、分部 → 处理小组 逐级匹配（V53）
+    // ==================================================================
+
+    /** 构造一条绑定 */
+    private static DivisionHandlerGroup binding(long divisionId, long handlerId) {
+        DivisionHandlerGroup row = new DivisionHandlerGroup();
+        row.setId(100 + divisionId);
+        row.setDivisionId(divisionId);
+        row.setHandlerDepartmentId(handlerId);
+        return row;
+    }
+
+    @Test
+    @DisplayName("逐级向上：三级部门自身无绑定 → 向上找到一级分部的绑定（北京的组接北京的活）")
+    void handlerDepartmentOfWalksUp() {
+        // 30（三级）→ 10（一级分部，已绑 20 IT运维组）
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+        when(divisionHandlerGroupMapper.selectOne(any())).thenReturn(null, binding(10, 20));
+
+        assertEquals(20L, service.handlerDepartmentOf(30L));
+    }
+
+    @Test
+    @DisplayName("逐级向上：一路到根都没有绑定 → 返回 null（由上层决定兜底，不在这里静默兜底）")
+    void handlerDepartmentOfReturnsNullWhenUnbound() {
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+        when(divisionHandlerGroupMapper.selectOne(any())).thenReturn(null);
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        when(departmentMapper.selectById(1L)).thenReturn(dept(1, "公司", null, "/1/", 0));
+
+        assertNull(service.handlerDepartmentOf(30L));
+    }
+
+    @Test
+    @DisplayName("兜底：分部未绑定 → 回落全局默认组，并发一条 P1 告警；同一分部 30 分钟内不重复告警")
+    void resolveFallsBackToDefaultAndAlertsOnce() {
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+        when(divisionHandlerGroupMapper.selectOne(any())).thenReturn(null);
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        when(departmentMapper.selectById(1L)).thenReturn(dept(1, "公司", null, "/1/", 0));
+        when(departmentMapper.selectById(20L)).thenReturn(dept(20, "IT运维组", 1L, "/1/20/", 1));
+        // 默认组查询：handler_default = 1 的那一行
+        Department defaultGroup = dept(20, "IT运维组", 1L, "/1/20/", 1);
+        defaultGroup.setHandlerGroup(true);
+        defaultGroup.setHandlerDefault(true);
+        when(departmentMapper.selectOne(any())).thenReturn(defaultGroup);
+
+        assertEquals(20L, service.resolveHandlerDepartment(30L));
+        assertEquals(20L, service.resolveHandlerDepartment(30L));
+
+        // 两次提交只发一次告警（去重窗口 30 分钟）
+        verify(alertService, times(1)).alert(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("兜底：没有默认组 → 返回 null（调用方抛「未配置处理部门」，不是静默成功）")
+    void resolveReturnsNullWhenNoDefault() {
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+        when(divisionHandlerGroupMapper.selectOne(any())).thenReturn(null);
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        when(departmentMapper.selectById(1L)).thenReturn(dept(1, "公司", null, "/1/", 0));
+        when(departmentMapper.selectOne(any())).thenReturn(null);
+
+        assertNull(service.resolveHandlerDepartment(30L));
+        verify(alertService, never()).alert(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("绑定：目标不是一级分部 → 拒绝（D6：处理小组只允许绑定在一级分部）")
+    void bindRejectsNonDivision() {
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+
+        assertEquals(ErrorCode.PARAM_INVALID,
+                errorCodeOf(() -> service.bindHandlerGroup(30L, 20L)));
+        verify(divisionHandlerGroupMapper, never()).insert(any(DivisionHandlerGroup.class));
+    }
+
+    @Test
+    @DisplayName("绑定：目标部门不是处理小组 → 拒绝（否则工单会派给一个不接单的部门）")
+    void bindRejectsNonHandlerDepartment() {
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        when(departmentMapper.selectById(11L)).thenReturn(dept(11, "测试部", 1L, "/1/11/", 1));
+
+        assertEquals(ErrorCode.PARAM_INVALID,
+                errorCodeOf(() -> service.bindHandlerGroup(10L, 11L)));
+        verify(divisionHandlerGroupMapper, never()).insert(any(DivisionHandlerGroup.class));
+    }
+
+    @Test
+    @DisplayName("绑定：目标处理小组已停用 → 拒绝")
+    void bindRejectsDisabledHandlerDepartment() {
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        Department disabled = dept(20, "IT运维组", 1L, "/1/20/", 1);
+        disabled.setHandlerGroup(true);
+        disabled.setStatus(false);
+        when(departmentMapper.selectById(20L)).thenReturn(disabled);
+
+        assertEquals(ErrorCode.PARAM_INVALID,
+                errorCodeOf(() -> service.bindHandlerGroup(10L, 20L)));
+    }
+
+    @Test
+    @DisplayName("绑定：合法 → 新增一行绑定（成员为空只告警不拦）")
+    void bindInsertsBinding() {
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        Department handler = dept(20, "IT运维组", 1L, "/1/20/", 1);
+        handler.setHandlerGroup(true);
+        when(departmentMapper.selectById(20L)).thenReturn(handler);
+        when(divisionHandlerGroupMapper.selectOne(any())).thenReturn(null);
+        when(divisionHandlerGroupMapper.insert(any(DivisionHandlerGroup.class))).thenReturn(1);
+        // 成员查询（activeMemberIdsOf）：无人在组内也不拦
+        when(userMapper.selectList(any())).thenReturn(List.of());
+        when(userDepartmentMapper.selectList(any())).thenReturn(List.of());
+
+        service.bindHandlerGroup(10L, 20L);
+
+        ArgumentCaptor<DivisionHandlerGroup> captor = ArgumentCaptor.forClass(DivisionHandlerGroup.class);
+        verify(divisionHandlerGroupMapper).insert(captor.capture());
+        assertEquals(10L, captor.getValue().getDivisionId());
+        assertEquals(20L, captor.getValue().getHandlerDepartmentId());
+    }
+
+    @Test
+    @DisplayName("绑定：传 null → 解除绑定（删该分部那一行）")
+    void bindNullMeansUnbind() {
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        when(divisionHandlerGroupMapper.delete(any())).thenReturn(1);
+
+        service.bindHandlerGroup(10L, null);
+
+        verify(divisionHandlerGroupMapper).delete(any());
+        verify(divisionHandlerGroupMapper, never()).insert(any(DivisionHandlerGroup.class));
+    }
+
+    @Test
+    @DisplayName("一级分部判定：按物化路径取第 2 段（三级部门返回它所属的分部）")
+    void rootDivisionIdFromPath() {
+        when(departmentMapper.selectById(30L)).thenReturn(dept(30, "前端一组", 10L, "/1/10/30/", 2));
+        assertEquals(10L, service.rootDivisionIdOf(30L));
+
+        // 一级分部自己 → 返回自己
+        when(departmentMapper.selectById(10L)).thenReturn(dept(10, "研发部", 1L, "/1/10/", 1));
+        assertEquals(10L, service.rootDivisionIdOf(10L));
+
+        // 根节点（公司）→ null
+        when(departmentMapper.selectById(1L)).thenReturn(dept(1, "公司", null, "/1/", 0));
+        assertNull(service.rootDivisionIdOf(1L));
+    }
+
+    @Test
+    @DisplayName("默认组：设置成功 → 先清全部标记、再给目标置 1（保证全表最多 1 个默认组）")
+    void setDefaultHandlerDepartmentClearsThenMarks() {
+        Department handler = dept(20, "IT运维组", 1L, "/1/20/", 1);
+        handler.setHandlerGroup(true);
+        when(departmentMapper.selectById(20L)).thenReturn(handler);
+
+        service.setDefaultHandlerDepartment(20L);
+
+        ArgumentCaptor<LambdaUpdateWrapper> captor = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(departmentMapper, times(2)).update(isNull(), captor.capture());
+        List<LambdaUpdateWrapper> wrappers = captor.getAllValues();
+
+        assertTrue(wrappers.get(0).getSqlSet() != null
+                        && wrappers.get(0).getSqlSet().toLowerCase(Locale.ROOT).contains("handler_default"),
+                "第一步必须清除旧标记 —— 否则会出现两个默认组，兜底结果取决于 id 顺序");
+        assertTrue(wrappers.get(1).getSqlSet() != null
+                        && wrappers.get(1).getSqlSet().toLowerCase(Locale.ROOT).contains("handler_default"),
+                "第二步要把目标置为默认");
+        assertTrue(wrappers.get(1).getSqlSegment() != null
+                        && wrappers.get(1).getSqlSegment().toLowerCase(Locale.ROOT).contains("id"),
+                "第二步必须带 id 条件，不能把全表又置一遍");
+    }
+
+    @Test
+    @DisplayName("默认组：目标不是处理小组 → 拒绝（普通部门不能当兜底）")
+    void setDefaultHandlerDepartmentRejectsNonHandler() {
+        when(departmentMapper.selectById(11L)).thenReturn(dept(11, "测试部", 1L, "/1/11/", 1));
+
+        assertEquals(ErrorCode.PARAM_INVALID,
+                errorCodeOf(() -> service.setDefaultHandlerDepartment(11L)));
+
+        // 只发生了「清标记」那一次写；目标校验失败后不再置位
+        verify(departmentMapper, times(1)).update(isNull(), any());
+    }
+
+    @Test
+    @DisplayName("默认组：传 null → 只清标记（回退为最早创建的处理小组，不是取消兜底）")
+    void setDefaultHandlerDepartmentNullClearsOnly() {
+        service.setDefaultHandlerDepartment(null);
+
+        verify(departmentMapper, times(1)).update(isNull(), any());
+        verify(departmentMapper, never()).selectById(anyLong());
     }
 }

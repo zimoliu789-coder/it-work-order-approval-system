@@ -357,6 +357,14 @@ export interface DeviceFaultPayload {
   faultDescription: string
   /** yyyy-MM-dd HH:mm:ss（不得晚于当前时间） */
   occurredAt: string
+  /**
+   * 当前所在分部 id（V54 / D5）。
+   *
+   * <p>报修<b>不产生工单</b>，分部只能落在故障记录上 —— 否则「各分部报修量」
+   * 这类统计永远没有数据源。传 null / 不传 = 用服务端预填；
+   * 传值必须是启用中的一级分部。来源由服务端判定，不要在前端自报。
+   */
+  currentDivisionId?: number | null
 }
 
 /** 故障处理请求（维修完成 / 报废共用） */

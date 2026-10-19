@@ -124,6 +124,25 @@ public class Order {
     /** 快照：提交时绑定的最终处理部门ID */
     private Long handlerDepartmentId;
 
+    /**
+     * 当前所在分部（一级分部 {@code department.id}，V54 / D5）。
+     *
+     * <h2>它与 {@link #departmentId} 的区别</h2>
+     * <p>{@code departmentId} 是**人事主部门**（组织归属，决定审批上级）；
+     * 本列是员工**当下实际所在**的分部（可能因为出差而与主部门不同），
+     * 决定「这单派给哪个 IT 处理小组」。
+     *
+     * <p>允许为空：存量工单没有这个信息，且当时的组织架构已不可考，回填无意义。
+     */
+    private Long currentDivisionId;
+
+    /**
+     * 分部取值来源，取值见 {@link com.enterprise.ticket.common.constant.DivisionSource}（V54 / D5.3）。
+     *
+     * <p>由服务端在提交时比对「预填值 vs 员工回传值」判定，不接受前端自报。
+     */
+    private String divisionSource;
+
     /** 实际执行人 user_id：全部审批通过时按「加权随机」分配 */
     private Long actualFinalHandlerId;
 

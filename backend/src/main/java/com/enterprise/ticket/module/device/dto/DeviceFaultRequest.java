@@ -38,4 +38,13 @@ public class DeviceFaultRequest {
     @NotNull(message = "请填写故障发生时间")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime occurredAt;
+
+    /**
+     * 当前所在分部（一级分部 {@code department.id}，V54 / D5.1）。
+     *
+     * <p>语义与借用单完全一致：留空由服务端预填，填了则校验「启用中的一级分部」。
+     * 报修目前**不按分部派单**（维修人由「报修处理设置」决定，V50 的设计），
+     * 但分部信息必须留痕 —— 「各分部报修量」与「某分部设备质量」都要靠它聚合。
+     */
+    private Long currentDivisionId;
 }

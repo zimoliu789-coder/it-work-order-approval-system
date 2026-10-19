@@ -4,7 +4,8 @@ import type {
   DepartmentDeleteResult,
   DepartmentNode,
   DepartmentOption,
-  DepartmentSavePayload
+  DepartmentSavePayload,
+  DivisionHandlerConfig
 } from '@/types/department'
 
 /**
@@ -82,6 +83,44 @@ export const departmentApi = {
    */
   remove(id: number) {
     return http.delete<DepartmentDeleteResult>(`/departments/${id}`)
+  },
+
+  // ------------------------------------------------------------------
+  // 分部 → 处理小组（V53）
+  // ------------------------------------------------------------------
+
+  /**
+   * 「分部 → 处理小组」配置总览（一级分部 + 已绑定的组 + 全局默认组）。
+   *
+   * 需要 `department:manage`，不是 `staff:view`：这是纯配置信息（谁管哪个分部），
+   * 不含人员数据，没必要暴露给只有查看权限的人。
+   */
+  handlerGroups() {
+    return http.get<DivisionHandlerConfig>('/departments/handler-groups')
+  },
+
+  /** 可选的处理小组（`handler_group = 1` 的部门），配置页下拉用 */
+  handlerGroupOptions() {
+    return http.get<DepartmentOption[]>('/departments/handler-groups/options')
+  },
+
+  /**
+   * 把某个**一级分部**绑定到处理小组；传 `null` 表示解除绑定。
+   *
+   * 后端校验三条：绑定对象必须是 depth=1 的分部、目标必须是启用中的处理小组、
+   * 不能把分部绑到自己身上。因此前端不必重复这些判断（重复了反而会漂移）。
+   */
+  bindHandlerGroup(divisionId: number, handlerDepartmentId: number | null) {
+    return http.put<void>(`/departments/${divisionId}/handler-group`, { handlerDepartmentId })
+  },
+
+  /**
+   * 设置 / 清除**全局默认处理小组**（传 `null` = 清除标记）。
+   *
+   * 清除不等于取消兜底：后端会回退为「最早创建的处理小组」（V53 之前的既有行为）。
+   */
+  setDefaultHandlerGroup(handlerDepartmentId: number | null) {
+    return http.put<void>('/departments/handler-groups/default', { handlerDepartmentId })
   }
 }
 

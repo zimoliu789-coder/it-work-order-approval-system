@@ -6,9 +6,12 @@ import com.enterprise.ticket.common.exception.BusinessException;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -111,6 +114,74 @@ public final class FormSchemaValidator {
             validateDate(field, type, position);
             validateAttachment(field, type, position);
         }
+    }
+
+    /**
+     * 发布前的「系统内置字段不可丢失」守卫（V53）
+     *
+     * <h2>为什么在发布这一刻做，而不是保存草稿时</h2>
+     * <p>沿用本类既有的「草稿宽松、发布严格」分层：设计器里允许先把字段拖来拖去（含临时删掉），
+     * 但一旦发布，这份 schema 就是业务逻辑的读取依据。{@code systemField=true} 的字段
+     * （如出差的起止日期、报修/借用的「当前所在分部」）被后端按<b>固定 key</b> 读取，
+     * 删掉或改类型不会报错，只会让分配、预填、重叠校验<b>静默失效</b> —— 排查成本极高。
+     *
+     * <h2>三条规则</h2>
+     * <ol>
+     *   <li>已发布版本中的系统字段，新版本必须<b>仍存在同 key 字段</b>（改 key 等同删除）；</li>
+     *   <li>字段<b>类型不可变</b>（DATE 改成 TEXT 会让日期解析全部走兜底）；</li>
+     *   <li>允许改显示名、必填、排序位置、宽度 —— 这些不影响取值。</li>
+     * </ol>
+     *
+     * <p>另外在这里把残留的系统字段标记<b>恢复</b>为 true：否则「先通过接口把 systemField 摘掉，
+     * 下次发布再删」就能绕过本守卫，等于没做。
+     *
+     * @param published 该模板最近一次<b>已发布</b>的 schema；为空（首次发布）时直接放行
+     * @param draft     本次待发布的 schema（会被就地修改：恢复系统字段标记）
+     * @throws BusinessException {@link ErrorCode#FORM_SCHEMA_INVALID}
+     */
+    public static void assertSystemFieldsKept(FormSchema published, FormSchema draft) {
+        if (published == null || draft == null) {
+            return;
+        }
+        Map<String, FormField> draftByKey = new LinkedHashMap<>();
+        for (FormField field : draft.getFields()) {
+            if (field != null && field.getKey() != null) {
+                draftByKey.putIfAbsent(field.getKey(), field);
+            }
+        }
+
+        List<String> missing = new ArrayList<>();
+        List<String> retyped = new ArrayList<>();
+        for (FormField old : published.getFields()) {
+            if (old == null || !Boolean.TRUE.equals(old.getSystemField())) {
+                continue;
+            }
+            String name = "「" + (isBlank(old.getLabel()) ? old.getKey() : old.getLabel())
+                    + "」（" + old.getKey() + "）";
+            FormField now = draftByKey.get(old.getKey());
+            if (now == null) {
+                missing.add(name);
+                continue;
+            }
+            if (!Objects.equals(old.getType(), now.getType())) {
+                retyped.add(name + "：" + old.getType() + " → " + now.getType());
+                continue;
+            }
+            now.setSystemField(true);
+        }
+
+        if (missing.isEmpty() && retyped.isEmpty()) {
+            return;
+        }
+        StringBuilder message = new StringBuilder(
+                "系统内置字段是业务逻辑的读取依据，不允许删除或修改字段类型（否则分配 / 预填 / 校验会静默失效）：");
+        if (!missing.isEmpty()) {
+            message.append(" 已删除 ").append(String.join("、", missing));
+        }
+        if (!retyped.isEmpty()) {
+            message.append(missing.isEmpty() ? " " : "；").append("已改类型 ").append(String.join("、", retyped));
+        }
+        throw invalid(message.toString());
     }
 
     /** 申请类型编码：字母开头，仅字母/数字/下划线，2–20 位 */

@@ -257,4 +257,28 @@ public class OrderVO {
 
     /** 当前节点已超时小时数（未超时为 null）；前端展示「已超时 N 小时」 */
     private Long approvalOverdueHours;
+
+    // ------------------------------------------------------------------
+    // V54 / D5：「当前所在分部」
+    // ------------------------------------------------------------------
+
+    /**
+     * 当前所在分部 id（一级分部）。
+     *
+     * <p>与 {@link #departmentName} 是两件事：后者是**人事主部门**（决定审批上级），
+     * 本字段是**这张单发生在哪儿**（决定由哪个处理小组接单）。出差在外的人两者天然不同。
+     *
+     * <p>V54 之前的历史工单为空 —— 迁移刻意不回填，「空」的含义是
+     * 「提交时还没有这个概念」，不是「员工没选」。
+     */
+    private Long currentDivisionId;
+
+    /** 当前所在分部名称（服务端回填，前端不必再查部门表） */
+    private String currentDivisionName;
+
+    /** 分部取值来源：HR_PRIMARY / TRIP_PREFILL / MANUAL */
+    private String divisionSource;
+
+    /** 来源中文名（与 {@code divisionSource} 一起下发，前端不再维护第二份映射） */
+    private String divisionSourceLabel;
 }

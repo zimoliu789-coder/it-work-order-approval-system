@@ -6,9 +6,11 @@ import com.enterprise.ticket.common.log.RiskLevel;
 import com.enterprise.ticket.module.department.dto.DepartmentManagerRequest;
 import com.enterprise.ticket.module.department.dto.DepartmentMoveRequest;
 import com.enterprise.ticket.module.department.dto.DepartmentSaveRequest;
+import com.enterprise.ticket.module.department.dto.HandlerGroupBindRequest;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentDeleteResultVO;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentNodeVO;
 import com.enterprise.ticket.module.department.dto.vo.DepartmentOptionVO;
+import com.enterprise.ticket.module.department.dto.vo.DivisionHandlerConfigVO;
 import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.user.dto.UserOptionVO;
 import jakarta.validation.Valid;
@@ -134,5 +136,68 @@ public class DepartmentController {
         return ApiResponse.success(
                 "部门已删除，" + result.getMovedMemberCount() + " 名成员已移至「"
                         + result.getMovedToDepartmentName() + "」", result);
+    }
+
+    // ------------------------------------------------------------------
+    // 分部 → 处理小组（V53）
+    // ------------------------------------------------------------------
+
+    /**
+     * 「分部 → 处理小组」配置总览：全部一级分部、已绑定的组、以及全局默认组。
+     *
+     * <p>读权限用 {@code department:manage} 而不是 {@code staff:view}：
+     * 这是纯配置信息（谁管哪个分部），不含人员数据；而 {@code staff:view} 是
+     * 通勤员工的常规读权限，把配置暴露给他们没有收益。
+     */
+    @GetMapping("/handler-groups")
+    @PreAuthorize("@perm.has('department:manage')")
+    public ApiResponse<DivisionHandlerConfigVO> handlerGroups() {
+        return ApiResponse.success(departmentService.handlerGroupConfig());
+    }
+
+    /** 处理小组下拉（{@code handler_group = 1} 的部门），配置页选人用 */
+    @GetMapping("/handler-groups/options")
+    @PreAuthorize("@perm.has('department:manage')")
+    public ApiResponse<List<DepartmentOptionVO>> handlerGroupOptions() {
+        return ApiResponse.success(departmentService.handlerGroupOptions());
+    }
+
+    /**
+     * 设置 / 清除**全局默认处理小组**；{@code handlerDepartmentId} 传 null 表示清除标记。
+     *
+     * <p>路径刻意写成 {@code /handler-groups/default} 而不是 {@code /{id}/handler-group}：
+     * 默认组不是「某个分部的绑定」，而是一个全局单值配置。虽然两者报文结构相同
+     * （都只有一个 {@code handlerDepartmentId}），但语义不同，混用会让「配了默认组
+     * 却以为配了分部」这类错误无从察觉。
+     *
+     * <p>清除标记 ≠ 取消兜底：清除后 {@code defaultHandlerDepartmentId()} 回退为
+     * 「id 最小的处理小组」，与 V53 之前逐字一致。
+     */
+    @PutMapping("/handler-groups/default")
+    @PreAuthorize("@perm.has('department:manage')")
+    @AuditLog(module = "ORG", action = "DEPT_HANDLER_DEFAULT_SET", risk = RiskLevel.HIGH,
+            description = "设置全局默认处理小组（分部漏配时的兜底）")
+    public ApiResponse<Void> setDefaultHandlerGroup(@RequestBody HandlerGroupBindRequest request) {
+        Long handlerDepartmentId = request == null ? null : request.getHandlerDepartmentId();
+        departmentService.setDefaultHandlerDepartment(handlerDepartmentId);
+        return ApiResponse.success(
+                handlerDepartmentId == null ? "已清除默认处理小组" : "已设为默认处理小组", null);
+    }
+
+    /**
+     * 把某个一级分部绑定到处理小组；{@code handlerDepartmentId} 传 null 表示解除绑定。
+     *
+     * <p>服务层会校验「绑定对象必须是一级分部」「目标必须是启用中的处理小组」，
+     * 因此这里不做额外判断 —— 校验只留一处（否则运维改库/脚本调用会绕过接口层那份）。
+     */
+    @PutMapping("/{id}/handler-group")
+    @PreAuthorize("@perm.has('department:manage')")
+    @AuditLog(module = "ORG", action = "DEPT_HANDLER_GROUP_BIND", risk = RiskLevel.HIGH,
+            description = "配置分部对应的处理小组（决定工单派给谁）")
+    public ApiResponse<Void> bindHandlerGroup(@PathVariable Long id,
+                                              @RequestBody HandlerGroupBindRequest request) {
+        Long handlerDepartmentId = request == null ? null : request.getHandlerDepartmentId();
+        departmentService.bindHandlerGroup(id, handlerDepartmentId);
+        return ApiResponse.success(handlerDepartmentId == null ? "已解除绑定" : "已绑定处理小组", null);
     }
 }

@@ -61,4 +61,16 @@ public class OrderCreateRequest {
     /** 归还日期（原「期望归还日期」）： 起必填 */
     @NotNull(message = "请选择归还日期")
     private LocalDate expectedReturnDate;
+
+    /**
+     * 当前所在分部（一级分部 {@code department.id}，V54 / D5.1）。
+     *
+     * <p><b>可以留空</b>：留空时服务端按预填逻辑自行确定（今天在出差中 ⇒ 出差目标分部，
+     * 否则 ⇒ 人事主部门所属分部）。前端拿到预填值展示给员工，员工可手动改 ——
+     * 改过就回传改后的值。
+     *
+     * <p>不接受「随便一个部门 id」：服务端会校验它必须是**启用中的一级分部**，
+     * 否则报 {@code PARAM_INVALID}（子分部或停用分部会让处理小组匹配走偏）。
+     */
+    private Long currentDivisionId;
 }

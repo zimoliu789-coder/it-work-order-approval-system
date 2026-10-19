@@ -431,4 +431,115 @@ class FormSchemaValidatorTest {
         assertEquals(List.of("title", "category", "amount"),
                 schema.getFields().stream().map(FormField::getKey).toList());
     }
+
+    // ------------------------------------------------------------------
+    // 系统内置字段守卫（V53）
+    // ------------------------------------------------------------------
+
+    /** 一个带系统内置字段的已发布 schema：出差起止日期 + 目标一级分部 */
+    private static FormSchema publishedWithSystemFields() {
+        FormField start = field(FormFieldType.DATE.name(), "trip_start_date", "出差开始日期");
+        start.setSystemField(true);
+        FormField end = field(FormFieldType.DATE.name(), "trip_end_date", "出差结束日期");
+        end.setSystemField(true);
+        FormField target = field(FormFieldType.ROOT_DEPT.name(), "trip_target_dept", "目标一级分部");
+        target.setSystemField(true);
+        FormField note = field(FormFieldType.TEXT.name(), "note", "备注");
+        return schema(start, end, target, note);
+    }
+
+    @Test
+    @DisplayName("系统内置字段被删除 → 拒绝发布，报错点名到具体字段")
+    void rejectsRemovingSystemField() {
+        FormSchema draft = publishedWithSystemFields();
+        // 只删掉「出差结束日期」（模拟管理员在设计器里把它移走）
+        draft.getFields().removeIf(field -> "trip_end_date".equals(field.getKey()));
+
+        String message = messageOf(() ->
+                FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft));
+        assertEquals(ErrorCode.FORM_SCHEMA_INVALID,
+                codeOf(() -> FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft)));
+        assertTrue(message.contains("出差结束日期"), "报错必须点名具体字段，管理员才知道删了哪个");
+    }
+
+    @Test
+    @DisplayName("系统内置字段被改 key（等价于删除）→ 拒绝")
+    void rejectsRenamingSystemFieldKey() {
+        FormSchema draft = publishedWithSystemFields();
+        draft.getFields().stream()
+                .filter(field -> "trip_start_date".equals(field.getKey()))
+                .findFirst().orElseThrow()
+                .setKey("start_date");
+
+        assertTrue(messageOf(() ->
+                FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft))
+                .contains("trip_start_date"));
+    }
+
+    @Test
+    @DisplayName("系统内置字段改类型 → 拒绝（DATE 改成 TEXT 会让日期解析全部走兜底）")
+    void rejectsChangingSystemFieldType() {
+        FormSchema draft = publishedWithSystemFields();
+        draft.getFields().stream()
+                .filter(field -> "trip_start_date".equals(field.getKey()))
+                .findFirst().orElseThrow()
+                .setType(FormFieldType.TEXT.name());
+
+        String message = messageOf(() ->
+                FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft));
+        assertTrue(message.contains("已改类型"));
+        assertTrue(message.contains("DATE → TEXT"));
+    }
+
+    @Test
+    @DisplayName("改显示名 / 必填 / 顺序 / 布局类字段自由增删 → 放行")
+    void allowsHarmlessEditsAroundSystemFields() {
+        FormSchema draft = publishedWithSystemFields();
+        // 期望：改显示名、把必填打开、调顺序、删掉自己的普通字段、加新字段，全都允许
+        draft.getFields().stream()
+                .filter(field -> "trip_start_date".equals(field.getKey()))
+                .findFirst().orElseThrow()
+                .setLabel("出发日");
+        draft.getFields().stream()
+                .filter(field -> "trip_target_dept".equals(field.getKey()))
+                .findFirst().orElseThrow()
+                .setRequired(true);
+        draft.getFields().removeIf(field -> "note".equals(field.getKey()));
+        draft.getFields().add(0, field(FormFieldType.TEXT.name(), "reason", "出差事由"));
+        // 顺序调整：把目标分部挪到最前
+        FormField target = draft.getFields().stream()
+                .filter(field -> "trip_target_dept".equals(field.getKey()))
+                .findFirst().orElseThrow();
+        draft.getFields().remove(target);
+        draft.getFields().add(0, target);
+
+        FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft);
+    }
+
+    @Test
+    @DisplayName("通过接口把 systemField 摘掉 → 发布时被恢复为 true（否则「先摘标记再删」就绕过了守卫）")
+    void restoresSystemFieldFlag() {
+        FormSchema draft = publishedWithSystemFields();
+        draft.getFields().forEach(field -> field.setSystemField(false));
+
+        FormSchemaValidator.assertSystemFieldsKept(publishedWithSystemFields(), draft);
+
+        for (String key : List.of("trip_start_date", "trip_end_date", "trip_target_dept")) {
+            FormField field = draft.getFields().stream()
+                    .filter(item -> key.equals(item.getKey()))
+                    .findFirst().orElseThrow();
+            assertTrue(Boolean.TRUE.equals(field.getSystemField()), "系统字段标记必须被恢复：" + key);
+        }
+        FormField note = draft.getFields().stream()
+                .filter(item -> "note".equals(item.getKey()))
+                .findFirst().orElseThrow();
+        assertFalse(Boolean.TRUE.equals(note.getSystemField()), "普通字段的标记不能被顺手改成 true");
+    }
+
+    @Test
+    @DisplayName("首次发布（没有已发布版本）→ 直接放行")
+    void firstPublishSkipsGuard() {
+        FormSchema draft = schema(field(FormFieldType.TEXT.name(), "title", "标题"));
+        FormSchemaValidator.assertSystemFieldsKept(null, draft);
+    }
 }

@@ -211,7 +211,8 @@ public class FormTemplateServiceImpl implements FormTemplateService {
     @Transactional(rollbackFor = Exception.class)
     public Long publish(Long templateId) {
         requireTemplate(templateId);
-        FormTemplateVersion draft = findDraft(templateId);
+        List<FormTemplateVersion> versions = versionsOf(templateId);
+        FormTemplateVersion draft = latestDraft(versions);
         if (draft == null) {
             throw new BusinessException(ErrorCode.FORM_SCHEMA_INVALID,
                     "当前没有待发布的草稿改动，请先在设计器中保存后再发布");
@@ -219,6 +220,13 @@ public class FormTemplateServiceImpl implements FormTemplateService {
         // 发布是唯一的严格校验点：此后再无人能改这份 schema
         FormSchema schema = FormSchemaCodec.readSchema(draft.getSchemaJson());
         FormSchemaValidator.validateAndNormalize(schema);
+        // 系统内置字段（V53）：删了或改了类型，后端按固定 key 读取的联动逻辑会静默失效。
+        // 草稿阶段不拦（设计器要能边改边存），到发布这一刀切掉。
+        FormTemplateVersion previous = latestPublished(versions);
+        if (previous != null) {
+            FormSchemaValidator.assertSystemFieldsKept(
+                    FormSchemaCodec.readSchema(previous.getSchemaJson()), schema);
+        }
 
         Long currentUserId = SecurityUtils.getCurrentUserId();
         versionMapper.update(null, Wrappers.<FormTemplateVersion>lambdaUpdate()

@@ -1,5 +1,6 @@
 package com.enterprise.ticket.module.order.support;
 
+import com.enterprise.ticket.common.constant.OrderType;
 import com.enterprise.ticket.common.form.FormSchema;
 import com.enterprise.ticket.common.form.FormSchemaCodec;
 import com.enterprise.ticket.common.flow.BorrowFieldCatalog;
@@ -63,7 +64,7 @@ public class FlowInputResolver {
         if (order == null) {
             return new LinkedHashMap<>();
         }
-        if ("CUSTOM".equals(order.getOrderType())) {
+        if (OrderType.isFormDriven(order.getOrderType())) {
             return customFormData(order);
         }
         return borrowFormData(order);
@@ -76,7 +77,7 @@ public class FlowInputResolver {
      * 而不是模板的当前版本：模板随时会改，若用当前版本，历史工单的说明文案会随模板一起漂移。
      */
     public FormSchema schemaOf(Order order) {
-        if (order == null || !"CUSTOM".equals(order.getOrderType())) {
+        if (order == null || !OrderType.isFormDriven(order.getOrderType())) {
             return BorrowFieldCatalog.schema();
         }
         OrderFormData row = orderFormDataMapper.selectOne(Wrappers.<OrderFormData>lambdaQuery()
