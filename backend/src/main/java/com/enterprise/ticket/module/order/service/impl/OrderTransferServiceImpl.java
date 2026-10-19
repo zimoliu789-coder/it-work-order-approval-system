@@ -1,6 +1,8 @@
 package com.enterprise.ticket.module.order.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.enterprise.ticket.common.alert.AlertLevel;
+import com.enterprise.ticket.common.alert.AlertService;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.constant.MessageType;
 import com.enterprise.ticket.common.constant.OrderStatus;
@@ -8,6 +10,7 @@ import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.TransferType;
 import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.util.SecurityUtils;
+import com.enterprise.ticket.module.department.dto.vo.DepartmentOptionVO;
 import com.enterprise.ticket.module.department.service.DepartmentService;
 import com.enterprise.ticket.module.message.entity.Message;
 import com.enterprise.ticket.module.message.mapper.MessageMapper;
@@ -30,6 +33,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -81,6 +85,13 @@ public class OrderTransferServiceImpl implements OrderTransferService {
     private final UserMapper userMapper;
     private final MessageMapper messageMapper;
     private final MessageService messageService;
+    /**
+     * 「离职自动转交失败」的人工兜底告警出口（只发超管）。
+     *
+     * <p>依赖方向是单向的（AlertService 只依赖 message / log / mail / 配置 / user），
+     * 且 {@code DepartmentServiceImpl} 已在用它，因此不会引入循环依赖。
+     */
+    private final AlertService alertService;
 
     // ------------------------------------------------------------------
     // 人工转交
@@ -145,6 +156,28 @@ public class OrderTransferServiceImpl implements OrderTransferService {
     // 离职自动转交（需求方  ）
     // ------------------------------------------------------------------
 
+    /**
+     * 离职自动转交：把离职者名下在办工单改派给同组其他在职成员（负载最少优先、并列随机）。
+     *
+     * <h2>2026-10-19 裁决（方案 B）：自动转交保留，「本组管理员手动操作」= 失败时的人工兜底</h2>
+     * <p>批次 2 的转单需求写着「执行人<b>离职不自动转单</b>，由本组管理员手动操作」，
+     * 与本方法相反。用户裁决<b>保留自动转交</b>，把那句话理解为「自动转交办不成时的人工兜底」。
+     * 因此本方法的行为是：
+     * <ol>
+     *   <li><b>能转就转</b>（下方原逻辑不动）：同组有在职成员即按负载分配；</li>
+     *   <li><b>转不了就喊人</b>：同组无其他在职成员 / 并发冲突导致条件 UPDATE 落空时，
+     *       除保留原有的 {@code log.warn} 外，额外发一条 P1 告警给超管
+     *       （{@link MessageType#DIMISSION_TRANSFER_FALLBACK}），正文附工单号清单与可执行动作。</li>
+     * </ol>
+     *
+     * <h2>为什么兜底消息只发超管</h2>
+     * <p>此刻工单挂在<b>已禁用</b>的离职账号上，而组管理员在现有权限模型下动不了别人的单
+     * （转交要求本人是当前执行人、同组转单要求发起人是当前执行人、强制转交要求超管级权限码）。
+     * 把「要你处理」发给做不了事的人，等于把工单推进死胡同。详见 {@link MessageType#DIMISSION_TRANSFER_FALLBACK}。
+     *
+     * <p><b>绝不阻断离职流程</b>：任何一步失败都只记日志 / 发告警，异常不向外抛
+     * —— 离职本身（账号禁用 + 设备转待收回）必须完成。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public AutoTransferResult transferOnDimission(Long userId, String operatorName) {
@@ -163,6 +196,8 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         LocalDateTime now = LocalDateTime.now();
         int transferred = 0;
         int skipped = 0;
+        // 未能转交的工单（组内无接手人 / 并发冲突）—— 收敛成一条告警，不逐单刷屏
+        List<Order> skippedOrders = new ArrayList<>();
         // 同一小组的候选池只算一次（离职员工的在办工单往往集中在同一个小组）
         Map<Long, List<Long>> poolCache = new HashMap<>();
 
@@ -177,6 +212,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
             if (candidates.isEmpty()) {
                 // 同组无其他在职成员：不转交也不报错，保留原样交给管理员处理（避免流程卡死）
                 skipped++;
+                skippedOrders.add(order);
                 log.warn("离职自动转交跳过：工单 {} 的最终处理部门（id={}）内无其他在职成员，"
                         + "原执行人 {} 已离职，需管理员手工转交或收回", order.getOrderNo(), groupId, userId);
                 continue;
@@ -202,7 +238,9 @@ public class OrderTransferServiceImpl implements OrderTransferService {
                     .eq(Order::getActualFinalHandlerId, userId)
                     .set(Order::getActualFinalHandlerId, newHandlerId));
             if (updated == 0) {
-                // 并发下工单已被归还 / 被他人转交：跳过即可，不视为失败（幂等）
+                // 并发下工单已被归还 / 被他人转交：跳过即可，不视为失败（幂等）。
+                // 刻意**不**计入 skippedOrders —— 这类单子已经不再挂在这个离职账号上，
+                // 没有任何待人工处置的动作；把它们写进告警只会制造「点进去发现没事」的噪音。
                 skipped++;
                 continue;
             }
@@ -216,11 +254,84 @@ public class OrderTransferServiceImpl implements OrderTransferService {
                     order.getId());
             transferred++;
         }
+        if (!skippedOrders.isEmpty()) {
+            // 方案 B 的「人工兜底」出口：自动转交办不成时必须喊人，否则这批单子彻底沉底
+            notifyDimissionFallback(name, userId, skippedOrders);
+        }
         if (transferred > 0 || skipped > 0) {
             log.info("离职自动转交完成：{} 名下在办工单 {} 笔，成功转交 {} 笔，跳过 {} 笔",
                     name, orders.size(), transferred, skipped);
         }
         return new AutoTransferResult(transferred, skipped);
+    }
+
+    /**
+     * 「自动转交失败 → 请超管人工处置」的告警。
+     *
+     * <p><b>收件人只有超管</b>：组管理员在现有权限模型下没有处置这类工单的能力
+     * （详见 {@link MessageType#DIMISSION_TRANSFER_FALLBACK}），而超管有三条可执行路径。
+     * 正文里直接把三条动作写出来 —— 告警的价值在于「收件人知道下一步点哪里」，
+     * 而不是「有人出事了」。
+     *
+     * <p><b>一次离职只发一条</b>：同一批失败工单合并成一条告警（含清单），
+     * 而不是每单一条。离职往往一次带出十几笔在办单，逐单告警会把消息中心刷屏，
+     * 真问题反而被淹掉。
+     *
+     * <p>告警失败只记日志：离职流程的主体（禁用账号 + 设备转待收回）不能因为通知问题失败。
+     */
+    private void notifyDimissionFallback(String name, Long userId, List<Order> skippedOrders) {
+        Map<Long, String> groupNames = handlerGroupNameMap();
+        StringBuilder list = new StringBuilder();
+        for (Order order : skippedOrders) {
+            Long groupId = order.getHandlerDepartmentId();
+            String groupLabel = groupId == null
+                    ? "（无处理小组）"
+                    : groupNames.getOrDefault(groupId, "处理小组#" + groupId);
+            list.append("· ").append(order.getOrderNo())
+                    .append("（").append(OrderStatus.labelOf(order.getStatus()))
+                    .append("，归属 ").append(groupLabel).append("）\n");
+        }
+        log.warn("离职自动转交失败 {} 笔，需人工处置：员工 {}（id={}）名下 {}",
+                skippedOrders.size(), name, userId, list.toString().replace("\n", " / "));
+        try {
+            alertService.alert(AlertLevel.P1, MessageType.DIMISSION_TRANSFER_FALLBACK,
+                    "离职工单待人工转交：" + name + "（" + skippedOrders.size() + " 笔）",
+                    name + " 已标记离职并禁用账号，以下在办工单未能自动转交 —— "
+                            + "其所属处理小组内没有其他在职成员可接手，工单目前仍挂在离职账号上：\n"
+                            + list
+                            + "\n可执行动作（三选一）：\n"
+                            + "① 工单详情 → 强制干预 →「强制转交执行人」，指定任意在职 IT 接手；\n"
+                            + "② 由超管代发一次同组转单（系统允许超管代离职员工发起）；\n"
+                            + "③ 若设备已无法收回，用「强制终止」结单。\n"
+                            + "根治办法：给该处理小组补充在职成员，或在「组织与人员」调整其归属小组。",
+                    "DIMISSION_TRANSFER_FALLBACK",
+                    "leavingUserId=" + userId + " | name=" + name
+                            + " | skipped=" + skippedOrders.size()
+                            + " | orders=" + skippedOrders.stream().map(Order::getOrderNo).toList());
+        } catch (RuntimeException e) {
+            log.warn("离职转交兜底告警发送失败（不影响离职流程）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 处理小组 id → 名称（供告警正文可读）。
+     *
+     * <p>走 {@link DepartmentService#handlerGroupOptions()} 而不是新建一个 mapper 依赖：
+     * 组数量是个位数、这条路径只在「离职转交失败」这种低频场景执行，多一次查询换来的是
+     * 「本类不必认识 department 表」这个更干净的边界。取不到名称时降级为 {@code 处理小组#id}。
+     */
+    private Map<Long, String> handlerGroupNameMap() {
+        Map<Long, String> names = new HashMap<>();
+        try {
+            for (DepartmentOptionVO option : departmentService.handlerGroupOptions()) {
+                if (option != null && option.getId() != null) {
+                    names.put(option.getId(), option.getDeptName());
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("离职转交兜底告警：处理小组名称解析失败，正文将退化为 id：{}", e.getMessage());
+        }
+        return names;
     }
 
     // ------------------------------------------------------------------

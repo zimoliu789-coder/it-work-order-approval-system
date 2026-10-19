@@ -1,5 +1,7 @@
 package com.enterprise.ticket.module.order.service.impl;
 
+import com.enterprise.ticket.common.alert.AlertLevel;
+import com.enterprise.ticket.common.alert.AlertService;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.constant.MessageType;
 import com.enterprise.ticket.common.constant.OrderStatus;
@@ -39,7 +41,9 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -96,6 +100,9 @@ class OrderTransferServiceImplTest {
     private MessageMapper messageMapper;
     @Mock
     private MessageService messageService;
+    /** 方案 B（2026-10-19）：离职自动转交失败时的人工兜底告警出口 */
+    @Mock
+    private AlertService alertService;
 
     @InjectMocks
     private OrderTransferServiceImpl service;
@@ -379,6 +386,61 @@ class OrderTransferServiceImplTest {
         assertEquals(1, result.skipped());
         verify(orderMapper, never()).update(any(), any());
         verify(transferMapper, never()).insert(any());
+
+        // 方案 B：转不成必须「喊人」—— 一条 P1 告警给超管，正文含失败工单号
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(alertService).alert(eq(AlertLevel.P1), eq(MessageType.DIMISSION_TRANSFER_FALLBACK),
+                any(), bodyCaptor.capture(), any(), any());
+        assertTrue(bodyCaptor.getValue().contains("BO-100"),
+                "告警正文必须写明是哪几笔工单待处置，否则收件人还得自己去找");
+    }
+
+    @Test
+    @DisplayName("离职自动转交：全部转交成功 → 不发人工兜底告警（避免狼来了）")
+    void transferOnDimission_allTransferred_noFallbackAlert() {
+        Long leavingId = 8L;
+        Long idleId = 5L;
+        when(orderMapper.selectList(any()))
+                .thenReturn(List.of(order(OrderStatus.BORROWED.name(), leavingId)))
+                .thenReturn(List.of());
+        when(departmentService.activeMemberIdsOf(any())).thenReturn(List.of(idleId));
+        when(orderMapper.update(any(), any())).thenReturn(1);
+
+        OrderTransferService.AutoTransferResult result = service.transferOnDimission(leavingId, "张伟");
+
+        assertEquals(1, result.transferred());
+        assertEquals(0, result.skipped());
+        verify(alertService, never()).alert(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("离职自动转交：部分成功 + 部分失败 → 告警只列失败那笔，不混入已转交的单")
+    void transferOnDimission_partialSkip_alertsOnlyFailed() {
+        Long leavingId = 8L;
+        Long okGroupId = 7L;
+        Long emptyGroupId = 9L;
+        Order ok = order(OrderStatus.BORROWED.name(), leavingId);
+        Order stuck = order(OrderStatus.BORROWED.name(), leavingId);
+        stuck.setId(200L);
+        stuck.setOrderNo("BO-200");
+        stuck.setHandlerDepartmentId(emptyGroupId);
+
+        when(orderMapper.selectList(any()))
+                .thenReturn(List.of(ok, stuck))
+                .thenReturn(List.of());
+        when(departmentService.activeMemberIdsOf(okGroupId)).thenReturn(List.of(5L));
+        when(departmentService.activeMemberIdsOf(emptyGroupId)).thenReturn(List.of());
+        when(orderMapper.update(any(), any())).thenReturn(1);
+
+        OrderTransferService.AutoTransferResult result = service.transferOnDimission(leavingId, "张伟");
+
+        assertEquals(1, result.transferred());
+        assertEquals(1, result.skipped());
+        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
+        verify(alertService).alert(any(), any(), any(), bodyCaptor.capture(), any(), any());
+        String body = bodyCaptor.getValue();
+        assertTrue(body.contains("BO-200"), "失败那一笔必须出现在告警里");
+        assertFalse(body.contains("BO-100"), "已成功转交的单不该出现在告警正文里");
     }
 
     @Test
