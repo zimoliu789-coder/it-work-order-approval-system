@@ -48,7 +48,7 @@ const columns: ColumnDef[] = [
   { key: 'statusLabel', label: '状态', width: 100, align: 'center' },
   { key: 'deviceCount', label: '关联设备', width: 100, align: 'center' },
   { key: 'remark', label: '备注', minWidth: 160, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 150, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 const loading = ref(false)
@@ -232,41 +232,9 @@ function deviceCountText(row: DeviceModelItem): string {
 <template>
   <div class="ts-page">
     <section class="ts-card">
-      <div class="ts-flex-between ts-model__head">
-        <div>
-          <h3 class="ts-model__title">设备型号管理</h3>
-          <p class="ts-text-secondary ts-model__desc">
-            型号字典供「设备台账」与「借用申请」共用。型号被台账与历史工单引用，因此<b>只可停用、不可删除</b>；
-            录错的型号请停用后新建一条。
-          </p>
-        </div>
-        <div v-if="canManage" class="ts-model__head-actions">
-          <el-button :loading="syncing" @click="handleSync">从台账补齐</el-button>
-          <el-button type="primary" @click="openCreate">+ 新增型号</el-button>
-        </div>
-      </div>
-
-      <div class="ts-model__filters ts-mt-16">
-        <el-input
-          v-model="query.keyword"
-          class="ts-model__filter"
-          placeholder="型号名称 / 品牌关键字"
-          clearable
-          @keyup.enter="handleSearch"
-        />
-        <el-select v-model="query.status" class="ts-model__filter" placeholder="全部状态" clearable>
-          <el-option
-            v-for="item in DEVICE_MODEL_STATUS_OPTIONS"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-        <el-button type="primary" @click="handleSearch">查询</el-button>
-        <el-button @click="handleReset">重置</el-button>
-      </div>
-
       <TablePage
+        title="设备型号管理"
+        subtitle="型号字典供「设备台账」与「借用申请」共用。型号被台账与历史工单引用，因此只可停用、不可删除； 录错的型号请停用后新建一条。"
         :columns="columns"
         :rows="records"
         :loading="loading"
@@ -276,10 +244,39 @@ function deviceCountText(row: DeviceModelItem): string {
         :total="total"
         :page-sizes="[20, 50, 100]"
         empty-text="暂无型号，可点「从台账补齐」或手动新增"
-        class="ts-mt-16"
+        
         @update:page="handlePageChange"
         @update:size="handleSizeChange"
       >
+        <template #actions>
+          <el-button :loading="syncing" @click="handleSync">从台账补齐</el-button>
+          <el-button type="primary" @click="openCreate">+ 新增型号</el-button>
+        </template>
+
+        <template #bar>
+                <div class="ts-model__filters ts-mt-16">
+                  <el-input
+                    v-model="query.keyword"
+                    class="ts-model__filter"
+                    placeholder="型号名称 / 品牌关键字"
+                    clearable
+                    @keyup.enter="handleSearch"
+                  />
+                  <el-select v-model="query.status" class="ts-model__filter" placeholder="全部状态" clearable>
+                    <el-option
+                      v-for="item in DEVICE_MODEL_STATUS_OPTIONS"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </el-select>
+                  <el-button type="primary" @click="handleSearch">查询</el-button>
+                  <el-button @click="handleReset">重置</el-button>
+                </div>
+
+      
+        </template>
+
         <template #cell-brand="{ row }">
           <span v-if="(row as DeviceModelItem).brand">{{ (row as DeviceModelItem).brand }}</span>
           <span v-else class="ts-text-hint">-</span>

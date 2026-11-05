@@ -6,8 +6,10 @@ import {
   DEFAULT_LABEL_SIZE_KEY,
   effectiveCharCount,
   findLabelSize,
+  LABEL_CSS,
   LABEL_SIZES,
   mmToDots,
+  verticalAdvanceEm,
   nearestTsplFont,
   pageSizeCss,
   qrPayload,
@@ -57,12 +59,12 @@ describe('effectiveCharCount', () => {
 })
 
 describe('labelLayout · 按实拍图校准的口径', () => {
-  it('二维码取「高度减留白」与「宽度 30%」中的较小者 —— 60×30 上是后者（码占高度约六成）', () => {
+  it('二维码取「高度 86%」与「宽度 34%」中的较小者 —— 60×30 上是后者（占高度约 68%）', () => {
     const L = labelLayout(SIZE_60x30, '50003PD20180218', 'PC一体机')
-    // 宽度 30% = 18mm < 高度(30) - 2×2.1 = 25.8mm
-    expect(L.qrSideMm).toBeCloseTo(18, 5)
-    expect(L.qrSideMm / L.heightMm).toBeGreaterThan(0.55)
-    expect(L.qrSideMm / L.heightMm).toBeLessThan(0.65)
+    // 宽度 34% = 20.4mm < 高度 30 × 86% = 25.8mm
+    expect(L.qrSideMm).toBeCloseTo(20.4, 5)
+    expect(L.qrSideMm / L.heightMm).toBeGreaterThan(0.65)
+    expect(L.qrSideMm / L.heightMm).toBeLessThan(0.72)
   })
 
   it('二维码垂直居中', () => {
@@ -102,7 +104,7 @@ describe('labelLayout · 按实拍图校准的口径', () => {
 
   it('小标签（40×30）不再按宽度 42% 放码 —— 码边由高度决定，文字区仍有可用宽度', () => {
     const L = labelLayout(SIZE_40x30, 'A1', '设备')
-    expect(L.qrSideMm).toBeCloseTo(12, 5) // 40 * 0.3
+    expect(L.qrSideMm).toBeCloseTo(13.6, 5) // 40 * 0.3
     expect(L.textWidthMm).toBeGreaterThan(20)
   })
 })
@@ -112,10 +114,86 @@ describe('findLabelSize', () => {
     expect(findLabelSize('40x60').heightMm).toBe(60)
   })
 
-  it('未知 / 空 key 回落到默认档（60×30，最接近实拍图的比例）', () => {
+  it('未知 / 空 key 回落到默认档（25×60 竖版，实物照片确认）', () => {
     expect(findLabelSize('nope').key).toBe(DEFAULT_LABEL_SIZE_KEY)
     expect(findLabelSize(null).key).toBe(DEFAULT_LABEL_SIZE_KEY)
-    expect(findLabelSize(undefined).widthMm).toBe(60)
+    expect(findLabelSize(undefined).widthMm).toBe(25)
+    expect(findLabelSize(undefined).heightMm).toBe(60)
+  })
+
+  it('60×25 这一档：二维码与两行文字都在纸内，且文字区不被压没', () => {
+    const size = findLabelSize('60x25')
+    const L = labelLayout(size, '50008PD20190003', 'PC一体机')
+    // 二维码完整在纸内
+    expect(L.qrXMm).toBeGreaterThanOrEqual(0)
+    expect(L.qrYMm).toBeGreaterThanOrEqual(0)
+    expect(L.qrXMm + L.qrSideMm).toBeLessThanOrEqual(size.widthMm)
+    expect(L.qrYMm + L.qrSideMm).toBeLessThanOrEqual(size.heightMm)
+    // 文字区足够放下 16 位编号（字号不低于 3mm，约 8.5pt）
+    expect(L.textWidthMm).toBeGreaterThan(30)
+    expect(L.assetFontMm).toBeGreaterThan(3)
+    // 两行文字不越过下边界
+    expect(L.nameYMm + L.nameFontMm * 1.35).toBeLessThanOrEqual(size.heightMm)
+  })
+
+  it('竖版 25×60 按需求方给定坐标排：码 3/4/20，文字区从 27 开始、长 30', () => {
+    const size = findLabelSize('25x60')
+    const L = labelLayout(size, '50008PD20190003', 'PC一体机')
+
+    expect(L.mode).toBe('vertical')
+
+    // 二维码：左边距 3、上边距 4、边长 20 → 右边缘距纸右 2mm
+    expect(L.qrXMm).toBeCloseTo(3, 5)
+    expect(L.qrYMm).toBeCloseTo(4, 5)
+    expect(L.qrSideMm).toBeCloseTo(20, 5)
+    expect(size.widthMm - (L.qrXMm + L.qrSideMm)).toBeCloseTo(2, 5)
+
+    // 文字区：4 + 20 + 3 = 27 起，60 − 27 − 3 = 30 长
+    expect(L.textTopMm).toBeCloseTo(27, 5)
+    expect(L.textHeightMm).toBeCloseTo(30, 5)
+
+    // 左列设备名贴左边距 3，右列编号贴右边距 3（两列不重叠）
+    expect(L.nameXMm).toBeCloseTo(3, 5)
+    expect(L.assetXMm + L.assetFontMm).toBeCloseTo(22, 5)
+    expect(L.assetXMm).toBeGreaterThan(L.nameXMm)
+    expect(L.nameXMm + L.nameFontMm * 1.15).toBeLessThan(L.assetXMm)
+  })
+
+  it('竖版字号按「旋转后沿文字方向的占位」反算，长编号不冲出去', () => {
+    const size = findLabelSize('25x60')
+    const L = labelLayout(size, '50008PD20190003', 'PC一体机')
+
+    // 15 位数字 × 0.63em ≈ 9.45em，30mm 长的文字区反算出约 3.1mm（≈9pt）
+    expect(verticalAdvanceEm('50008PD20190003')).toBeCloseTo(15 * 0.63, 5)
+    expect(L.assetFontMm).toBeGreaterThan(2.9)
+    expect(L.assetFontMm).toBeLessThan(3.4)
+    // 排出来必须**留有余量**：超一点点会被 overflow:hidden 直接切掉末位
+    expect(L.assetFontMm * verticalAdvanceEm('50008PD20190003')).toBeLessThan(L.textHeightMm * 0.995)
+
+    // 设备名「PC一体机」= 0.62×2 + 1×3 = 4.24em，但被编号的 1.35 倍封顶
+    expect(verticalAdvanceEm('PC一体机')).toBeCloseTo(0.63 * 2 + 3, 5)
+    expect(L.nameFontMm).toBeGreaterThan(L.assetFontMm)
+    expect(L.nameFontMm).toBeLessThanOrEqual(L.assetFontMm * 1.35 + 1e-9)
+    expect(L.nameFontMm * verticalAdvanceEm('PC一体机')).toBeLessThan(L.textHeightMm * 0.995)
+  })
+
+  it('竖版渲染：左列贴 left、右列贴 right，字符是转 90°（sideways）不是正立', () => {
+    const html = renderLabelHtml(
+      { id: 1, assetNo: '50008PD20190003', deviceName: 'PC一体机' },
+      findLabelSize('25x60'),
+      '<svg></svg>'
+    )
+    expect(html).toContain('is-vertical')
+    expect(html).toContain('is-vtext')
+    // 设备名靠 left、资产编号靠 right —— 编号再长也不会顶出右边缘
+    expect(html).toContain('left:3mm')
+    expect(html).toContain('right:3mm')
+    expect(html).toContain('top:27mm')
+
+    // 竖排样式在共用的 CSS 常量里（预览与打印共用同一份）
+    expect(LABEL_CSS).toContain('writing-mode: vertical-rl')
+    expect(LABEL_CSS).toContain('text-orientation: sideways')
+    expect(LABEL_CSS).not.toContain('text-orientation: upright')
   })
 
   it('预设里确实有 60×30 这一档', () => {

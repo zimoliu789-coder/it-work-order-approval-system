@@ -152,6 +152,10 @@ const approvalTotal = ref(0)
 /** 正在提交的工单 id：既做按钮 loading，也用来挡住其它行的重复点击 */
 const approving = ref<number | null>(null)
 
+/** 「待我交付 / 待收回」的前几条：右栏直接列出来，不让人再多点一次 */
+const handlingOrders = ref<OrderItem[]>([])
+const HANDLING_INLINE_LIMIT = 5
+
 /** 我在借的工单：同时支撑「我的借用」计数与「即将到期」判定 */
 const borrowedOrders = ref<OrderItem[]>([])
 
@@ -184,9 +188,17 @@ async function loadStats(): Promise<void> {
   const tasks: Array<Promise<void>> = [
     loadApprovalTodo(),
     loadBorrowed(),
-    safeCount(() => orderApi.myHandling(1, 1).then((r) => r.total)).then((v) => {
-      stat.value.handling = v
-    }),
+    // 一次调用同时拿计数与前几条：右栏「待我交付」直接列出来，失败时都置空
+    orderApi
+      .myHandling(1, HANDLING_INLINE_LIMIT)
+      .then((r) => {
+        stat.value.handling = r.total
+        handlingOrders.value = r.records
+      })
+      .catch(() => {
+        stat.value.handling = 0
+        handlingOrders.value = []
+      }),
     safeCount(() => messageApi.unreadCount()).then((v) => {
       stat.value.unread = v
     })
@@ -481,598 +493,604 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="ts-page ts-dashboard">
-    <section class="ts-card ts-dashboard__welcome">
-      <div class="ts-dashboard__welcome-main">
-        <h2 class="ts-dashboard__hello">{{ userStore.displayName }}，你好</h2>
-        <p class="ts-text-secondary ts-dashboard__role">{{ roleLabel }}</p>
-      </div>
-      <div class="ts-dashboard__meta">
-        <div class="ts-dashboard__meta-item">
-          <span class="ts-text-hint">登录账号</span>
-          <strong>{{ userStore.user?.username }}</strong>
-        </div>
-        <div class="ts-dashboard__meta-item">
-          <span class="ts-text-hint">部门</span>
-          <strong>{{ departmentText }}</strong>
-        </div>
-        <div class="ts-dashboard__meta-item">
-          <span class="ts-text-hint">数据范围</span>
-          <strong>{{ dataScopeText }}</strong>
-        </div>
-        <div class="ts-dashboard__meta-item">
-          <span class="ts-text-hint">认证方式</span>
-          <strong>{{ userStore.user?.authType === 'LDAP' ? 'AD 域控' : '本地账户' }}</strong>
-        </div>
-      </div>
-    </section>
+  <div class="ts-page ts-wb">
+    <!--
+      页头（2026-11-05 重做）：原来是一整张「你好 + 登录账号/部门/数据范围/认证方式」欢迎卡，
+      占 130px 却只在说“你是谁”。压成一行后，省下的高度全部给下面的待办。
+    -->
+    <header class="ts-wb__head">
+      <h1 class="ts-wb__title">工作台</h1>
+      <span class="ts-wb__divider">|</span>
+      <span class="ts-wb__role">{{ roleLabel }} · {{ departmentText }}</span>
+      <span class="ts-wb__spacer"></span>
+      <span class="ts-wb__meta">
+        {{ dataScopeText }} · {{ userStore.user?.authType === 'LDAP' ? 'AD 域控' : '本地账户' }}
+      </span>
+      <el-button size="small" :loading="checking" @click="checkHealth">刷新状态</el-button>
+    </header>
 
     <!--
-      常用入口（项目·工作台布局）
-      说明：「常用入口快捷按钮移到页面最顶部」「员工打开首页第一眼看到按钮，不用往下滑」。
-      这里原先排在页面**最末**（与「后端连通状态」并排在那两列网格里），
-      与组件自己那句注释「必须显眼、默认可见」直接矛盾 —— 因此上提到欢迎卡之后的第一个位置。
+      指标条：个人 5 项 + 管理员 4 项合成**一条连续带**，竖线分隔。
+      改造前是 9 张独立卡片（各带边框与阴影）、两行摆开且两行列宽不一致，约 200px 高。
+      现在 60px 一屏排完，数字仍然一眼可见；主色只留给管理员那 4 项。
     -->
-    <section class="ts-card ts-dashboard__entry">
-      <h3 class="ts-dashboard__card-title">常用入口</h3>
-      <div class="ts-dashboard__shortcuts">
-        <button
-          v-for="item in shortcuts"
-          :key="item.path"
-          class="ts-dashboard__shortcut"
-          type="button"
-          @click="router.push(item.path)"
-        >
-          {{ item.title }}
-        </button>
-      </div>
-    </section>
-
-    <!--
-      部门借用统计（项目·工作台布局）
-      说明：「部门借用统计图表移到常用入口下面」。
-      仅 `dashboard:view` 持有者可见（与下方统计仪表盘同一判据）；
-      普通员工看不到这一卡，但**不影响他第一眼就看到常用入口**。
-    -->
-    <section v-if="canViewDashboard" v-loading="dashLoading" class="ts-card ts-dashboard__dept">
-      <div class="ts-flex-between ts-dashboard__card-head">
-        <div>
-          <h3 class="ts-dashboard__card-title">部门借用统计</h3>
-          <p class="ts-text-hint">{{ dashRangeText }}</p>
-        </div>
-        <el-button link type="primary" @click="router.push('/asset/report')">查看统计报表</el-button>
-      </div>
-      <div v-if="dashFailed" class="ts-dash__failed">
-        <el-tag type="danger" effect="plain">统计加载失败</el-tag>
-        <span class="ts-text-hint">下方统计仪表盘的「刷新」可重试。</span>
-      </div>
-      <div v-else-if="departmentBlock.rows.length" class="ts-dash__bars">
-        <div v-for="row in departmentBlock.rows" :key="row.key" class="ts-dash__bar-row">
-          <span class="ts-dash__bar-label" :title="row.label">{{ row.label }}</span>
-          <span class="ts-dash__bar-track">
-            <i class="ts-dash__bar-fill" :style="{ width: row.width + '%' }"></i>
-          </span>
-          <span class="ts-dash__bar-count">{{ row.count }}</span>
-        </div>
-      </div>
-      <p v-else class="ts-text-hint">区间内暂无借用记录</p>
-    </section>
-
-    <!-- 与我相关的待办 -->
-    <section v-loading="loading" class="ts-dashboard__stats">
+    <div v-loading="loading" class="ts-wb__kpis">
       <button
         v-for="card in personalCards"
         :key="card.key"
         type="button"
-        class="ts-card ts-dashboard__stat"
+        class="ts-wb__kpi"
         @click="router.push(card.path)"
       >
-        <span class="ts-dashboard__stat-label">{{ card.label }}</span>
-        <span class="ts-dashboard__stat-value">{{ statText(card.key) }}</span>
+        <b class="ts-wb__kpi-v">{{ statText(card.key) }}</b>
+        <span class="ts-wb__kpi-l">{{ card.label }}</span>
       </button>
-    </section>
+      <template v-if="isAdmin">
+        <button
+          v-for="card in adminCards"
+          :key="card.key"
+          type="button"
+          class="ts-wb__kpi is-admin"
+          @click="router.push(card.path)"
+        >
+          <b class="ts-wb__kpi-v">{{ statText(card.key) }}</b>
+          <span class="ts-wb__kpi-l">{{ card.label }}</span>
+        </button>
+      </template>
+    </div>
 
-    <!-- 待我审批：前几条就地可审（P1 工作台优化） -->
-    <section v-if="approvalOrders.length" class="ts-card ts-dashboard__todo">
-      <div class="ts-flex-between ts-dashboard__card-head">
-        <h3 class="ts-dashboard__card-title">待我审批</h3>
-        <el-button link type="primary" @click="router.push('/order/approval')">
-          查看全部（{{ approvalTotal }} 条）
-        </el-button>
-      </div>
-      <ul class="ts-dashboard__todo-list">
-        <li v-for="order in approvalOrders" :key="order.id" class="ts-dashboard__todo-item">
-          <div class="ts-dashboard__todo-main">
-            <span class="ts-dashboard__todo-title">{{ order.deviceName ?? '（未指定设备）' }}</span>
-            <span class="ts-text-hint">
-              {{ order.orderNo }} · 申请人 {{ order.applicantName ?? '-' }} ·
-              {{ order.useTypeLabel ?? order.statusLabel }}
-            </span>
-          </div>
-          <div class="ts-dashboard__todo-actions">
-            <el-button
-              size="small"
-              type="primary"
-              :loading="approving === order.id"
-              :disabled="approving !== null && approving !== order.id"
-              @click="approveInline(order, true)"
-            >
-              同意
-            </el-button>
-            <el-button
-              size="small"
-              :loading="approving === order.id"
-              :disabled="approving !== null && approving !== order.id"
-              @click="approveInline(order, false)"
-            >
-              驳回
+    <div class="ts-wb__cols">
+      <div class="ts-wb__main">
+        <!--
+          待我审批：全页唯一能直接干活的地方，提到主区第一位（原来排在第 5 块，要往下滚）。
+          改成 40px 行高的表格，一屏 5 行；「同意 / 驳回」就在行尾，不跳页。
+        -->
+        <section v-if="approvalOrders.length" class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">
+              待我审批<span class="ts-wb__badge">{{ approvalTotal }}</span>
+            </h2>
+            <el-button link type="primary" size="small" @click="router.push('/order/approval')">
+              全部工单
             </el-button>
           </div>
-        </li>
-      </ul>
-    </section>
+          <table class="ts-wb__table">
+            <thead>
+              <tr>
+                <th class="col-no">工单号</th>
+                <th>设备</th>
+                <th class="col-who">申请人</th>
+                <th class="col-type">类型</th>
+                <th class="col-op">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="order in approvalOrders" :key="order.id">
+                <td class="col-no ts-wb__mono">{{ order.orderNo }}</td>
+                <td class="is-ellipsis">{{ order.deviceName ?? '（未指定设备）' }}</td>
+                <td class="col-who">{{ order.applicantName ?? '-' }}</td>
+                <td class="col-type">{{ order.useTypeLabel ?? order.statusLabel }}</td>
+                <td class="col-op">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :loading="approving === order.id"
+                    :disabled="approving !== null && approving !== order.id"
+                    @click="approveInline(order, true)"
+                  >
+                    同意
+                  </el-button>
+                  <el-button
+                    link
+                    size="small"
+                    :loading="approving === order.id"
+                    :disabled="approving !== null && approving !== order.id"
+                    @click="approveInline(order, false)"
+                  >
+                    驳回
+                  </el-button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
 
-    <!-- 即将到期提醒（P1 工作台优化） -->
-    <section v-if="dueSoonOrders.length" class="ts-card ts-dashboard__due">
-      <div class="ts-flex-between ts-dashboard__card-head">
-        <h3 class="ts-dashboard__card-title">即将到期（{{ RETURN_SOON_DAYS }} 天内）</h3>
-        <el-button link type="primary" @click="router.push('/order/mine')">去归还</el-button>
-      </div>
-      <ul class="ts-dashboard__due-list">
-        <li v-for="order in dueSoonOrders" :key="order.id" class="ts-dashboard__due-item">
-          <span class="ts-dashboard__due-name">{{ order.deviceName ?? '-' }}</span>
-          <span class="ts-text-hint">应还 {{ order.plannedEndTime }}</span>
-        </li>
-      </ul>
-    </section>
-
-    <!-- 管理员：全局概览 -->
-    <section v-if="isAdmin" v-loading="loading" class="ts-dashboard__stats">
-      <button
-        v-for="card in adminCards"
-        :key="card.key"
-        type="button"
-        class="ts-card ts-dashboard__stat is-admin"
-        @click="router.push(card.path)"
-      >
-        <span class="ts-dashboard__stat-label">{{ card.label }}</span>
-        <span class="ts-dashboard__stat-value">{{ statText(card.key) }}</span>
-      </button>
-    </section>
-
-    <!-- 统计仪表盘（ · M5）：仅 dashboard:view 持有者可见 -->
-    <section v-if="canViewDashboard" v-loading="dashLoading" class="ts-dash">
-      <div class="ts-flex-between ts-dash__head">
-        <div>
-          <h3 class="ts-dashboard__card-title">统计仪表盘</h3>
-          <p class="ts-text-hint">{{ dashRangeText }}</p>
-        </div>
-        <div class="ts-dash__controls">
-          <el-date-picker
-            v-model="dashRange"
-            type="daterange"
-            value-format="YYYY-MM-DD"
-            range-separator="至"
-            start-placeholder="开始日期"
-            end-placeholder="结束日期"
-            :clearable="false"
-            unlink-panels
-            @change="handleDashRangeChange"
-          />
-          <el-radio-group v-model="dashGranularity" @change="handleDashGranularityChange">
-            <el-radio-button v-for="option in GRANULARITY_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </el-radio-button>
-          </el-radio-group>
-          <el-button link type="primary" @click="loadDashboard">刷新</el-button>
-        </div>
-      </div>
-
-      <p v-if="dashMonthHint" class="ts-dash__hint">{{ dashMonthHint }}</p>
-
-      <div v-if="dashFailed" class="ts-dash__failed">
-        <el-tag type="danger" effect="plain">统计加载失败</el-tag>
-        <span class="ts-text-hint">可点「刷新」重试；页面其余内容不受影响。</span>
-      </div>
-
-      <template v-else-if="dash">
-        <div class="ts-dash__metrics">
-          <div class="ts-card ts-dash__metric">
-            <span class="ts-dashboard__stat-label">区间内工单</span>
-            <span class="ts-dashboard__stat-value">{{ dash.totalOrders }}</span>
+        <!-- 部门借用：跟着主区走，去掉独立卡片外壳（空态时不再占半屏） -->
+        <section v-if="canViewDashboard" v-loading="dashLoading" class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">部门借用</h2>
+            <span class="ts-wb__hint">{{ dashRangeText }}</span>
+            <el-button link type="primary" size="small" @click="router.push('/asset/report')">
+              统计报表
+            </el-button>
           </div>
-          <div class="ts-card ts-dash__metric">
-            <span class="ts-dashboard__stat-label">平均审批时长</span>
-            <span class="ts-dashboard__stat-value">{{ formatDashboardHours(dash.avgApprovalHours) }}</span>
-            <span class="ts-text-hint">{{ approvalSampleHint(dash) }}</span>
+          <div v-if="dashFailed" class="ts-wb__failed">
+            <el-tag type="danger" effect="plain" size="small">统计加载失败</el-tag>
+            <span class="ts-wb__hint">可在下方「统计」里刷新重试</span>
           </div>
-          <div class="ts-card ts-dash__metric">
-            <span class="ts-dashboard__stat-label">超时率</span>
-            <span class="ts-dashboard__stat-value">{{ formatDashboardRate(dash.overdueRate) }}</span>
-            <span class="ts-text-hint">{{ overdueSampleHint(dash) }}</span>
+          <div v-else-if="departmentBlock.rows.length" class="ts-wb__bars">
+            <div v-for="row in departmentBlock.rows" :key="row.key" class="ts-wb__bar">
+              <span class="ts-wb__bar-l" :title="row.label">{{ row.label }}</span>
+              <span class="ts-wb__bar-track"><i :style="{ width: row.width + '%' }"></i></span>
+              <span class="ts-wb__bar-c">{{ row.count }}</span>
+            </div>
           </div>
-        </div>
+          <p v-else class="ts-wb__empty">区间内暂无借用记录</p>
+        </section>
 
-        <div class="ts-dash__grid">
-          <div v-for="block in dashBlocks" :key="block.key" class="ts-card ts-dash__block">
-            <h4 class="ts-dash__block-title">{{ block.title }}</h4>
-            <p v-if="block.hint" class="ts-dash__hint">{{ block.hint }}</p>
-            <div v-if="block.rows.length" class="ts-dash__bars">
-              <div v-for="row in block.rows" :key="row.key" class="ts-dash__bar-row">
-                <span class="ts-dash__bar-label" :title="row.label">{{ row.label }}</span>
-                <span class="ts-dash__bar-track">
-                  <i class="ts-dash__bar-fill" :style="{ width: row.width + '%' }"></i>
-                </span>
-                <span class="ts-dash__bar-count">{{ row.count }}</span>
+        <!-- 统计：是「看」不是「做」，所以排主区末尾；3 指标横排 + 三组条形并排 -->
+        <section v-if="canViewDashboard" v-loading="dashLoading" class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">统计</h2>
+            <span class="ts-wb__hint">{{ dashRangeText }}</span>
+            <span class="ts-wb__spacer"></span>
+            <el-date-picker
+              v-model="dashRange"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="至"
+              start-placeholder="开始"
+              end-placeholder="结束"
+              :clearable="false"
+              unlink-panels
+              size="small"
+              class="ts-wb__range"
+              @change="handleDashRangeChange"
+            />
+            <el-radio-group v-model="dashGranularity" size="small" @change="handleDashGranularityChange">
+              <el-radio-button v-for="option in GRANULARITY_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </el-radio-button>
+            </el-radio-group>
+            <el-button link type="primary" size="small" @click="loadDashboard">刷新</el-button>
+          </div>
+
+          <p v-if="dashMonthHint" class="ts-wb__hint ts-wb__hint--pad">{{ dashMonthHint }}</p>
+
+          <div v-if="dashFailed" class="ts-wb__failed">
+            <el-tag type="danger" effect="plain" size="small">统计加载失败</el-tag>
+            <span class="ts-wb__hint">可点「刷新」重试；页面其余内容不受影响</span>
+          </div>
+
+          <template v-else-if="dash">
+            <div class="ts-wb__mini">
+              <div class="ts-wb__mini-item">
+                <b>{{ dash.totalOrders }}</b>
+                <span>区间工单</span>
+              </div>
+              <div class="ts-wb__mini-item">
+                <b>{{ formatDashboardHours(dash.avgApprovalHours) }}</b>
+                <span>平均审批</span>
+                <em>{{ approvalSampleHint(dash) }}</em>
+              </div>
+              <div class="ts-wb__mini-item">
+                <b>{{ formatDashboardRate(dash.overdueRate) }}</b>
+                <span>超时率</span>
+                <em>{{ overdueSampleHint(dash) }}</em>
               </div>
             </div>
-            <p v-else class="ts-text-hint">区间内暂无工单</p>
-          </div>
-        </div>
-      </template>
-    </section>
 
-    <!--
-      后端连通状态（运维排障用）：常用入口上提后，这一卡改为独占一行。
-      原先是两列网格的右格，撤掉左格后若仍留在网格里会只占半幅、右侧留白。
-    -->
-    <section class="ts-card ts-dashboard__health">
-      <div class="ts-flex-between ts-dashboard__card-head">
-        <h3 class="ts-dashboard__card-title">后端连通状态</h3>
-        <el-button link type="primary" :loading="checking" @click="checkHealth">重新检测</el-button>
+            <div class="ts-wb__blocks">
+              <div v-for="block in dashBlocks" :key="block.key" class="ts-wb__block">
+                <h3>{{ block.title }}</h3>
+                <p v-if="block.hint" class="ts-wb__hint">{{ block.hint }}</p>
+                <div v-if="block.rows.length" class="ts-wb__bars">
+                  <div v-for="row in block.rows" :key="row.key" class="ts-wb__bar">
+                    <span class="ts-wb__bar-l" :title="row.label">{{ row.label }}</span>
+                    <span class="ts-wb__bar-track"><i :style="{ width: row.width + '%' }"></i></span>
+                    <span class="ts-wb__bar-c">{{ row.count }}</span>
+                  </div>
+                </div>
+                <p v-else class="ts-wb__empty">区间内暂无工单</p>
+              </div>
+            </div>
+          </template>
+        </section>
       </div>
-      <div v-if="MOCK_ENABLED" class="ts-dashboard__status">
-        <el-tag type="warning" effect="plain">Mock 模式</el-tag>
-        <p class="ts-text-secondary">当前为前端 Mock 数据，未连接后端。</p>
-      </div>
-      <div v-else-if="health" class="ts-dashboard__status">
-        <el-tag type="success" effect="plain">{{ health.status }}</el-tag>
-        <p class="ts-text-secondary">服务：{{ health.application }}（profile: {{ health.profile }}）</p>
-        <p class="ts-text-hint">traceId：{{ health.traceId }}</p>
-      </div>
-      <div v-else-if="healthFailed" class="ts-dashboard__status">
-        <el-tag type="danger" effect="plain">连接失败</el-tag>
-        <p class="ts-text-secondary">未能连接后端接口，请确认后端已在 8080 端口启动。</p>
-      </div>
-      <div v-else class="ts-dashboard__status">
-        <el-tag effect="plain">检测中…</el-tag>
-      </div>
-    </section>
+
+      <!--
+        右栏固定 288：只放「要行动」和「要跳转」的东西。
+        宽度固定是为了主区内容变化时右栏不跳。
+      -->
+      <aside class="ts-wb__side">
+        <section v-if="dueSoonOrders.length" class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">即将到期</h2>
+            <span class="ts-wb__hint">{{ RETURN_SOON_DAYS }} 天内</span>
+            <el-button link type="primary" size="small" @click="router.push('/order/mine')">
+              去归还
+            </el-button>
+          </div>
+          <ul class="ts-wb__list">
+            <li v-for="order in dueSoonOrders" :key="order.id">
+              <!-- 后端返回的是「设备名（资产编号）」，右栏 288px 装不下两段，只取设备名 -->
+              <span class="ts-wb__li-t">{{ (order.deviceName ?? '-').split('（')[0] }}</span>
+              <span class="ts-wb__li-v">{{ (order.plannedEndTime ?? '').slice(5, 10) }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <!--
+          待我交付 / 待收回：原来右栏只有「待我处理 5」这一个数字，
+          点进去还得再找单。这里直接列出前 5 条，右栏也顺势填满。
+        -->
+        <section v-if="handlingOrders.length" class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">
+              待我交付<span class="ts-wb__badge">{{ statText('handling') }}</span>
+            </h2>
+            <el-button link type="primary" size="small" @click="router.push('/order/pending')">
+              全部
+            </el-button>
+          </div>
+          <ul class="ts-wb__list">
+            <li v-for="order in handlingOrders" :key="order.id">
+              <span class="ts-wb__li-t">{{ (order.deviceName ?? '-').split('（')[0] }}</span>
+              <span class="ts-wb__li-v">{{ order.statusLabel }}</span>
+            </li>
+          </ul>
+        </section>
+
+        <!-- 14 个入口：原来横铺成一堵等宽按钮墙，改两列小条目 -->
+        <section class="ts-wb__panel">
+          <div class="ts-wb__panel-head">
+            <h2 class="ts-wb__panel-title">常用入口</h2>
+          </div>
+          <div class="ts-wb__links">
+            <button
+              v-for="item in shortcuts"
+              :key="item.path"
+              type="button"
+              @click="router.push(item.path)"
+            >
+              <i aria-hidden="true">{{ item.title.slice(0, 1) }}</i>
+              <span>{{ item.title }}</span>
+            </button>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- 后端连通状态：原来是独占一整块卡片，压成页脚一行（运维排障信息，不占版面） -->
+    <footer class="ts-wb__foot">
+      <span class="ts-wb__foot-label">后端</span>
+      <el-tag v-if="MOCK_ENABLED" type="warning" effect="plain" size="small">Mock 模式</el-tag>
+      <template v-else-if="health">
+        <el-tag type="success" effect="plain" size="small">{{ health.status }}</el-tag>
+        <span class="ts-wb__hint">
+          {{ health.application }} · {{ health.profile }} · traceId {{ health.traceId }}
+        </span>
+      </template>
+      <el-tag v-else-if="healthFailed" type="danger" effect="plain" size="small">连接失败</el-tag>
+      <el-tag v-else effect="plain" size="small">检测中…</el-tag>
+      <span class="ts-wb__spacer"></span>
+      <span class="ts-wb__hint">{{ userStore.user?.username }} · 登录账号</span>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-.ts-dashboard {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.ts-dashboard__welcome {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.ts-dashboard__hello {
-  margin: 0 0 4px;
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.ts-dashboard__role {
-  margin: 0;
-  font-size: var(--ts-fs-caption);
-}
-
-.ts-dashboard__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-}
-
-.ts-dashboard__meta-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: var(--ts-fs-caption);
-}
-
 /*
- * 自适应列数：卡片数量会随角色变化（普通角色 5 张、管理员再多 4 张），
- * 写死 4 列会让最后一行只剩一两张卡孤零零挂着。
- * minmax(180px) 保证每张卡不被压到读不出数字，同时让 5 张在 PC 上正好一行。
+ * 工作台（2026-11-05 重做）
+ *
+ * 改造前是 8 个白卡纵向堆叠：欢迎卡 → 9 个统计卡 → 常用入口 → 部门借用
+ * → 待我审批 → 即将到期 → 统计仪表盘 → 后端状态。1440×900 下要滚约 3.5 屏，
+ * 而唯一能直接干活的「待我审批」排在第 5 块。
+ *
+ * 现在是 页头一行 + 指标条 + 主区两栏 + 页脚一行。三条规则：
+ *   1. 卡片只在需要边界时出现；页头与页脚只用 1px 线，不套白卡（避免卡里套卡）。
+ *   2. 主区放「要做的事」，右栏放「要跳转的事」，右栏宽固定 288，主区变化时它不跳。
+ *   3. 字号只有四档：17 页标题 / 13 正文 / 11.5 表头与标签 / 20 指标数字。
+ *      层级靠字重与颜色，不靠字号跳跃。
  */
-.ts-dashboard__stats {
+.ts-wb { display: flex; flex-direction: column; gap: var(--ts-sp-3); }
+
+/* ---------- 页头 ---------- */
+.ts-wb__head { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+
+.ts-wb__title { margin: 0; font-size: var(--ts-fs-page); font-weight: 600; letter-spacing: -0.01em; }
+.ts-wb__divider { color: var(--ts-border-strong); }
+.ts-wb__role { font-size: var(--ts-fs-body); color: var(--ts-text-secondary); }
+.ts-wb__meta { font-size: var(--ts-fs-caption); color: var(--ts-text-hint); }
+.ts-wb__spacer { flex: 1 1 auto; }
+
+/* ---------- 指标条 ---------- */
+.ts-wb__kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
-}
-
-.ts-dashboard__stat {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  text-align: left;
-  cursor: pointer;
-  border: 1px solid var(--ts-border);
-  border-radius: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   background: var(--ts-surface);
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.ts-dashboard__stat:hover {
-  border-color: var(--el-color-primary);
-  box-shadow: 0 2px 12px rgba(64, 158, 255, 0.12);
-}
-
-.ts-dashboard__stat.is-admin {
-  background: #f6f9ff;
-}
-
-.ts-dashboard__stat-label {
-  font-size: var(--ts-fs-caption);
-  color: var(--ts-text-secondary);
-}
-
-.ts-dashboard__stat-value {
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.1;
-  color: var(--ts-primary);
-}
-
-/* ---------------- P1：首页内联待办 / 即将到期 ---------------- */
-
-.ts-dashboard__todo-list,
-.ts-dashboard__due-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ts-dashboard__todo-item,
-.ts-dashboard__due-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
   border: 1px solid var(--ts-border);
   border-radius: var(--ts-r-md);
-  background: var(--ts-surface);
+  overflow: hidden;
 }
 
-.ts-dashboard__todo-main {
+.ts-wb__kpi {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
+  padding: 11px 14px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--ts-border);
+  cursor: pointer;
+  transition: background var(--ts-dur-fast) var(--ts-ease);
 }
 
-.ts-dashboard__todo-title,
-.ts-dashboard__due-name {
-  font-weight: 500;
+.ts-wb__kpi:first-child { border-left: 0; }
+.ts-wb__kpi:hover { background: var(--ts-surface-hover); }
+.ts-wb__kpi:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
+
+.ts-wb__kpi-v {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: var(--ts-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-wb__kpi-l { font-size: var(--ts-fs-caption); color: var(--ts-text-secondary); }
+.ts-wb__kpi.is-admin .ts-wb__kpi-v { color: var(--ts-accent); }
+
+/* ---------- 两栏 ---------- */
+.ts-wb__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 288px;
+  gap: var(--ts-sp-3);
+  align-items: start;
+}
+
+.ts-wb__main,
+.ts-wb__side { display: flex; flex-direction: column; gap: var(--ts-sp-3); min-width: 0; }
+
+
+/* ---------- 面板 ---------- */
+.ts-wb__panel {
+  background: var(--ts-surface);
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-r-md);
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.ts-wb__panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--ts-border);
+}
+
+.ts-wb__panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--ts-fs-card);
+  font-weight: 600;
+}
+
+.ts-wb__panel-head .el-button { margin-left: auto; }
+
+.ts-wb__badge {
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ts-text-inverse);
+  background: var(--ts-accent);
+  border-radius: var(--ts-r-pill);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-wb__hint { font-size: var(--ts-fs-caption); color: var(--ts-text-hint); }
+.ts-wb__hint--pad { margin: 0; padding: 8px 14px 0; }
+.ts-wb__empty { margin: 0; padding: 14px; font-size: var(--ts-fs-caption); color: var(--ts-text-hint); }
+.ts-wb__failed { display: flex; align-items: center; gap: 8px; padding: 12px 14px; }
+
+/* ---------- 审批表 ---------- */
+.ts-wb__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed; /* 让长设备名按省略号收，否则 max-width:0 在 auto 布局里无效 */
+  font-size: var(--ts-fs-body);
+}
+
+.ts-wb__table th {
+  padding: 7px 14px;
+  text-align: left;
+  font-size: var(--ts-fs-caption);
+  font-weight: 500;
+  color: var(--ts-text-secondary);
+  background: var(--ts-surface-sunken);
+  border-bottom: 1px solid var(--ts-border);
   white-space: nowrap;
 }
 
-.ts-dashboard__todo-actions {
-  display: flex;
-  flex-shrink: 0;
-  gap: 8px;
+.ts-wb__table td {
+  height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--ts-border);
+  vertical-align: middle;
 }
 
-/* 部门借用统计（项目·工作台布局）：紧随「常用入口」，条形列表限高滚动 */
-.ts-dashboard__dept .ts-dash__bars {
-  max-height: 260px;
-}
+.ts-wb__table tbody tr:last-child td { border-bottom: 0; }
+.ts-wb__table tbody tr:hover td { background: var(--ts-surface-hover); }
 
-.ts-dashboard__card-head {
-  margin-bottom: 12px;
-}
+.ts-wb__table .col-no { width: 148px; }
+.ts-wb__table .col-who { width: 76px; }
+.ts-wb__table .col-type { width: 88px; }
+.ts-wb__table .col-op { width: 124px; text-align: right; white-space: nowrap; }
+.ts-wb__table .col-op .el-button + .el-button { margin-left: 10px; }
 
-.ts-dashboard__card-title {
-  margin: 0 0 12px;
-  font-size: var(--ts-fs-body);
-  font-weight: 500;
-}
-
-.ts-dashboard__card-head .ts-dashboard__card-title {
-  margin: 0;
-}
-
-.ts-dashboard__status p {
-  margin: 8px 0 0;
+.ts-wb__mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: var(--ts-fs-caption);
+  color: var(--ts-text-secondary);
 }
 
-.ts-dashboard__shortcuts {
-  display: flex;
-  flex-wrap: wrap;
+.is-ellipsis { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 条形 ---------- */
+.ts-wb__bars { display: flex; flex-direction: column; gap: 6px; padding: 11px 14px; }
+
+.ts-wb__bar {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 36px;
+  align-items: center;
   gap: 10px;
+  font-size: var(--ts-fs-caption);
 }
 
-.ts-dashboard__shortcut {
-  padding: 8px 14px;
-  min-height: 40px;
+.ts-wb__bar-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ts-text-secondary); }
+
+.ts-wb__bar-track { height: 6px; border-radius: 3px; background: var(--ts-surface-sunken); overflow: hidden; }
+.ts-wb__bar-track i { display: block; height: 100%; background: var(--ts-accent); border-radius: 3px; }
+
+.ts-wb__bar-c { text-align: right; color: var(--ts-text-secondary); font-variant-numeric: tabular-nums; }
+
+/* ---------- 统计 ---------- */
+.ts-wb__mini { display: flex; gap: 26px; padding: 11px 14px 2px; }
+.ts-wb__mini-item { display: flex; flex-direction: column; gap: 1px; }
+.ts-wb__mini-item b { font-size: 18px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.ts-wb__mini-item span { font-size: var(--ts-fs-caption); color: var(--ts-text-hint); }
+.ts-wb__mini-item em { font-style: normal; font-size: var(--ts-fs-micro); color: var(--ts-text-hint); }
+
+.ts-wb__blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(216px, 1fr));
+  margin-top: 6px;
+  border-top: 1px solid var(--ts-border);
+}
+
+.ts-wb__block { padding: 10px 14px; }
+.ts-wb__block + .ts-wb__block { border-left: 1px solid var(--ts-border); }
+.ts-wb__block h3 { margin: 0 0 7px; font-size: var(--ts-fs-caption); font-weight: 600; color: var(--ts-text-secondary); }
+.ts-wb__block .ts-wb__bars { padding: 0; }
+.ts-wb__block .ts-wb__empty { padding: 0; }
+
+.ts-wb__range { width: 216px; }
+
+/* ---------- 右栏 ---------- */
+.ts-wb__list { margin: 0; padding: 4px 0; list-style: none; }
+
+.ts-wb__list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: var(--ts-fs-body);
+}
+
+.ts-wb__li-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-wb__li-v {
+  flex: none;
   font-size: var(--ts-fs-caption);
-  color: var(--ts-primary);
-  background: #eef3f9;
-  border: 1px solid var(--ts-border);
-  border-radius: var(--ts-r-md);
+  color: var(--ts-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-wb__links { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 5px; }
+
+.ts-wb__links button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: var(--ts-fs-body);
+  color: var(--ts-text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--ts-r-sm);
   cursor: pointer;
 }
 
-.ts-dashboard__shortcut:hover {
-  background: #e2ebf6;
-}
+.ts-wb__links button:hover { background: var(--ts-surface-hover); color: var(--ts-accent); }
+.ts-wb__links button:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
 
-/* ------------------------------------------------------------------
-   统计仪表盘（ · M5）
-   无图表库：四个分布用「指标卡 + CSS 条形」呈现，与项目取向一致。
-   ------------------------------------------------------------------ */
-.ts-dash {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.ts-dash__head {
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.ts-dash__controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-}
-
-.ts-dash__hint {
-  margin: 0;
-  font-size: var(--ts-fs-micro);
-  color: var(--el-color-warning);
-}
-
-.ts-dash__block .ts-dash__hint {
-  margin: 0 0 8px;
-}
-
-.ts-dash__failed {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.ts-dash__metrics {
+.ts-wb__links i {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.ts-dash__metric {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.ts-dash__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.ts-dash__block-title {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.ts-dash__bars {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  /* 时间分布可能几十行，限高滚动，避免把整页拉得极长 */
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.ts-dash__bar-row {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr) 48px;
-  gap: 8px;
-  align-items: center;
-  font-size: var(--ts-fs-micro);
-}
-
-.ts-dash__bar-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
   color: var(--ts-text-secondary);
+  background: var(--ts-surface-sunken);
+  border-radius: 4px;
 }
 
-.ts-dash__bar-track {
-  height: 10px;
-  overflow: hidden;
-  background: #eef3f9;
-  border-radius: 5px;
+.ts-wb__links button:hover i { color: var(--ts-accent); background: var(--ts-accent-soft); }
+.ts-wb__links span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 页脚 ---------- */
+.ts-wb__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-size: var(--ts-fs-caption);
+  color: var(--ts-text-hint);
 }
 
-.ts-dash__bar-fill {
-  display: block;
-  height: 100%;
-  min-width: 2px;
-  background: var(--ts-primary);
-  border-radius: 5px;
-}
+.ts-wb__foot-label { color: var(--ts-text-secondary); }
 
-.ts-dash__bar-count {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--ts-text-secondary);
-}
-
-@media (max-width: 1199px) {
-  .ts-dash__metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .ts-dash__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* ---------- 响应式 ---------- */
+/*
+ * 1280 以下就收起右栏，不是 1024。
+ * 1024 视口下侧栏占 240、内容区留白 48，主区只剩 436px —— 5 列表格（148+76+88+124）
+ * 挤不下，表头会互相压住、面板标题被压成竖排。单栏后主区 736px，表格才回得去。
+ */
+@media (max-width: 1279px) {
+  .ts-wb__cols { grid-template-columns: minmax(0, 1fr); }
+  /* 9 项按 auto-fit 会排成 6+3、第二行空三格；固定 5 列排成 5+4，缺口最小 */
+  .ts-wb__kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .ts-wb__kpi:nth-child(5n + 1) { border-left: 0; }
 }
 
 @media (max-width: 767px) {
-  .ts-dash__metrics {
-    grid-template-columns: repeat(1, minmax(0, 1fr));
-  }
+  .ts-wb__head { flex-wrap: wrap; gap: 6px 8px; }
+  .ts-wb__spacer { display: none; }
+  .ts-wb__meta { width: 100%; }
 
-  .ts-dash__controls {
-    width: 100%;
-  }
+  /* 指标条两列；奇数格去掉左边线，前两格去掉上边线 */
+  .ts-wb__kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ts-wb__kpi { border-left: 1px solid var(--ts-border); border-top: 1px solid var(--ts-border); }
+  .ts-wb__kpi:nth-child(odd) { border-left: 0; }
+  .ts-wb__kpi:nth-child(-n + 2) { border-top: 0; }
+  /* 指标是奇数个（9 项）时，最后一格跨满整行，避免右下角空半格 */
+  .ts-wb__kpi:last-child:nth-child(odd) { grid-column: 1 / -1; border-left: 0; }
 
-  .ts-dash__bar-row {
-    grid-template-columns: 72px minmax(0, 1fr) 40px;
-  }
-}
+  /* 表格转卡片：与项目 ≤767 用卡片的约定一致 */
+  .ts-wb__table thead { display: none; }
+  .ts-wb__table,
+  .ts-wb__table tbody,
+  .ts-wb__table tr,
+  .ts-wb__table td { display: block; }
 
-@media (max-width: 767px) {
-  .ts-dashboard__hello {
-    font-size: var(--ts-fs-card);
-  }
+  .ts-wb__table tr { padding: 9px 14px; border-bottom: 1px solid var(--ts-border); }
+  .ts-wb__table td { height: auto; padding: 1px 0; border: 0; }
+  .ts-wb__table .col-no,
+  .ts-wb__table .col-who,
+  .ts-wb__table .col-type,
+  .ts-wb__table .col-op { width: auto; }
+  .ts-wb__table .col-no { margin-bottom: 2px; }
+  .ts-wb__table .col-op { padding-top: 6px; text-align: left; }
+  .ts-wb__table .is-ellipsis { max-width: none; }
 
-  /* 内联待办在手机上改上下排列：左右排会把设备名挤成省略号，而「是哪个设备」
-     恰恰是审批人要看的第一个信息 */
-  .ts-dashboard__todo-item {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ts-dashboard__todo-actions {
-    justify-content: flex-end;
-  }
-
-  .ts-dashboard__todo-actions :deep(.el-button) {
-    flex: 1;
-  }
-
-  .ts-dashboard__meta {
-    gap: 12px 24px;
-  }
-
-  .ts-dashboard__shortcut {
-    flex: 1 1 calc(50% - 5px);
-    text-align: center;
-  }
+  .ts-wb__mini { flex-wrap: wrap; gap: 14px 22px; }
+  .ts-wb__blocks { grid-template-columns: minmax(0, 1fr); }
+  .ts-wb__block + .ts-wb__block { border-left: 0; border-top: 1px solid var(--ts-border); }
+  .ts-wb__panel-head { flex-wrap: wrap; }
+  .ts-wb__range { width: 100%; }
 }
 </style>

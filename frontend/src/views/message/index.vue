@@ -47,7 +47,7 @@ const { isMobile } = useResponsive()
 /** 列定义（代码为事实源；T2 不启用列设置，故不提供可配置列） */
 const columns: ColumnDef[] = [
   { key: 'selection', label: '选择', width: 46, selection: true },
-  { key: 'readState', label: '状态', width: 70, align: 'center' },
+  { key: 'readState', label: '状态', width: 100, align: 'center' },
   { key: 'message', label: '消息', minWidth: 320 },
   { key: 'messageType', label: '类型', width: 120, align: 'center' },
   { key: 'createdAt', label: '时间', width: 170, showOverflowTooltip: true },
@@ -252,20 +252,31 @@ async function batchDelete(): Promise<void> {
 <template>
   <div class="ts-page">
     <section class="ts-card">
-      <div class="ts-flex-between ts-mc__head">
-        <div>
-          <h3 class="ts-mc__title">消息中心</h3>
-          <p class="ts-text-secondary ts-mc__desc">
-            待办、审批结果、到期预警、转交与催办等通知汇总于此，点击消息可跳转到对应处理页。
-          </p>
-        </div>
-        <div class="ts-mc__head-actions">
+      <TablePage
+        ref="tablePageRef"
+        title="消息中心"
+        subtitle="待办、审批结果、到期预警、转交与催办等通知汇总于此，点击消息可跳转到对应处理页。"
+        :columns="columns"
+        :rows="records"
+        :loading="loading"
+        route-path="/message"
+        row-key="id"
+        :page="page"
+        :size="size"
+        :total="total"
+        empty-text="暂无消息"
+        :show-column-config="false"
+        @update:page="handlePageChange"
+        @update:size="handleSizeChange"
+        @selection-change="handleSelectionChange"
+      >
+        <template #actions>
           <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
           <el-button type="primary" plain :loading="acting" @click="markAllRead">全部已读</el-button>
-        </div>
-      </div>
+        </template>
 
-      <div class="ts-mc__filters ts-mt-16">
+        <template #bar>
+          <div class="ts-mc__filters">
         <el-switch v-model="query.unreadOnly" active-text="仅看未读" @change="handleSearch" />
         <el-select v-model="query.messageType" class="ts-mc__filter-item" placeholder="消息类型" clearable @change="handleSearch">
           <el-option v-for="opt in typeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -300,23 +311,8 @@ async function batchDelete(): Promise<void> {
         <el-button v-if="selectedIds.length > 0" size="small" @click="clearSelection">取消选择</el-button>
       </div>
 
-      <TablePage
-        ref="tablePageRef"
-        :columns="columns"
-        :rows="records"
-        :loading="loading"
-        route-path="/message"
-        row-key="id"
-        :page="page"
-        :size="size"
-        :total="total"
-        empty-text="暂无消息"
-        :show-column-config="false"
-        class="ts-mt-16"
-        @update:page="handlePageChange"
-        @update:size="handleSizeChange"
-        @selection-change="handleSelectionChange"
-      >
+        </template>
+
         <template #cell-readState="{ row }">
           <el-badge v-if="(row as MessageItem).isRead !== true" is-dot />
           <span v-else class="ts-text-hint">已读</span>

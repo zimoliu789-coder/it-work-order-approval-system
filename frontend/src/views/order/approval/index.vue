@@ -44,7 +44,7 @@ const columns: ColumnDef[] = [
   { key: 'statusLabel', label: '状态', width: 100, align: 'center' },
   { key: 'currentStepOrder', label: '我的步骤', width: 100, align: 'center' },
   { key: 'createdAt', label: '提交时间', minWidth: 170, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 180, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 const extendColumns: ColumnDef[] = [
@@ -55,7 +55,7 @@ const extendColumns: ColumnDef[] = [
   { key: 'reason', label: '延期原因', minWidth: 180, showOverflowTooltip: true },
   { key: 'statusLabel', label: '状态', width: 110, align: 'center' },
   { key: 'createdAt', label: '发起时间', minWidth: 170, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 140, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 type TabKey = 'order' | 'extend'

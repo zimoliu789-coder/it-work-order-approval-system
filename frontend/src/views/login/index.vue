@@ -51,6 +51,22 @@ const form = reactive<LoginRequest>({
   password: ''
 })
 
+/**
+ * 登录输入框禁止空格（2026-11-05 要求）。
+ *
+ * <h2>为什么在 @input 里过滤，而不是提交前 trim 或只给校验提示</h2>
+ * 账号里的空格几乎都是输入事故：从聊天窗口复制带进来的首尾空白、
+ * 中文输入法留下的全角空格。存进 state 再提示「不能有空格」，等于让用户
+ * 回头去找一个看不见的字符 —— 而他根本不知道该删哪里。
+ * 这里在输入那一刻就吃掉，同时副标题写明「不支持空格」，行为可预期。
+ *
+ * <p>粘贴同样覆盖：paste 也会触发 input 事件。
+ * {@code \u3000} 单独列出，是因为部分环境里全角空格不落在 {@code \s} 里。
+ */
+function stripSpace(value: string): string {
+  return String(value ?? '').replace(/[\s\u3000]/g, '')
+}
+
 const rules: FormRules<LoginRequest> = {
   username: [
     { required: true, message: '请输入登录名或姓名', trigger: 'blur' },
@@ -128,7 +144,7 @@ onMounted(async () => {
       <header class="ts-login__head">
         <span class="ts-login__mark"><SiteLogo /></span>
         <h1 class="ts-login__title">{{ siteStore.siteName }}</h1>
-        <p class="ts-login__subtitle">请使用数字登录名或姓名登录，首次登录需修改初始密码</p>
+        <p class="ts-login__subtitle">请使用数字登录名或姓名登录，首次登录需修改初始密码。账号与密码不支持空格，输入时会自动去除</p>
       </header>
 
       <el-alert
@@ -163,6 +179,7 @@ onMounted(async () => {
             placeholder="请输入数字登录名或姓名，例如：10001 或 张三"
             clearable
             autocomplete="username"
+            @input="form.username = stripSpace(form.username)"
           >
             <template #prefix><el-icon><User /></el-icon></template>
           </el-input>
@@ -175,6 +192,7 @@ onMounted(async () => {
             placeholder="请输入密码"
             show-password
             autocomplete="current-password"
+            @input="form.password = stripSpace(form.password)"
             @keyup.enter="handleSubmit"
           >
             <template #prefix><el-icon><Lock /></el-icon></template>

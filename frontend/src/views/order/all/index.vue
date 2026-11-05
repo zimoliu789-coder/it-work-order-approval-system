@@ -62,7 +62,7 @@ const columns: ColumnDef[] = [
   { key: 'actualFinalHandlerName', label: '实际执行人', minWidth: 110 },
   { key: 'expectedReturnDate', label: '期望归还', minWidth: 130, sortable: 'custom', showOverflowTooltip: true },
   { key: 'actualEndTime', label: '归还时间 / 收回人', minWidth: 190, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 140, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 const loading = ref(false)
@@ -430,83 +430,9 @@ function isTimeout(order: OrderItem): boolean {
 <template>
   <div class="ts-page">
     <section class="ts-card">
-      <div class="ts-flex-between ts-all__head">
-        <div>
-          <h3 class="ts-all__title">全部工单</h3>
-          <p class="ts-text-secondary ts-all__desc">
-            全量借用工单台账（管理端）：可按状态、超时、申请人、设备、借用类型、提交时间、部门筛选，默认按提交时间倒序。
-          </p>
-        </div>
-        <el-space>
-          <el-button :loading="loading" @click="load">刷新</el-button>
-          <el-button type="primary" :loading="exporting" @click="handleExport">导出 Excel</el-button>
-        </el-space>
-      </div>
-
-      <!-- 筛选条件 -->
-      <div class="ts-all__filters ts-mt-16">
-        <el-select v-model="query.status" class="ts-all__filter-item" placeholder="状态" clearable>
-          <el-option v-for="item in ORDER_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-        <el-select v-model="query.borrowTimeout" class="ts-all__filter-item" placeholder="超时" clearable>
-          <el-option label="仅看已超时" :value="true" />
-        </el-select>
-        <el-select v-model="query.transferred" class="ts-all__filter-item" placeholder="转交" clearable>
-          <el-option label="仅看已转交" :value="true" />
-        </el-select>
-        <el-select v-model="query.useType" class="ts-all__filter-item" placeholder="借用类型" clearable>
-          <el-option v-for="item in USE_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-        <!-- 申请类型：含已停用类型，便于追溯历史工单 -->
-        <el-select
-          v-model="query.applyTypeId"
-          class="ts-all__filter-item ts-all__filter-wide"
-          placeholder="申请类型"
-          clearable
-        >
-          <el-option v-for="item in applyTypes" :key="item.id" :label="item.typeName" :value="item.id" />
-        </el-select>
-        <el-input
-          v-model="query.applicantKeyword"
-          class="ts-all__filter-item"
-          placeholder="申请人姓名"
-          clearable
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
-        />
-        <el-input
-          v-model="query.deviceKeyword"
-          class="ts-all__filter-item ts-all__filter-wide"
-          placeholder="设备名称 / 资产编号"
-          clearable
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
-        />
-        <el-select v-model="query.departmentId" class="ts-all__filter-item" placeholder="部门" clearable>
-          <el-option
-            v-for="item in deptOptions"
-            :key="item.id"
-            :label="item.displayPath"
-            :value="item.id"
-          />
-        </el-select>
-        <el-date-picker
-          v-model="query.submitRange"
-          class="ts-all__filter-date"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="至"
-          start-placeholder="提交开始"
-          end-placeholder="提交结束"
-          unlink-panels
-        />
-        <div class="ts-all__filter-actions">
-          <el-button type="primary" :loading="loading" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </div>
-      </div>
-
       <TablePage
+        title="全部工单"
+        subtitle="全量借用工单台账（管理端）：可按状态、超时、申请人、设备、借用类型、提交时间、部门筛选，默认按提交时间倒序。"
         :columns="columns"
         :rows="records"
         :loading="loading"
@@ -515,11 +441,83 @@ function isTimeout(order: OrderItem): boolean {
         :size="size"
         :total="total"
         empty-text="暂无符合条件的工单"
-        class="ts-mt-16"
+        
         @update:page="handlePageChange"
         @update:size="handleSizeChange"
         @sort-change="handleSortChange"
       >
+        <template #actions>
+          <el-button :loading="loading" @click="load">刷新</el-button>
+          <el-button type="primary" :loading="exporting" @click="handleExport">导出 Excel</el-button>
+        </template>
+
+        <template #bar>
+                <!-- 筛选条件 -->
+                <div class="ts-all__filters ts-mt-16">
+                  <el-select v-model="query.status" class="ts-all__filter-item" placeholder="状态" clearable>
+                    <el-option v-for="item in ORDER_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                  <el-select v-model="query.borrowTimeout" class="ts-all__filter-item" placeholder="超时" clearable>
+                    <el-option label="仅看已超时" :value="true" />
+                  </el-select>
+                  <el-select v-model="query.transferred" class="ts-all__filter-item" placeholder="转交" clearable>
+                    <el-option label="仅看已转交" :value="true" />
+                  </el-select>
+                  <el-select v-model="query.useType" class="ts-all__filter-item" placeholder="借用类型" clearable>
+                    <el-option v-for="item in USE_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                  <!-- 申请类型：含已停用类型，便于追溯历史工单 -->
+                  <el-select
+                    v-model="query.applyTypeId"
+                    class="ts-all__filter-item ts-all__filter-wide"
+                    placeholder="申请类型"
+                    clearable
+                  >
+                    <el-option v-for="item in applyTypes" :key="item.id" :label="item.typeName" :value="item.id" />
+                  </el-select>
+                  <el-input
+                    v-model="query.applicantKeyword"
+                    class="ts-all__filter-item"
+                    placeholder="申请人姓名"
+                    clearable
+                    @keyup.enter="handleSearch"
+                    @clear="handleSearch"
+                  />
+                  <el-input
+                    v-model="query.deviceKeyword"
+                    class="ts-all__filter-item ts-all__filter-wide"
+                    placeholder="设备名称 / 资产编号"
+                    clearable
+                    @keyup.enter="handleSearch"
+                    @clear="handleSearch"
+                  />
+                  <el-select v-model="query.departmentId" class="ts-all__filter-item" placeholder="部门" clearable>
+                    <el-option
+                      v-for="item in deptOptions"
+                      :key="item.id"
+                      :label="item.displayPath"
+                      :value="item.id"
+                    />
+                  </el-select>
+                  <el-date-picker
+                    v-model="query.submitRange"
+                    class="ts-all__filter-date"
+                    type="daterange"
+                    value-format="YYYY-MM-DD"
+                    range-separator="至"
+                    start-placeholder="提交开始"
+                    end-placeholder="提交结束"
+                    unlink-panels
+                  />
+                  <div class="ts-all__filter-actions">
+                    <el-button type="primary" :loading="loading" @click="handleSearch">查询</el-button>
+                    <el-button @click="handleReset">重置</el-button>
+                  </div>
+                </div>
+
+      
+        </template>
+
         <template #cell-applicantName="{ row }">
           <div>{{ applicantText(row as OrderItem) }}</div>
           <div class="ts-text-hint">{{ departmentText(row as OrderItem) }}</div>

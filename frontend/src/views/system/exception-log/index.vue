@@ -51,7 +51,7 @@ const columns: ColumnDef[] = [
   { key: 'ip', label: '来源 IP', width: 130, showOverflowTooltip: true },
   { key: 'alertState', label: '告警状态', width: 100, align: 'center' },
   // 操作列不可隐藏：隐藏它等于本页失去唯一的「看堆栈」入口
-  { key: 'action', label: '操作', width: 90, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 const query = reactive<ExceptionLogQuery>({

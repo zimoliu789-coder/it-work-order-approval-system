@@ -57,6 +57,27 @@ const props = withDefaults(
     /** 行唯一键字段名（缺省 `id`） */
     rowKey?: string
     emptyText?: string
+    /**
+     * 页面标题（2026-11 统一页头）。
+     *
+     * <h2>为什么把页头收进 TablePage</h2>
+     * 改造前 18 个列表页各写各的 `<div class="ts-flex-between ts-xx__head">`，
+     * 标题字号、按钮位置、与表格的间距全靠各页自觉 —— 截图里就是
+     * 「打印标签孤零零在左、其余三个按钮在右」「列设置单独一行挂在右下角」。
+     * 传了 title 就由组件统一渲染页头，页面只负责 #actions 里的按钮。
+     */
+    title?: string
+    /** 标题下的一行说明（回答「这页是干什么的」，不要写操作指引） */
+    subtitle?: string
+    /**
+     * 列宽是否随容器拉伸（缺省 true）。
+     *
+     * <p>列多到总宽超过容器时，`fit: true` 会**压缩每列**换取"不出现横向滚动"，
+     * 结果是资产编号这种长文本被折成三行、状态标签被截成「审批中 …」——
+     * 看起来像排版坏了，其实是列被压窄。这种页面传 `false`：
+     * 列按设定宽度排布、超出部分横向滚动，纵向行数不膨胀。
+     */
+    fit?: boolean
     page?: number
     size?: number
     total?: number
@@ -78,6 +99,9 @@ const props = withDefaults(
     loading: false,
     rowKey: 'id',
     emptyText: '暂无数据',
+    title: '',
+    subtitle: '',
+    fit: true,
     page: 1,
     size: 10,
     total: 0,
@@ -245,13 +269,43 @@ function handleSizeChange(next: number): void {
 
 <template>
   <div class="ts-table-page">
-    <div v-if="canConfig || $slots.bar" class="ts-table-page__bar">
+    <!--
+      统一页头（2026-11）：标题 + 一行说明 + 右侧操作区。
+      为什么收进组件而不是继续各页自己写：18 个列表页各写一份的结果是
+      标题字号有三种、按钮位置有两种（有的按钮组跑到筛选区、有的散在两侧），
+      改一次规范要改 18 处且必然漏掉几处。现在规范只有这一个实现。
+    -->
+    <header v-if="title || $slots.actions" class="ts-table-page__head">
+      <div class="ts-table-page__head-main">
+        <h1 v-if="title" class="ts-table-page__title">{{ title }}</h1>
+        <p v-if="subtitle" class="ts-table-page__subtitle">{{ subtitle }}</p>
+      </div>
+      <div class="ts-table-page__actions">
+        <slot name="actions" />
+        <!--
+          列设置归位（2026-11）：跟着页头按钮组走，不再单独占一行。
+          它曾是筛选条右侧的独立按钮，而筛选条本身会换行（组织与人员页 5 个控件），
+          一换行按钮就掉到第二行左端，看起来像没用完的控件。
+          现在只在与页面按钮同排的位置出现；没传标题也没传按钮的老页面才回退到筛选条。
+        -->
+        <el-button
+          v-if="canConfig && (title || $slots.actions)"
+          @click="dialogVisible = true"
+        >
+          列设置
+        </el-button>
+      </div>
+    </header>
+
+    <div v-if="$slots.bar || (canConfig && !(title || $slots.actions))" class="ts-table-page__bar">
       <div class="ts-table-page__bar-main">
         <slot name="bar" />
       </div>
-      <!-- 列设置与筛选区控件同高：原来用 size="small"（28px），
-           夹在一排 34px 的输入框 / 下拉里显得忽高忽低。 -->
-      <el-button v-if="canConfig" class="ts-table-page__cols-btn" @click="dialogVisible = true">
+      <el-button
+        v-if="canConfig && !(title || $slots.actions)"
+        class="ts-table-page__cols-btn"
+        @click="dialogVisible = true"
+      >
         列设置
       </el-button>
     </div>
@@ -270,6 +324,7 @@ function handleSizeChange(next: number): void {
         v-bind="$attrs"
         v-loading="loading"
         :data="rows"
+        :fit="fit"
         border
         stripe
         size="default"
@@ -352,6 +407,49 @@ function handleSizeChange(next: number): void {
 <style scoped>
 .ts-table-page {
   width: 100%;
+}
+
+/* ---------- 统一页头（2026-11）----------
+   align-items: flex-start 而不是 center：标题两行（有说明）时，
+   右侧按钮组必须与标题第一行对齐，否则按钮会掉到说明文字旁边。 */
+.ts-table-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ts-sp-4);
+  margin-bottom: var(--ts-sp-4);
+  flex-wrap: wrap;
+}
+
+.ts-table-page__head-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ts-table-page__title {
+  margin: 0;
+  font-size: var(--ts-fs-page);
+  font-weight: 600;
+  line-height: var(--ts-lh-tight);
+  color: var(--ts-text);
+}
+
+.ts-table-page__subtitle {
+  margin: var(--ts-sp-1) 0 0;
+  max-width: 72ch; /* 说明文字别横贯整行，读起来太长 */
+  font-size: var(--ts-fs-caption);
+  line-height: var(--ts-lh-body);
+  color: var(--ts-text-secondary);
+}
+
+/* 操作区：按钮永远在同一行、间距一致、换行时右对齐 */
+.ts-table-page__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ts-sp-2);
+  flex: none;
+  flex-wrap: wrap;
 }
 
 .ts-table-page__bar {
@@ -463,6 +561,19 @@ function handleSizeChange(next: number): void {
 }
 
 @media (max-width: 767px) {
+  /* 手机：标题与操作区上下排，按钮靠左（拇指区），不强行撑满 —— 
+     撑满会让「刷新」这类次要按钮占掉半屏。 */
+  .ts-table-page__head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--ts-sp-3);
+    margin-bottom: var(--ts-sp-3);
+  }
+
+  .ts-table-page__actions {
+    justify-content: flex-start;
+  }
+
   .ts-table-page__bar {
     flex-direction: column;
     align-items: stretch;

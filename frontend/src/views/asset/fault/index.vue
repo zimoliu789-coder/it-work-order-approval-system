@@ -428,57 +428,9 @@ function deviceText(item: DeviceFaultItem): string {
 <template>
   <div class="ts-page">
     <section class="ts-card">
-      <div class="ts-flex-between ts-df__head">
-        <div>
-          <h3 class="ts-df__title">设备故障记录</h3>
-          <p v-if="adminView" class="ts-text-secondary ts-df__desc">
-            汇总借用人上报、台账登记、归还登记的故障。处理流程：待处理 → 接单（处理中）→ 已修复 / 无法修复。
-            设备处于「维修中」时才可接单后的登记结果或报废；使用中上报的故障需先归还并登记为故障。
-          </p>
-          <p v-else class="ts-text-secondary ts-df__desc">
-            你负责的设备报修待办：待处理的可以直接<b>接单</b>，接单后修完登记「已修复」，
-            修不了的登记「无法修复」。已结束的单会移出本列表，不再出现在这里。
-            需要报废的设备由资产管理员处理。
-          </p>
-        </div>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-      </div>
-
-      <ListQueryNotice :visible="remembered" class="ts-mt-16" @clear="handleReset" />
-
-      <!-- 查询条件 -->
-      <div class="ts-df__filters ts-mt-16">
-        <el-input
-          v-model="query.deviceKeyword"
-          class="ts-df__filter-keyword"
-          placeholder="设备名称 / 资产编号"
-          clearable
-          @keyup.enter="handleSearch"
-          @clear="handleSearch"
-        />
-        <el-select v-model="query.status" class="ts-df__filter-item" placeholder="故障状态" clearable>
-          <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-        <!--
-          「待我处理」= 未完结 + 没人接单或我接的单；勾选即查询。
-          只给管理员：对处理人来说服务端本来就只返回这个范围，
-          再摆一个勾不动（勾不勾都一样）的开关，只会让人以为它坏了。
-        -->
-        <el-checkbox
-          v-if="adminView"
-          v-model="query.onlyMine"
-          class="ts-df__filter-check"
-          @change="handleOnlyMineChange"
-        >
-          待我处理
-        </el-checkbox>
-        <div class="ts-df__filter-actions">
-          <el-button type="primary" :loading="loading" @click="handleSearch">查询</el-button>
-          <el-button @click="handleReset">重置</el-button>
-        </div>
-      </div>
-
       <TablePage
+        title="设备故障记录"
+        subtitle="汇总借用人上报、台账登记、归还登记的故障。处理流程：待处理 → 接单（处理中）→ 已修复 / 无法修复。 设备处于「维修中」时才可接单后的登记结果或报废；使用中上报的故障需先归还并登记为故障。"
         :columns="columns"
         :rows="records"
         :loading="loading"
@@ -487,10 +439,52 @@ function deviceText(item: DeviceFaultItem): string {
         :size="size"
         :total="total"
         empty-text="暂无故障记录"
-        class="ts-mt-16"
+        
         @update:page="handlePageChange"
         @update:size="handleSizeChange"
       >
+        <template #actions>
+          <el-button :loading="loading" @click="load">刷新</el-button>
+        </template>
+
+        <template #bar>
+                <ListQueryNotice :visible="remembered" class="ts-mt-16" @clear="handleReset" />
+
+                <!-- 查询条件 -->
+                <div class="ts-df__filters ts-mt-16">
+                  <el-input
+                    v-model="query.deviceKeyword"
+                    class="ts-df__filter-keyword"
+                    placeholder="设备名称 / 资产编号"
+                    clearable
+                    @keyup.enter="handleSearch"
+                    @clear="handleSearch"
+                  />
+                  <el-select v-model="query.status" class="ts-df__filter-item" placeholder="故障状态" clearable>
+                    <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
+                  </el-select>
+                  <!--
+                    「待我处理」= 未完结 + 没人接单或我接的单；勾选即查询。
+                    只给管理员：对处理人来说服务端本来就只返回这个范围，
+                    再摆一个勾不动（勾不勾都一样）的开关，只会让人以为它坏了。
+                  -->
+                  <el-checkbox
+                    v-if="adminView"
+                    v-model="query.onlyMine"
+                    class="ts-df__filter-check"
+                    @change="handleOnlyMineChange"
+                  >
+                    待我处理
+                  </el-checkbox>
+                  <div class="ts-df__filter-actions">
+                    <el-button type="primary" :loading="loading" @click="handleSearch">查询</el-button>
+                    <el-button @click="handleReset">重置</el-button>
+                  </div>
+                </div>
+
+      
+        </template>
+
         <template #cell-device="{ row }">{{ deviceText(row as DeviceFaultItem) }}</template>
         <template #cell-orderNo="{ row }">
           <span v-if="(row as DeviceFaultItem).orderNo">{{ (row as DeviceFaultItem).orderNo }}</span>

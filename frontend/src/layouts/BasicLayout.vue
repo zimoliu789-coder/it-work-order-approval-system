@@ -27,6 +27,22 @@ const userStore = useUserStore()
 const siteStore = useSiteStore()
 const { isMobile, isPc } = useResponsive()
 
+/*
+ * 子路由 chunk 加载失败（dev 重启后旧哈希失效、网络抖动）时，内容区会一直空着，
+ * 除了 console 没有任何提示。这里给一个能照做的出口。
+ */
+router.onError((err) => {
+  const message = String(err)
+  if (/dynamically imported module|Importing a module script failed|Failed to fetch/i.test(message)) {
+    ElMessage({
+      type: 'error',
+      message: '页面资源加载失败，请按 Ctrl + Shift + R 强制刷新',
+      duration: 0,
+      showClose: true,
+    })
+  }
+})
+
 const drawerVisible = ref(false)
 const collapsed = ref(false)
 
@@ -174,11 +190,22 @@ onMounted(() => {
         </el-menu>
       </el-scrollbar>
       <!--
-        侧边栏底部版权（）：只有管理员在系统参数里填了版权文字才渲染。
-        折叠态（64px）不显示 —— 那一行小字在 64px 里会被压成一条竖排乱码。
+        侧边栏底部：常驻登录用户 + 可选版权。
+        改造前这里只有「配了版权文字才渲染」的一行小字，菜单又只有 7 项，
+        于是菜单下面到侧栏底部空出两百多像素 —— 整条侧栏像没做完。
+        现在用用户块把底部锚住；版权文字若有，接在下面一行。
       -->
-      <footer v-if="siteStore.siteCopyright && !asideCollapsed" class="ts-aside__foot">
-        {{ siteStore.siteCopyright }}
+      <footer class="ts-aside__foot" :class="{ 'is-collapsed': asideCollapsed }">
+        <div class="ts-aside__user">
+          <el-avatar :size="26" class="ts-aside__avatar">{{ avatarText }}</el-avatar>
+          <span v-show="!asideCollapsed" class="ts-aside__user-main">
+            <span class="ts-aside__user-name">{{ userStore.displayName }}</span>
+            <span class="ts-aside__user-role">{{ roleLabel }}</span>
+          </span>
+        </div>
+        <p v-if="siteStore.siteCopyright && !asideCollapsed" class="ts-aside__copy">
+          {{ siteStore.siteCopyright }}
+        </p>
       </footer>
     </aside>
 
@@ -252,7 +279,21 @@ onMounted(() => {
       </header>
 
       <main class="ts-layout__content">
-        <router-view />
+        <!--
+          内容区加加载态：之前子路由 chunk 加载失败时，顶栏还在、内容区一片空白，
+          分不清是「没数据」还是「没加载出来」。现在至少能看到一个字。
+        -->
+        <router-view v-slot="{ Component }">
+          <Suspense>
+            <component :is="Component" />
+            <template #fallback>
+              <div class="ts-route-state">
+                <span class="ts-route-state__spinner" aria-hidden="true"></span>
+                页面加载中…
+              </div>
+            </template>
+          </Suspense>
+        </router-view>
       </main>
 
       <footer class="ts-layout__footer ts-mobile-only">
@@ -324,7 +365,7 @@ onMounted(() => {
 .ts-aside__scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--ts-sp-2) 0;
+  padding: 10px 0;
 }
 
 /*
@@ -334,14 +375,65 @@ onMounted(() => {
  */
 .ts-aside__foot {
   flex: 0 0 auto;
-  padding: var(--ts-sp-3) var(--ts-sp-4);
-  font-size: var(--ts-fs-micro);
-  line-height: var(--ts-lh-tight);
-  color: var(--ts-nav-text-muted);
+  padding: 10px 12px calc(10px + var(--ts-safe-bottom));
   border-top: 1px solid var(--ts-nav-divider);
+  overflow: hidden;
+}
+
+.ts-aside__user {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.ts-aside__avatar {
+  flex: 0 0 auto;
+  background: var(--ts-nav-bg-active);
+  color: var(--ts-text-inverse);
+  font-size: var(--ts-fs-micro);
+  font-weight: 600;
+}
+
+.ts-aside__user-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.ts-aside__user-name {
+  font-size: var(--ts-fs-caption);
+  font-weight: 500;
+  color: var(--ts-nav-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ts-aside__user-role {
+  font-size: var(--ts-fs-micro);
+  color: var(--ts-nav-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-aside__copy {
+  margin: 8px 0 0;
+  font-size: var(--ts-fs-micro);
+  line-height: var(--ts-lh-tight);
+  color: var(--ts-nav-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 折叠态（64px）：只留头像，文字会压成竖排乱码 */
+.ts-aside__foot.is-collapsed {
+  display: grid;
+  place-items: center;
+  padding-inline: 0;
 }
 
 /*
@@ -358,8 +450,8 @@ onMounted(() => {
   --el-menu-text-color: var(--ts-nav-text);
   --el-menu-active-color: var(--ts-text-inverse);
   --el-menu-hover-bg-color: var(--ts-nav-bg-hover);
-  --el-menu-item-height: 42px;
-  --el-menu-sub-item-height: 38px;
+  --el-menu-item-height: 60px;
+  --el-menu-sub-item-height: 46px;
   border-right: none;
 }
 
@@ -525,6 +617,33 @@ onMounted(() => {
   font-size: var(--ts-fs-body);
 }
 
+.ts-route-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 240px;
+  font-size: var(--ts-fs-body);
+  color: var(--ts-text-hint);
+}
+
+.ts-route-state__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--ts-border-strong);
+  border-right-color: var(--ts-accent);
+  animation: ts-route-spin 0.7s linear infinite;
+}
+
+@keyframes ts-route-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-route-state__spinner { animation-duration: 2s; }
+}
+
 /* 手机档：面包屑只保留当前项 —— 三层路径在 360px 宽里会挤成省略号，
    而用户此刻最需要的信息是「我在哪一页」，「我从哪个分组进来」可以省。 */
 @media (max-width: 767px) {
@@ -542,6 +661,24 @@ onMounted(() => {
     font-size: var(--ts-fs-card);
     font-weight: 600;
     color: var(--ts-text);
+  }
+}
+
+/*
+ * 窄屏兜底（2026-11-05）：侧栏是否占位原本只由 JS 的 isMobile 决定。
+ * 一旦这个判定滞后——HMR 反复替换后 watcher 失效、首帧还没跑 matchMedia、
+ * 或窗口从宽拖到窄而 change 事件没触发——就会残留 PC 布局：侧栏吃掉 240px，
+ * 内容区和顶栏右侧（铃铛、头像）一起被挤出视口，表现出来就是
+ * 「顶栏只剩 ☰ + 页面标题，下面一大片空白」。
+ * 这里用 CSS 再兜一层，与 767 断点对齐，不依赖 JS。
+ */
+@media (max-width: 767px) {
+  .ts-layout__aside {
+    display: none !important;
+  }
+
+  .ts-layout {
+    overflow-x: hidden;
   }
 }
 </style>

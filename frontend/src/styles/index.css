@@ -141,7 +141,12 @@
   --ts-header-height: 56px;
   --ts-sidebar-width: 240px;
   --ts-sidebar-collapsed: 64px;
-  --ts-content-max: 1200px;
+  /*
+   * 内容区最大宽度。1200 在 1920 屏上会两侧各空 240px（内容区实际有 1680），
+   * 中间一大片白，看着像没铺满。放宽到 1600：1920 下两侧只余 40，
+   * 更宽的屏幕上仍然有节制的上限，不至于把表格拉到读不过来。
+   */
+  --ts-content-max: 1600px;
   --ts-radius: var(--ts-r-md); /* 兼容旧引用 */
 
   /* 移动端安全区域（刘海屏 / 底部手势条） */

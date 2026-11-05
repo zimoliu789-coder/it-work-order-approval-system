@@ -320,17 +320,9 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 <template>
   <div class="ts-page">
     <section class="ts-card">
-      <div class="ts-flex-between ts-op__head">
-        <div>
-          <h3 class="ts-op__title">我的待处理</h3>
-          <p class="ts-text-secondary ts-op__desc">
-            我是实际执行人的工单：待交付需「确认交付」；待收回（或已超时）需「确认收回」并登记设备状态。
-          </p>
-        </div>
-        <el-button :loading="loading" @click="load">刷新</el-button>
-      </div>
-
       <TablePage
+        title="我的待处理"
+        subtitle="我是实际执行人的工单：待交付需「确认交付」；待收回（或已超时）需「确认收回」并登记设备状态。"
         :columns="columns"
         :rows="records"
         :loading="loading"
@@ -339,10 +331,18 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
         :size="size"
         :total="total"
         empty-text="暂无待您处理的工单"
-        class="ts-mt-16"
+        
         @update:page="handlePageChange"
         @update:size="handleSizeChange"
       >
+        <template #actions>
+          <el-button :loading="loading" @click="load">刷新</el-button>
+        </template>
+
+        <template #bar>
+      
+        </template>
+
         <template #cell-deviceName="{ row }">{{ deviceText(row as OrderItem) }}</template>
         <template #cell-useTypeLabel="{ row }">
           <el-tag :type="useTypeTagType(row as OrderItem)" size="small" effect="plain">

@@ -50,10 +50,13 @@ const columns: ColumnDef[] = [
   // 多选列（P3 批量操作）：TablePage 只渲染 type="selection"，key 仍作稳定标识
   { key: 'selection', label: '选择', width: 46, selection: true },
   { key: 'deviceName', label: '设备名称', minWidth: 150, showOverflowTooltip: true },
-  { key: 'assetNo', label: '资产编号', width: 130 },
+  // 资产编号形如 XC-PB-567209D-1789826567209（26 字符）。原来固定 130px，
+  // 装不下就折成三行、还把数字断在中间；改成最小宽度 + 省略号，
+  // 列总宽超出容器时宁可横向滚动，也不要把编号拆行（扫读时根本无法核对）。
+  { key: 'assetNo', label: '资产编号', minWidth: 190, showOverflowTooltip: true },
   { key: 'category', label: '分类', minWidth: 170, showOverflowTooltip: true },
   { key: 'brandModel', label: '品牌 / 型号', minWidth: 150, showOverflowTooltip: true },
-  { key: 'statusLabel', label: '状态', width: 100, align: 'center' },
+  { key: 'statusLabel', label: '状态', minWidth: 110, align: 'center' },
   // 负责人（V57 / 第 10 项）：决定「报修 → 我名下的设备」里能看到哪些，
   // 空值必须显式写成「未指定」—— 留白会让人以为字段没实现
   { key: 'ownerName', label: '负责人', width: 110, showOverflowTooltip: true },
@@ -863,30 +866,43 @@ function isOccupied(row: DeviceItem): boolean {
 
 <template>
   <div class="ts-page">
-    <section class="ts-card">
-      <div class="ts-flex-between ts-dev__head">
-        <div>
-          <h3 class="ts-dev__title">设备台账</h3>
-          <p class="ts-text-secondary ts-dev__desc">
-            资产编号全局唯一；报废（不可再申请）与删除（台账隐藏）是两种不同语义。
-          </p>
-        </div>
-        <el-space>
+    <!-- 不再套 .ts-card：TablePage 自带白底 + 描边 + 圆角的表格容器，
+         再包一层卡片就是「卡里套卡」，两层白底叠在一起反而看不出边界。 -->
+    <TablePage
+        ref="tablePageRef"
+        title="设备台账"
+        subtitle="资产编号全局唯一；报废（不可再申请）与删除（台账隐藏）是两种不同语义。"
+        :columns="columns"
+        :rows="records"
+        :loading="loading"
+        route-path="/asset/ledger"
+        :fit="false"
+        :page="page"
+        :size="size"
+        :total="total"
+        empty-text="暂无设备，请先新增或调整筛选条件"
+        @update:page="handlePageChange"
+        @update:size="handleSizeChange"
+        @selection-change="handleSelectionChange"
+      >
+        <template #actions>
           <!--
             打印标签：对**勾选**的设备打。勾一台就是单张、勾 N 台就是批量 ——
             需求里的「点某台再点打印标签」与「勾选多台批量打印」本就是同一个动作。
+            改造前它与右侧三个按钮分在两个 el-space 里，被 flex-between 挤到中间偏左；
+            现在统一进 #actions，位置由组件决定。
           -->
           <el-button :disabled="selectedIds.length === 0" @click="openLabelForSelection">打印标签</el-button>
-        </el-space>
-        <el-space v-if="canEdit">
-          <el-button @click="importVisible = true">批量导入</el-button>
-          <el-button :loading="exporting" @click="handleExport">导出 Excel</el-button>
-          <el-button type="primary" @click="openCreate">+ 新增设备</el-button>
-        </el-space>
-      </div>
+          <template v-if="canEdit">
+            <el-button @click="importVisible = true">批量导入</el-button>
+            <el-button :loading="exporting" @click="handleExport">导出 Excel</el-button>
+            <el-button type="primary" @click="openCreate">新增设备</el-button>
+          </template>
+        </template>
 
-      <!-- 查询条件 -->
-      <div class="ts-dev__filters ts-mt-16">
+        <template #bar>
+          <!-- 查询条件 -->
+          <div class="ts-dev__filters">
         <el-input
           v-model="query.keyword"
           class="ts-dev__filter-item ts-dev__filter-keyword"
@@ -938,21 +954,8 @@ function isOccupied(row: DeviceItem): boolean {
         <el-button size="small" @click="clearSelection">取消选择</el-button>
       </div>
 
-      <TablePage
-        ref="tablePageRef"
-        :columns="columns"
-        :rows="records"
-        :loading="loading"
-        route-path="/asset/ledger"
-        :page="page"
-        :size="size"
-        :total="total"
-        empty-text="暂无设备，请先新增或调整筛选条件"
-        class="ts-mt-16"
-        @update:page="handlePageChange"
-        @update:size="handleSizeChange"
-        @selection-change="handleSelectionChange"
-      >
+        </template>
+
         <template #cell-category="{ row }">{{ categoryText(row as DeviceItem) }}</template>
         <template #cell-brandModel="{ row }">
           <span v-if="(row as DeviceItem).brand || (row as DeviceItem).model">
@@ -1163,8 +1166,7 @@ function isOccupied(row: DeviceItem): boolean {
         </template>
       </TablePage>
 
-      <p v-if="!canEdit" class="ts-text-hint">当前角色为只读，维护设备台账需要管理员及以上权限</p>
-    </section>
+      <p v-if="!canEdit" class="ts-text-hint ts-mt-16">当前角色为只读，维护设备台账需要管理员及以上权限</p>
 
     <!-- 新增 / 编辑 -->
     <el-dialog

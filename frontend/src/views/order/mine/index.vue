@@ -53,7 +53,7 @@ const ccColumns: ColumnDef[] = [
   { key: 'applicantName', label: '申请人', minWidth: 110, showOverflowTooltip: true },
   { key: 'statusLabel', label: '状态', width: 128, align: 'center' },
   { key: 'createdAt', label: '提交时间', minWidth: 170, showOverflowTooltip: true },
-  { key: 'action', label: '操作', width: 110, fixed: 'right', configurable: false }
+  { key: 'action', label: '操作', width: 200, fixed: 'right', configurable: false }
 ]
 
 const loading = ref(false)

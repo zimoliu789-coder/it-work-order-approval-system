@@ -1543,29 +1543,34 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
       <!-- ============ 右：成员列表 ============ -->
       <section class="ts-card ts-org__main">
-      <div class="ts-flex-between ts-staff__head">
-        <div>
-          <h3 class="ts-staff__title">
-            组织与人员
-            <span v-if="selectedDept" class="ts-org__scope">{{ selectedDept.deptName }}</span>
-          </h3>
-          <p class="ts-text-secondary ts-staff__desc">
-            点左侧部门可只看该部门成员，再点一次（或点「全部成员」）恢复全部。
-            仅超级管理员可写；标记离职会将其名下「使用中」设备自动转入「待收回」并通知对应执行人，同时禁用账号。
-          </p>
-        </div>
-        <div class="ts-flex-between ts-staff__head-actions">
+      <TablePage
+        ref="tablePageRef"
+        title="组织与人员"
+        subtitle="点左侧部门可只看该部门成员，再点一次（或点「全部成员」）恢复全部。仅超级管理员可写；标记离职会将其名下「使用中」设备自动转入「待收回」并通知对应执行人，同时禁用账号。"
+        :columns="columns"
+        :rows="records"
+        :loading="loading"
+        route-path="/staff/organization"
+        :page="page"
+        :size="size"
+        :total="total"
+        empty-text="暂无符合条件的员工"
+        @update:page="handlePageChange"
+        @update:size="handleSizeChange"
+        @selection-change="handleSelectionChange"
+      >
+        <template #actions>
           <el-button class="ts-org__aside-toggle" @click="deptAsideVisible = !deptAsideVisible">
             {{ deptAsideVisible ? '隐藏部门' : '显示部门' }}
           </el-button>
           <el-button v-if="isSuperAdmin" type="primary" @click="openCreate">添加成员</el-button>
           <el-button v-if="isSuperAdmin" @click="importVisible = true">批量导入</el-button>
           <el-button :loading="loading" @click="load">刷新</el-button>
-        </div>
-      </div>
+        </template>
 
-      <!-- 筛选条件 -->
-      <div class="ts-staff__filters ts-mt-16">
+        <template #bar>
+          <!-- 筛选条件 -->
+          <div class="ts-staff__filters">
         <el-input
           v-model="query.keyword"
           class="ts-staff__filter-keyword"
@@ -1614,21 +1619,8 @@ async function handleToLdap(row: UserAccount): Promise<void> {
         <el-button size="small" @click="clearSelection">取消选择</el-button>
       </div>
 
-      <TablePage
-        ref="tablePageRef"
-        :columns="columns"
-        :rows="records"
-        :loading="loading"
-        route-path="/staff/organization"
-        :page="page"
-        :size="size"
-        :total="total"
-        empty-text="暂无符合条件的员工"
-        class="ts-mt-16"
-        @update:page="handlePageChange"
-        @update:size="handleSizeChange"
-        @selection-change="handleSelectionChange"
-      >
+        </template>
+
         <template #cell-realName="{ row }">
           <div>{{ nameText(row as UserAccount) }}</div>
           <div class="ts-text-hint">{{ (row as UserAccount).username }}</div>
