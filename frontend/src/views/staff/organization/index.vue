@@ -2237,7 +2237,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
   gap: 10px;
   padding: 10px 12px;
   background: var(--el-fill-color-light);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 /* ---------- 组织与人员：左右两栏 ---------- */
@@ -2264,7 +2264,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
 .ts-org__aside-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
@@ -2315,7 +2315,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
 .ts-org__drag-hint {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.5;
 }
 
@@ -2365,7 +2365,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
   flex: 0 0 auto;
   min-width: 20px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-hint);
 }
 
@@ -2403,7 +2403,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
 .ts-org__scope {
   margin-left: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 400;
   color: var(--el-color-primary);
 }
@@ -2426,7 +2426,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
 .ts-org__dialog-desc {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
 }
 
@@ -2442,13 +2442,13 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 
 .ts-staff__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-staff__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -2475,7 +2475,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
 /* 「重置密码」在 AD 域账号下置灰：保留按钮形态但明确不可点，并配 tooltip 说明原因 */
 .ts-staff__disabled-action {
   margin-left: 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-hint);
   cursor: not-allowed;
 }
@@ -2509,7 +2509,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-staff__card-title {
@@ -2526,7 +2526,7 @@ async function handleToLdap(row: UserAccount): Promise<void> {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-staff__card-actions {

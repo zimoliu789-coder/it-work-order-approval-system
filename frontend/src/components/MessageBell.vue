@@ -248,13 +248,13 @@ async function handleMarkAllRead(): Promise<void> {
 }
 
 .ts-message-panel__item-title {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   word-break: break-all;
 }
 
 .ts-message-panel__item-content {
   margin: 4px 0 6px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
   word-break: break-all;
@@ -265,13 +265,13 @@ async function handleMarkAllRead(): Promise<void> {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-message-panel__empty {
   text-align: center;
   line-height: 1.8;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary);
 }
 </style>

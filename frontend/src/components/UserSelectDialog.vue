@@ -191,7 +191,7 @@ function roleTag(role: string): string {
 
 .ts-user-select__group-name {
   margin-right: 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 @media (max-width: 767px) {

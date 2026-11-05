@@ -764,7 +764,7 @@ onMounted(() => {
 
 .ts-dashboard__role {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-dashboard__meta {
@@ -777,7 +777,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 /*
@@ -814,7 +814,7 @@ onMounted(() => {
 }
 
 .ts-dashboard__stat-label {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
 }
 
@@ -845,7 +845,7 @@ onMounted(() => {
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   background: var(--ts-surface);
 }
 
@@ -881,7 +881,7 @@ onMounted(() => {
 
 .ts-dashboard__card-title {
   margin: 0 0 12px;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
@@ -891,7 +891,7 @@ onMounted(() => {
 
 .ts-dashboard__status p {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-dashboard__shortcuts {
@@ -903,11 +903,11 @@ onMounted(() => {
 .ts-dashboard__shortcut {
   padding: 8px 14px;
   min-height: 40px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-primary);
   background: #eef3f9;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   cursor: pointer;
 }
 
@@ -939,7 +939,7 @@ onMounted(() => {
 
 .ts-dash__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-color-warning);
 }
 
@@ -991,7 +991,7 @@ onMounted(() => {
   grid-template-columns: 96px minmax(0, 1fr) 48px;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-dash__bar-label {
@@ -1048,7 +1048,7 @@ onMounted(() => {
 
 @media (max-width: 767px) {
   .ts-dashboard__hello {
-    font-size: 16px;
+    font-size: var(--ts-fs-card);
   }
 
   /* 内联待办在手机上改上下排列：左右排会把设备名挤成省略号，而「是哪个设备」

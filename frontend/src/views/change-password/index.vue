@@ -144,7 +144,7 @@ onMounted(async () => {
 
 .ts-cp__alert-body {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
 }
 

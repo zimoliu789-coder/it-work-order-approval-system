@@ -174,7 +174,7 @@ async function submit(): Promise<void> {
 <style scoped>
 .ts-transfer__hint {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.6;
 }
 
@@ -188,7 +188,7 @@ async function submit(): Promise<void> {
 
 .ts-transfer__note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 </style>

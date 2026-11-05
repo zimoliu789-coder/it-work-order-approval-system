@@ -258,7 +258,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: var(--ts-primary);
   color: #fff;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
@@ -271,7 +271,7 @@ onMounted(async () => {
 
 .ts-login__subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
 }
 
@@ -291,7 +291,7 @@ onMounted(async () => {
 
 .ts-login__hint {
   margin: 18px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   text-align: center;
   color: var(--ts-text-hint);

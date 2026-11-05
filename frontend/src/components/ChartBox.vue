@@ -157,7 +157,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   background: var(--el-fill-color-blank);
 }
 </style>

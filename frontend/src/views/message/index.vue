@@ -399,13 +399,13 @@ async function batchDelete(): Promise<void> {
 
 .ts-mc__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-mc__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -445,7 +445,7 @@ async function batchDelete(): Promise<void> {
 }
 
 .ts-mc__msg-title {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-mc__msg.is-unread .ts-mc__msg-title {
@@ -454,7 +454,7 @@ async function batchDelete(): Promise<void> {
 
 .ts-mc__msg-content {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   word-break: break-all;
 }
@@ -469,7 +469,7 @@ async function batchDelete(): Promise<void> {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-mc__card.is-unread {
@@ -488,13 +488,13 @@ async function batchDelete(): Promise<void> {
 
 .ts-mc__card-content {
   margin: 6px 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   word-break: break-all;
 }
 
 .ts-mc__card-time {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-mc__card-actions {

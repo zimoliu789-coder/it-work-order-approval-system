@@ -285,7 +285,7 @@ onMounted(load)
 }
 .ts-muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   margin-right: 8px;
 }
 .ts-card__actions {

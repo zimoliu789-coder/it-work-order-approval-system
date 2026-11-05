@@ -957,7 +957,7 @@ const syncHint = computed(() => haSyncStateHint(detail.value?.syncState))
 
 .ha-page__notice-tip {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ha-page__card {
@@ -974,7 +974,7 @@ const syncHint = computed(() => haSyncStateHint(detail.value?.syncState))
 
 .ha-page__muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ha-page__inline-tip {
@@ -993,7 +993,7 @@ const syncHint = computed(() => haSyncStateHint(detail.value?.syncState))
 
 .ha-page__probe-dir {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   word-break: break-all;
 }
 
@@ -1019,7 +1019,7 @@ const syncHint = computed(() => haSyncStateHint(detail.value?.syncState))
 
 .ha-page__result-row {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   word-break: break-all;
 }
 
@@ -1045,7 +1045,7 @@ const syncHint = computed(() => haSyncStateHint(detail.value?.syncState))
   background: var(--el-fill-color-light);
   border-radius: 4px;
   font-family: var(--el-font-family-monospace, monospace);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;

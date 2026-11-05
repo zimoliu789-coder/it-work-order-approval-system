@@ -374,13 +374,13 @@ onMounted(load)
 
 .ts-fm__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-fm__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -403,7 +403,7 @@ onMounted(load)
   gap: 6px;
   padding: 12px 14px;
   background: #f7f9fc;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .ts-fm__stat-value {
@@ -416,7 +416,7 @@ onMounted(load)
 }
 
 .ts-fm__stat-hint {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   font-weight: 400;
   color: var(--el-text-color-secondary);
 }
@@ -447,7 +447,7 @@ onMounted(load)
 
 .ts-fm__note {
   margin: 12px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 

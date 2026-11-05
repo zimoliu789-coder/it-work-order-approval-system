@@ -298,13 +298,13 @@ async function move(siblings: DeviceCategory[], index: number, offset: number, p
 
 .ts-cat__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-cat__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -318,7 +318,7 @@ async function move(siblings: DeviceCategory[], index: number, offset: number, p
   border: 1px solid var(--ts-border);
   border-radius: 10px;
   padding: 12px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
   min-height: 180px;
 }
 
@@ -356,7 +356,7 @@ async function move(siblings: DeviceCategory[], index: number, offset: number, p
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   cursor: pointer;
   flex-wrap: wrap;
 }
@@ -367,7 +367,7 @@ async function move(siblings: DeviceCategory[], index: number, offset: number, p
 
 .ts-cat__item.is-active {
   background: #eef4ff;
-  border-color: var(--ts-primary, #409eff);
+  border-color: var(--ts-accent, #2563eb);
 }
 
 .ts-cat__item-main {

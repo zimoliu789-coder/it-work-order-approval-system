@@ -396,7 +396,7 @@ defineExpose({ incompleteProblems, definition, blocked })
   border-radius: 50%;
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   font-weight: 600;
 }
 
@@ -455,7 +455,7 @@ defineExpose({ incompleteProblems, definition, blocked })
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-linear-flow__adv-body {
@@ -469,7 +469,7 @@ defineExpose({ incompleteProblems, definition, blocked })
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-linear-flow__cond-field {

@@ -489,13 +489,13 @@ onMounted(async () => {
 
 .ts-role__title {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-role__desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-role__full {
@@ -504,7 +504,7 @@ onMounted(async () => {
 
 .ts-role__option-hint {
   margin-left: 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-role__alert {
@@ -516,7 +516,7 @@ onMounted(async () => {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .ts-role__node {
@@ -526,7 +526,7 @@ onMounted(async () => {
 }
 
 .ts-role__node-code {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-role__risk {
@@ -535,6 +535,6 @@ onMounted(async () => {
 
 .ts-role__tip {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 </style>

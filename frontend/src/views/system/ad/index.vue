@@ -627,13 +627,13 @@ onMounted(async () => {
 <style scoped>
 .ts-ad__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 600;
 }
 
 .ts-ad__desc {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.7;
 }
 
@@ -648,14 +648,14 @@ onMounted(async () => {
 
 .ts-ad__alert-body {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.8;
 }
 
 .ts-ad__field-hint {
   display: block;
   margin-left: 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   color: var(--ts-text-hint);
 }
@@ -677,7 +677,7 @@ onMounted(async () => {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 2;
 }
 
@@ -707,7 +707,7 @@ onMounted(async () => {
 
 .ts-ad__advanced-note {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.8;
   color: var(--ts-text-hint);
 }
@@ -722,7 +722,7 @@ onMounted(async () => {
 
 .ts-ad__result-msg {
   margin: 12px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
 }
 
@@ -732,12 +732,12 @@ onMounted(async () => {
 
 .ts-ad__last-sync-time {
   margin-left: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-ad__last-sync-detail {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   color: var(--ts-text-hint);
   word-break: break-all;
@@ -750,7 +750,7 @@ onMounted(async () => {
 .ts-ad__failures {
   margin: 6px 0 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.8;
   max-height: 200px;
   overflow-y: auto;
@@ -765,7 +765,7 @@ onMounted(async () => {
 }
 
 .ts-ad :deep(.el-statistic__head) {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-ad :deep(.el-statistic__content) {

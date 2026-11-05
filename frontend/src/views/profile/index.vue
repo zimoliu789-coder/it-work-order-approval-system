@@ -464,7 +464,7 @@ onUnmounted(() => {
 
 .ts-profile__role {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-profile__actions {
@@ -475,13 +475,13 @@ onUnmounted(() => {
 
 .ts-profile__section-title {
   margin: 0 0 16px;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
 .ts-profile__section-desc {
   margin: -8px 0 16px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   color: var(--ts-text-hint);
 }
@@ -529,7 +529,7 @@ onUnmounted(() => {
 
 .ts-profile__hint {
   margin: 16px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   color: var(--ts-text-hint);
 }
@@ -554,7 +554,7 @@ onUnmounted(() => {
 }
 
 .ts-profile__pref-desc {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
   color: var(--ts-text-hint);
 }

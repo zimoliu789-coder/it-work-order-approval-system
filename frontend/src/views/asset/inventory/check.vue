@@ -349,7 +349,7 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--el-text-color-regular);
 }
 
@@ -369,7 +369,7 @@ onMounted(async () => {
 
 .ts-inv-check__viewport {
   position: relative;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   overflow: hidden;
   background: #000;
   margin-bottom: 12px;

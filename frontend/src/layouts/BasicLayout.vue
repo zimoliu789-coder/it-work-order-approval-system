@@ -10,6 +10,7 @@ import { ROLE_LABELS } from '@/types/user'
 import MenuTree from '@/components/MenuTree.vue'
 import MessageBell from '@/components/MessageBell.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
+import type { MenuItem } from '@/config/menus'
 
 /**
  * 主布局（ 前端 UI 规范）
@@ -47,6 +48,41 @@ watch(isMobile, (value) => {
 
 const activeMenu = computed(() => route.path)
 const pageTitle = computed(() => (route.meta?.title as string | undefined) ?? '工作台')
+
+/**
+ * 面包屑（2026-11 视觉重构新增）。
+ *
+ * <h2>为什么不是只显示当前页名</h2>
+ * 这个系统是三层的：业务分组 → 页面 → 详情弹窗。只显示当前页名时，
+ * 用户从站内消息 / 待办通知直接跳进来，会失去「我在哪一层」的位置感；
+ * 而面包屑要回答的正是这个问题。
+ *
+ * <h2>为什么复用菜单树而不是另开一张路由标题表</h2>
+ * 侧栏与面包屑必须同源：两处各维护一份，改菜单忘了改表格，就会出现
+ * 「侧栏叫资产管理、面包屑叫设备台账」这种自相矛盾的界面。
+ * 菜单树本来就有 path → title，直接沿树找路径即可。
+ */
+function findTrail(items: MenuItem[], path: string, trail: string[] = []): string[] {
+  for (const item of items) {
+    const next = [...trail, item.title]
+    if (item.path === path) {
+      return next
+    }
+    if (item.children?.length) {
+      const found = findTrail(item.children, path, next)
+      if (found.length > 0) {
+        return found
+      }
+    }
+  }
+  return []
+}
+
+const breadcrumb = computed<string[]>(() => {
+  const trail = findTrail(userStore.menus, route.path)
+  // 菜单里没有的路径（工作台、详情页、错误页）退回标题本身 —— 绝不渲染空面包屑
+  return trail.length > 0 ? trail : [pageTitle.value]
+})
 const avatarText = computed(() => userStore.displayName.slice(0, 1) || '员')
 const roleLabel = computed(() => ROLE_LABELS[userStore.role] ?? userStore.role)
 const showAside = computed(() => !isMobile.value)
@@ -129,9 +165,6 @@ onMounted(() => {
           :collapse-transition="false"
           unique-opened
           router
-          background-color="#1f3a5f"
-          text-color="#cbd5e1"
-          active-text-color="#ffffff"
         >
           <el-menu-item index="/dashboard">
             <el-icon><HomeFilled /></el-icon>
@@ -166,9 +199,6 @@ onMounted(() => {
         :default-active="activeMenu"
         unique-opened
         router
-        background-color="#1f3a5f"
-        text-color="#cbd5e1"
-        active-text-color="#ffffff"
         @select="onMenuSelect"
       >
         <el-menu-item index="/dashboard">
@@ -188,7 +218,17 @@ onMounted(() => {
           </el-icon>
         </button>
 
-        <span class="ts-layout__title">{{ pageTitle }}</span>
+        <!-- 面包屑 + 当前页标题：面包屑答「我在哪一层」，标题答「这是哪一页」。
+             移动端只显示当前项（见下方样式），避免把顶栏挤爆。 -->
+        <nav class="ts-crumb" aria-label="当前位置">
+          <template v-for="(item, index) in breadcrumb" :key="`${item}-${index}`">
+            <span
+              class="ts-crumb__item"
+              :class="{ 'is-current': index === breadcrumb.length - 1 }"
+            >{{ item }}</span>
+            <span v-if="index < breadcrumb.length - 1" class="ts-crumb__sep" aria-hidden="true">/</span>
+          </template>
+        </nav>
 
         <div class="ts-layout__spacer" />
 
@@ -240,69 +280,112 @@ onMounted(() => {
   flex-direction: column;
   width: var(--ts-sidebar-width);
   flex: 0 0 var(--ts-sidebar-width);
-  background: #1f3a5f;
-  transition: width 0.2s ease, flex-basis 0.2s ease;
+  background: var(--ts-nav-bg);
+  transition: width var(--ts-dur) var(--ts-ease), flex-basis var(--ts-dur) var(--ts-ease);
 }
 
 .ts-layout__aside.is-collapsed {
-  width: 64px;
-  flex-basis: 64px;
+  width: var(--ts-sidebar-collapsed);
+  flex-basis: var(--ts-sidebar-collapsed);
 }
 
 .ts-brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ts-sp-2);
   height: var(--ts-header-height);
-  padding: 0 16px;
-  color: #fff;
+  padding: 0 var(--ts-sp-4);
+  color: var(--ts-text-inverse);
   white-space: nowrap;
   overflow: hidden;
   flex: 0 0 auto;
+  border-bottom: 1px solid var(--ts-nav-divider);
 }
 
 .ts-brand__mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: #2f5b8f;
-  font-size: 12px;
-  font-weight: 500;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--ts-r-sm);
+  background: var(--ts-accent);
+  font-size: var(--ts-fs-caption);
+  font-weight: 600;
   flex: 0 0 auto;
 }
 
 .ts-brand__text {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--ts-fs-card);
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .ts-aside__scroll {
   flex: 1 1 auto;
   min-height: 0;
+  padding: var(--ts-sp-2) 0;
 }
 
 /*
- * 侧边栏底部版权（）。
- * 深色底（#1f3a5f）上用小字 + 半透明白：既能在深底上读清，
- * 又不会把视线从菜单上抢走 —— 它是一行声明，不是导航。
+ * 侧边栏底部版权：只有管理员在系统参数里填了版权文字才渲染。
+ * 深底上用弱化白 + 微字号：它能读清，但不会把视线从菜单上抢走 ——
+ * 这是一行声明，不是导航。
  */
 .ts-aside__foot {
   flex: 0 0 auto;
-  padding: 10px 16px 12px;
-  font-size: 11px;
-  line-height: 1.5;
-  color: rgb(255 255 255 / 55%);
-  border-top: 1px solid rgb(255 255 255 / 10%);
+  padding: var(--ts-sp-3) var(--ts-sp-4);
+  font-size: var(--ts-fs-micro);
+  line-height: var(--ts-lh-tight);
+  color: var(--ts-nav-text-muted);
+  border-top: 1px solid var(--ts-nav-divider);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/*
+ * 菜单配色与尺寸统一走 EP 的菜单变量，而不是给 <el-menu> 传
+ * background-color/text-color 行内属性 ——
+ * 行内属性会被写死成具体色值，换主题时要改模板；变量只改一处。
+ *
+ * 选中态用**整块强调色底 + 白字**，不加左侧色条：
+ * 那条 3px 竖线是最典型的「AI 生成后台」标志之一，且在本项目里
+ * 与「卡片左边框」写法重复（impeccable 的侧边条规则也会报）。
+ */
 .ts-layout__aside :deep(.el-menu) {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--ts-nav-text);
+  --el-menu-active-color: var(--ts-text-inverse);
+  --el-menu-hover-bg-color: var(--ts-nav-bg-hover);
+  --el-menu-item-height: 42px;
+  --el-menu-sub-item-height: 38px;
   border-right: none;
+}
+
+.ts-layout__aside :deep(.el-menu-item),
+.ts-layout__aside :deep(.el-sub-menu__title) {
+  margin: 2px var(--ts-sp-2);
+  border-radius: var(--ts-r-sm);
+  font-size: var(--ts-fs-body);
+}
+
+.ts-layout__aside :deep(.el-menu-item.is-active) {
+  background: var(--ts-nav-bg-active);
+  color: var(--ts-text-inverse);
+  font-weight: 500;
+}
+
+.ts-layout__aside :deep(.el-menu-item:hover),
+.ts-layout__aside :deep(.el-sub-menu__title:hover) {
+  background: var(--ts-nav-bg-hover);
+  color: var(--ts-text-inverse);
+}
+
+/* 折叠态（64px）下菜单项要收成方块，圆角与外边距会把它挤歪 */
+.ts-layout__aside.is-collapsed :deep(.el-menu-item),
+.ts-layout__aside.is-collapsed :deep(.el-sub-menu__title) {
+  margin: 2px 6px;
 }
 
 .ts-layout__body {
@@ -315,40 +398,57 @@ onMounted(() => {
 .ts-layout__header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ts-sp-3);
   height: var(--ts-header-height);
   flex: 0 0 auto;
-  padding: 0 16px;
+  padding: 0 var(--ts-sp-5);
   background: var(--ts-surface);
   border-bottom: 1px solid var(--ts-border);
 }
 
-.ts-layout__title {
-  font-size: 15px;
-  font-weight: 500;
+/*
+ * 面包屑（2026-11）。层级用「分隔符 + 字重」表达，不用颜色堆叠：
+ * 非当前项是次要色，当前项是主色 + 500 字重，视觉落点只有一个。
+ */
+.ts-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--ts-sp-2);
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
+}
+
+.ts-crumb__item {
+  font-size: var(--ts-fs-body);
+  color: var(--ts-text-hint);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ts-crumb__item.is-current {
+  color: var(--ts-text);
+  font-weight: 600;
+}
+
+.ts-crumb__sep {
+  color: var(--ts-border-strong);
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-layout__spacer {
   flex: 1 1 auto;
 }
 
+/*
+ * 内容区（2026-11 改造）：只负责滚动与横向居中，**不再叠加内边距**。
+ * 改造前 content 有 24px、页面里的 .ts-page 又有 16px，
+ * 左右各 40px 的留白把内容挤窄，而卡片宽度仍然七种并存 ——
+ * 真正决定留白的应该是页面容器（.ts-page），不是滚动容器。
+ */
 .ts-layout__content {
   flex: 1 1 auto;
-  /*
-   * 内容区宽度上限 —— 治「卡片宽度 264~1169px 七种并存」。
-   * 1128 = 1060（实测标准内容区）+ 左右各 24 内边距 + 20 余量，取 8 的倍数。
-   * 该值让 /asset/fault、/system/role 的 1169px 自动收回，/dashboard 的 1134px 也不再超框。
-   *
-   * ⚠️ 若发现某页被「挤窄」，不要调大这个值 ——
-   *    那说明该页在靠「铺满」塞内容，正确做法是让**该页内容横向滚动**（列表页的常规做法）。
-   */
   width: 100%;
-  max-width: 1128px;
-  margin: 0 auto;
-  padding: 0 24px;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -357,19 +457,19 @@ onMounted(() => {
 
 .ts-layout__footer {
   flex: 0 0 auto;
-  padding: 8px 16px calc(8px + var(--ts-safe-bottom));
+  padding: var(--ts-sp-2) var(--ts-sp-4) calc(var(--ts-sp-2) + var(--ts-safe-bottom));
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-hint);
   background: var(--ts-surface);
   border-top: 1px solid var(--ts-border);
 }
 
-/* 移动端页脚的第二行：版权文字（）单独占一行，不与系统名称挤在一起 */
+/* 移动端页脚的第二行：版权文字单独占一行，不与系统名称挤在一起 */
 .ts-layout__copyright {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary);
 }
 
@@ -377,39 +477,44 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ts-r-sm);
   background: transparent;
   color: var(--ts-text-secondary);
   cursor: pointer;
+  transition: background-color var(--ts-dur-fast) var(--ts-ease),
+    color var(--ts-dur-fast) var(--ts-ease);
 }
 
 .ts-icon-btn:hover {
-  background: rgba(31, 58, 95, 0.08);
+  background: var(--ts-surface-hover);
+  color: var(--ts-text);
 }
 
 .ts-user {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 6px;
-  border-radius: 8px;
+  gap: var(--ts-sp-2);
+  height: 36px;
+  padding: 0 var(--ts-sp-2);
+  border-radius: var(--ts-r-sm);
   cursor: pointer;
   color: var(--ts-text);
   outline: none;
+  transition: background-color var(--ts-dur-fast) var(--ts-ease);
 }
 
 .ts-user:hover {
-  background: rgba(31, 58, 95, 0.08);
+  background: var(--ts-surface-hover);
 }
 
 .ts-user__avatar {
-  background: var(--ts-primary);
-  font-size: 13px;
+  background: var(--ts-accent);
+  font-size: var(--ts-fs-caption);
+  font-weight: 500;
 }
 
 .ts-user__name {
@@ -417,11 +522,26 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: var(--ts-fs-body);
 }
 
+/* 手机档：面包屑只保留当前项 —— 三层路径在 360px 宽里会挤成省略号，
+   而用户此刻最需要的信息是「我在哪一页」，「我从哪个分组进来」可以省。 */
 @media (max-width: 767px) {
-  .ts-layout__title {
-    font-size: 14px;
+  .ts-crumb__item:not(.is-current),
+  .ts-crumb__sep {
+    display: none;
+  }
+
+  .ts-layout__header {
+    padding: 0 var(--ts-sp-3);
+    gap: var(--ts-sp-2);
+  }
+
+  .ts-crumb__item {
+    font-size: var(--ts-fs-card);
+    font-weight: 600;
+    color: var(--ts-text);
   }
 }
 </style>
@@ -430,6 +550,41 @@ onMounted(() => {
 /* 抽屉菜单为 teleport 渲染，需使用非 scoped 样式覆盖 */
 .ts-drawer .el-drawer__body {
   padding: 0;
-  background: #1f3a5f;
+  background: var(--ts-nav-bg);
+}
+
+/* 抽屉里的菜单同样走统一变量（scoped 样式作用不到 teleport 出去的内容） */
+.ts-drawer .el-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--ts-nav-text);
+  --el-menu-active-color: var(--ts-text-inverse);
+  --el-menu-hover-bg-color: var(--ts-nav-bg-hover);
+  --el-menu-item-height: 46px;
+  --el-menu-sub-item-height: 42px;
+  border-right: none;
+  padding: var(--ts-sp-2) 0;
+}
+
+.ts-drawer .el-menu-item,
+.ts-drawer .el-sub-menu__title {
+  margin: 2px var(--ts-sp-2);
+  border-radius: var(--ts-r-sm);
+}
+
+.ts-drawer .el-menu-item.is-active {
+  background: var(--ts-nav-bg-active);
+  color: var(--ts-text-inverse);
+  font-weight: 500;
+}
+
+.ts-drawer .el-menu-item:hover,
+.ts-drawer .el-sub-menu__title:hover {
+  background: var(--ts-nav-bg-hover);
+  color: var(--ts-text-inverse);
+}
+
+.ts-drawer .ts-brand {
+  color: var(--ts-text-inverse);
+  border-bottom: 1px solid var(--ts-nav-divider);
 }
 </style>

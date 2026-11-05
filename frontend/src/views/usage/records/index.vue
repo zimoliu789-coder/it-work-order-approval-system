@@ -392,7 +392,7 @@ onMounted(() => {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-usage__card-head {
@@ -405,7 +405,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 @media (max-width: 767px) {

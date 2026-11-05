@@ -338,7 +338,7 @@ function scanAgain(): void {
 
 .ts-scan__viewport {
   position: relative;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   overflow: hidden;
   background: #000;
 }
@@ -402,7 +402,7 @@ function scanAgain(): void {
 
 .ts-scan__note-title {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
 }
 
 .ts-scan__note-list {

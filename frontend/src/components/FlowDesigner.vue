@@ -1674,13 +1674,13 @@ defineExpose({ publishProblems })
 .ts-flow-designer__panel {
   padding: 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   background: #fff;
 }
 
 .ts-flow-designer__panel-title {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
 }
 
@@ -1715,7 +1715,7 @@ defineExpose({ publishProblems })
 
 .ts-flow__legend li {
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -1723,7 +1723,7 @@ defineExpose({ publishProblems })
   display: flex;
   flex-direction: column;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   border-bottom: 1px dashed var(--ts-border);
 }
 
@@ -1745,14 +1745,23 @@ defineExpose({ publishProblems })
 
 .ts-flow__card {
   display: flex;
-  gap: 8px;
+  gap: var(--ts-sp-2);
   align-items: center;
-  padding: 8px 10px;
+  padding: var(--ts-sp-2) var(--ts-sp-3);
+  /* 改造前是「1px 边框 + 左侧 3px 主色条」—— 那条竖边是最典型的
+     「AI 生成后台」标志，且与选中态的整框高亮重复表达同一件事。
+     现在只用 1px 边框，选中态靠 is-active 的整块高亮。 */
   border: 1px solid var(--ts-border);
-  border-left: 3px solid var(--el-color-primary);
-  border-radius: 6px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-sm);
+  background: var(--ts-surface);
   cursor: pointer;
+  transition: border-color var(--ts-dur-fast) var(--ts-ease),
+    background-color var(--ts-dur-fast) var(--ts-ease);
+}
+
+.ts-flow__card:hover {
+  border-color: var(--ts-accent-border);
+  background: var(--ts-accent-soft);
 }
 
 .ts-flow__card.is-active {
@@ -1776,12 +1785,12 @@ defineExpose({ publishProblems })
 }
 
 .ts-flow__card-name {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
 }
 
 .ts-flow__card-summary {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-flow__card-actions {
@@ -1801,7 +1810,7 @@ defineExpose({ publishProblems })
   gap: 6px;
   align-items: center;
   padding: 5px 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   border-left: 2px dashed var(--el-color-warning);
   cursor: pointer;
 }
@@ -1811,7 +1820,7 @@ defineExpose({ publishProblems })
 }
 
 .ts-flow__branch-cond {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-flow__jump {
@@ -1819,7 +1828,7 @@ defineExpose({ publishProblems })
   gap: 6px;
   align-items: center;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary, #909399);
 }
 
@@ -1829,7 +1838,7 @@ defineExpose({ publishProblems })
 
 .ts-flow__missing {
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-color-danger);
 }
 
@@ -1848,7 +1857,7 @@ defineExpose({ publishProblems })
   gap: 8px;
   align-items: center;
   padding: 6px 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-flow__rules,
@@ -1867,7 +1876,7 @@ defineExpose({ publishProblems })
   padding: 8px;
   border: 1px solid var(--ts-border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-flow__branch-editor.is-active {
@@ -1904,7 +1913,7 @@ defineExpose({ publishProblems })
 }
 
 .ts-flow__choose-label {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary, #909399);
 }
 
@@ -1962,7 +1971,7 @@ defineExpose({ publishProblems })
 }
 
 .ts-flow__cond-group-tag {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   font-weight: 600;
   color: var(--el-color-primary);
   white-space: nowrap;
@@ -1997,8 +2006,8 @@ defineExpose({ publishProblems })
   justify-content: space-between;
   padding: 10px 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-md);
+  background: var(--ts-surface);
 }
 
 .ts-flow-designer__footer-actions {

@@ -253,7 +253,7 @@ async function handleSubmit(): Promise<void> {
   width: 44px;
   height: 44px;
   overflow: hidden;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   color: #fff;
   background: var(--el-color-primary);
   border-radius: 12px;
@@ -267,13 +267,13 @@ async function handleSubmit(): Promise<void> {
 
 .ts-setup__subtitle {
   margin: 4px 0 0;
-  font-size: 13px;
-  color: #909399;
+  font-size: var(--ts-fs-caption);
+  color: var(--ts-text-hint);
 }
 
 .ts-setup__checking {
   margin: 24px 0;
-  color: #909399;
+  color: var(--ts-text-hint);
   text-align: center;
 }
 
@@ -288,7 +288,7 @@ async function handleSubmit(): Promise<void> {
 
 .ts-setup__error {
   margin: 12px 0 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: #f56c6c;
 }
 </style>

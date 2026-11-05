@@ -249,23 +249,32 @@ function handleSizeChange(next: number): void {
       <div class="ts-table-page__bar-main">
         <slot name="bar" />
       </div>
-      <el-button v-if="canConfig" size="small" class="ts-table-page__cols-btn" @click="dialogVisible = true">
+      <!-- 列设置与筛选区控件同高：原来用 size="small"（28px），
+           夹在一排 34px 的输入框 / 下拉里显得忽高忽低。 -->
+      <el-button v-if="canConfig" class="ts-table-page__cols-btn" @click="dialogVisible = true">
         列设置
       </el-button>
     </div>
 
-    <!-- PC：表格 -->
-    <el-table
-      ref="tableRef"
-      v-if="!isMobile"
-      v-bind="$attrs"
-      v-loading="loading"
-      :data="rows"
-      border
-      stripe
-      size="default"
-      class="ts-table-page__table"
-    >
+    <!--
+      PC：表格
+      ────────────────────────────────────────────────────────────
+      外面这层 __surface 是 2026-11 加的：改造前表格直接躺在页面底色上，
+      既没有卡片的边界，表头灰底与页面底又接近，整块数据区"浮"在半空。
+      包一层白底 + 描边 + 圆角后，表格成为页面上一个明确的块；
+      overflow: hidden 让 EP 自带的外边框被容器吃掉，不会出现双线。
+    -->
+    <div v-if="!isMobile" class="ts-table-page__surface">
+      <el-table
+        ref="tableRef"
+        v-bind="$attrs"
+        v-loading="loading"
+        :data="rows"
+        border
+        stripe
+        size="default"
+        class="ts-table-page__table"
+      >
       <!--
         ⚠️ 多选列**不能**给它 `#default` 插槽：`el-table-column type="selection"` 的勾选框由
         Element Plus 内置渲染，一旦被自定义插槽接管，整列就只剩一个空值占位（`-`），勾选框
@@ -283,7 +292,8 @@ function handleSizeChange(next: number): void {
       <template #empty>
         <el-empty :image-size="70" :description="emptyText" />
       </template>
-    </el-table>
+      </el-table>
+    </div>
 
     <!-- 移动端：页面自带卡片优先，否则用列定义生成通用卡片 -->
     <div v-else v-loading="loading" class="ts-table-page__mobile">
@@ -347,9 +357,11 @@ function handleSizeChange(next: number): void {
 .ts-table-page__bar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  min-height: 24px;
+  gap: var(--ts-sp-3);
+  /* 工具条与表格块之间留出呼吸：原来是 12px 紧贴，筛选区看着像表格的一部分 */
+  margin-bottom: var(--ts-sp-3);
+  min-height: 34px;
+  flex-wrap: wrap;
 }
 
 .ts-table-page__bar-main {
@@ -361,38 +373,50 @@ function handleSizeChange(next: number): void {
   flex: none;
 }
 
+/* 表格块：白底 + 描边 + 圆角，让数据区在页面上有明确边界 */
+.ts-table-page__surface {
+  background: var(--ts-surface);
+  border: 1px solid var(--ts-border);
+  border-radius: var(--ts-r-md);
+  overflow: hidden;
+}
+
 .ts-table-page__table {
-  margin-top: 8px;
+  /* 外边框由 __surface 提供，EP 的 border 只保留内部网格线 */
+  border-radius: 0;
 }
 
 .ts-table-page__mobile {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 12px;
+  gap: var(--ts-sp-3);
 }
 
 .ts-table-page__card {
-  padding: 12px;
+  padding: var(--ts-sp-4);
   border: 1px solid var(--ts-border);
-  border-radius: 10px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-md);
+  background: var(--ts-surface);
+  box-shadow: var(--ts-shadow-sm);
 }
 
 .ts-table-page__card-head {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ts-sp-2);
   align-items: flex-start;
 }
 
 .ts-table-page__card-title {
   word-break: break-all;
+  font-size: var(--ts-fs-card);
+  line-height: var(--ts-lh-tight);
+  color: var(--ts-text);
 }
 
 .ts-table-page__card-tags {
   display: flex;
-  gap: 4px;
+  gap: var(--ts-sp-1);
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -400,28 +424,32 @@ function handleSizeChange(next: number): void {
 .ts-table-page__card-row {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  padding: 3px 0;
-  font-size: 13px;
+  gap: var(--ts-sp-3);
+  padding: var(--ts-sp-1) 0;
+  font-size: var(--ts-fs-caption);
+  line-height: var(--ts-lh-body);
 }
 
 .ts-table-page__card-value {
   word-break: break-all;
   text-align: right;
+  color: var(--ts-text);
 }
 
 .ts-table-page__card-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--ts-sp-2);
   flex-wrap: wrap;
-  margin-top: 12px;
+  margin-top: var(--ts-sp-3);
+  padding-top: var(--ts-sp-3);
+  border-top: 1px solid var(--ts-border);
 }
 
 .ts-table-page__pager {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: var(--ts-sp-4);
 }
 
 /* 带左侧附加信息时改为两端对齐（W4-E：消息中心的「本页未读 N 条」） */

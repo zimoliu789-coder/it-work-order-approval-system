@@ -514,7 +514,7 @@ onMounted(async () => {
   gap: 8px;
   align-items: center;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 

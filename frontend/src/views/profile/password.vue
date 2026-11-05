@@ -112,13 +112,13 @@ onMounted(() => {
 <style scoped>
 .ts-pwd__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-pwd__desc {
   margin: 6px 0 16px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
 }
 
@@ -128,7 +128,7 @@ onMounted(() => {
 
 .ts-pwd__alert-body {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.8;
 }
 

@@ -56,7 +56,7 @@ const desc = computed(() => PATH_DESC[route.path] ?? '该页面暂未接入具�
 
 .ts-placeholder__title {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
@@ -66,7 +66,7 @@ const desc = computed(() => PATH_DESC[route.path] ?? '该页面暂未接入具�
 
 .ts-placeholder__desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.9;
 }
 </style>

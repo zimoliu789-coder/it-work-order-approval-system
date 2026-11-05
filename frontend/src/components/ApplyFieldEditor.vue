@@ -414,7 +414,7 @@ defineExpose({ incompleteProblems })
   border-radius: 50%;
   background: var(--el-fill-color-light);
   color: var(--el-text-color-secondary);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-field-editor__label {
@@ -482,7 +482,7 @@ defineExpose({ incompleteProblems })
 
 /* 下拉里的分组标题：弱化的非交互文字 */
 .ts-field-editor__add-group {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-text-color-secondary);
   cursor: default;
 }

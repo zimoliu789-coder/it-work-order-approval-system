@@ -326,7 +326,7 @@ onMounted(() => {
 
 .ts-seclog__title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
@@ -334,7 +334,7 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-seclog__permanent {
@@ -390,7 +390,7 @@ onMounted(() => {
 .ts-seclog__card-row {
   display: flex;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.9;
 }
 
@@ -400,7 +400,7 @@ onMounted(() => {
 
 .ts-seclog__card-detail {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
   word-break: break-all;
 }

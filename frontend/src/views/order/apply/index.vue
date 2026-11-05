@@ -1356,13 +1356,13 @@ onBeforeUnmount(() => {
 <style scoped>
 .ts-order__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-order__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -1397,7 +1397,7 @@ onBeforeUnmount(() => {
   padding: 20px 16px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
@@ -1415,13 +1415,13 @@ onBeforeUnmount(() => {
 
 .ts-apply__type-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
 }
 
 .ts-apply__type-desc {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--el-text-color-secondary);
 }
@@ -1439,7 +1439,7 @@ onBeforeUnmount(() => {
 .ts-apply__back {
   display: inline-block;
   margin-bottom: 4px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--el-color-primary);
   cursor: pointer;
   user-select: none;
@@ -1457,7 +1457,7 @@ onBeforeUnmount(() => {
   padding: 12px 14px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-path__head {
@@ -1486,18 +1486,18 @@ onBeforeUnmount(() => {
   min-width: 132px;
   padding: 8px 10px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   background: #fff;
 }
 
 .ts-path__node-name {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
   word-break: break-all;
 }
 
 .ts-path__node-approvers {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-text-color-regular);
   word-break: break-all;
 }
@@ -1507,12 +1507,12 @@ onBeforeUnmount(() => {
 }
 
 .ts-path__node-limit {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: #e6a23c;
 }
 
 .ts-path__node-cond {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.5;
   color: var(--ts-text-secondary);
 }
@@ -1538,8 +1538,8 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   margin-top: 8px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-md);
+  background: var(--ts-surface);
 }
 
 /* 不可报修：整块转为警示底色，避免「填完了才发现提交不了」 */
@@ -1553,13 +1553,13 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
 }
 
 .ts-fault__reason {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: #e6a23c;
 }

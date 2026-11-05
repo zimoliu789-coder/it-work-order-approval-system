@@ -195,7 +195,7 @@ function confirm(): void {
 <style scoped>
 .ts-cols__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
 }
@@ -232,13 +232,13 @@ function confirm(): void {
 }
 
 .ts-cols__item.is-over {
-  border-color: var(--ts-primary, #409eff);
+  border-color: var(--ts-accent, #2563eb);
 }
 
 .ts-cols__grip {
   cursor: grab;
   color: var(--ts-text-secondary);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1;
   user-select: none;
 }

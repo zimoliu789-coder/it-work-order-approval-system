@@ -436,7 +436,7 @@ onMounted(() => {
   gap: 4px;
   align-items: center;
   margin-bottom: 4px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--el-color-primary);
   cursor: pointer;
   user-select: none;
@@ -450,13 +450,13 @@ onMounted(() => {
 
 .ts-custom-apply__title {
   margin: 8px 0 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-custom-apply__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.7;
 }
 
@@ -480,12 +480,12 @@ onMounted(() => {
   max-width: 880px;
   padding: 10px 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-md);
+  background: var(--ts-surface);
 }
 
 .ts-custom-apply__path-node {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-custom-apply__path-node.is-skipped {
@@ -507,7 +507,7 @@ onMounted(() => {
   margin-bottom: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-custom-apply__choose-head {
@@ -532,7 +532,7 @@ onMounted(() => {
 
 .ts-custom-apply__choose-error {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-color-danger);
 }
 

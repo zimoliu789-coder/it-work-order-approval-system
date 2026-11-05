@@ -1,8 +1,8 @@
 /**
- * 全局样式 · 设计基座（ 浏览器兼容性与响应式 UI、 前端 UI 规范）
+ * 全局样式 · 设计基座
  *
  * ════════════════════════════════════════════════════════════════
- * 三档断点（全站唯一口径，页面级不要再自造阈值）
+ * 一、三档断点（全站唯一口径，页面级不要再自造阈值）
  * ════════════════════════════════════════════════════════════════
  *   外屏 / 手机    ≤ 767px     抽屉菜单 + 卡片列表 + 44px 触控
  *   内屏 / 平板    768–1023px  图标栏 + 表格 + 40px 触控（折叠屏展开态落在这里）
@@ -11,56 +11,216 @@
  * 为什么平板档上界是 1023 而不是 1199：
  *   1024–1199 这段宽度下「完整侧栏 + 表格」是**可用**的，没必要降级；
  *   而折叠屏内屏（展开态 CSS 视口约 410→830px）最高只到 ≈830px，
- *   768–1023 已完全覆盖。旧的 1199 会把折叠屏内屏和「半吊子区」混在一起。
+ *   768–1023 已完全覆盖。
  *
- * ⚠️ 本文件里 Element Plus 覆盖的**书写顺序即优先级**（媒体查询不增加权重）。
- *    顺序固定为：基座覆盖（桌面档） → 手机档 → 平板档。
- *    新增规则时**只能往后追加**，插到前面会被后面的同权重规则盖掉。
+ * ════════════════════════════════════════════════════════════════
+ * 二、Element Plus 覆盖的书写顺序即优先级（2026-11 重排）
+ * ════════════════════════════════════════════════════════════════
+ * 媒体查询不增加权重，同权重下后写的赢。因此本文件顺序固定为：
+ *   令牌 → 基础重置 → 工具类 → EP 基座（桌面档）→ 手机档 → 平板档 → 无障碍降级
+ * 新增规则**只能往对应段落里加**，不要把手机档规则写到基座段之前（会被压回去）。
+ *
+ * 两条踩过的坑：
+ *   ① 只写 `.el-form-item { … }` 会被 EP 后注入的声明盖掉，属覆盖必须提权；
+ *   ② EP 的**尺寸**变量（--el-component-size / --el-input-height /
+ *      --el-form-item-margin-bottom）声明在**组件根元素自身**上，写进 :root 无效，
+ *      必须就近覆盖；只有**颜色/字体**变量在 :root 定义、可被 body 上的覆盖接住。
+ *
+ * ════════════════════════════════════════════════════════════════
+ * 三、2026-11 视觉重构的四个决定（改之前先读）
+ * ════════════════════════════════════════════════════════════════
+ * ① 配色：从「深海军蓝 #1f3a5f + 亮蓝 #1668dc」换成
+ *    「深石板侧栏 #16202e + 单一强调色 #2563eb + 冷中性灰阶」。
+ *    原因：原亮蓝在白底上对比 4.3:1（12px 文字不达标），且 success/warning
+ *    被当装饰色用了 35 处，语义色失去语义。新色板所有正文对比 ≥ 4.5:1。
+ * ② 语义色只表达状态：success / warning / danger / info 不再用于装饰，
+ *    需要「浅底 + 深字」时用对应的 -soft / -border 三件套。
+ * ③ 字号：表格与说明用 13px（原 12px），正文 14px，卡片标题 16px，
+ *    页面标题 20px。**页面里不要再出现 15 / 17 / 18 / 19px** ——
+ *    改造前全站并存 10/11/12/13/14/15/16/17/18/19/20/22/26/40 十四档，
+ *    「层级」全靠 1px 微差，读者看不出主次。
+ * ④ 内容区不再叠加内边距：原 `.ts-layout__content` 24px + `.ts-page` 16px
+ *    = 左右各 40px，页面内容被挤在中间而卡片宽度仍然不一。
+ *    现在 content 只管滚动与居中，留白统一由 `.ts-page` 负责（24 / 20 / 16 三档）。
  */
 
 :root {
-  --ts-primary: #1f3a5f;
-  --ts-primary-light: #2f5b8f;
-  --ts-accent: #1668dc;
-  --ts-bg: #f4f6f9;
-  --ts-surface: #ffffff;
-  --ts-border: #e3e8ef;
-  --ts-text: #1f2937;
-  --ts-text-secondary: #5b6472;
-  --ts-text-hint: #97a0ad;
-  --ts-danger: #d93025;
-  --ts-warning: #d48806;
+  /* ── 中性色阶（冷灰，与深色侧栏同一色温）──────────────────── */
+  --ts-bg: #f4f6f8;              /* 页面底色 */
+  --ts-surface: #ffffff;         /* 卡片 / 表格 */
+  --ts-surface-sunken: #f9fafb;  /* 表头、斑马纹、工具条 */
+  --ts-surface-hover: #f2f4f7;   /* 行悬停、图标按钮悬停 */
+  --ts-border: #e5e8ee;          /* 常规分隔线 */
+  --ts-border-strong: #d3d9e2;   /* 需要更明确的分界（输入框描边） */
 
-  /* 布局尺寸 */
-  --ts-header-height: 56px;
-  --ts-sidebar-width: 220px;
-  --ts-radius: 10px;
+  --ts-text: #101828;            /* 主文本 16.5:1 */
+  --ts-text-secondary: #475467;  /* 次要文本 7.6:1 */
+  --ts-text-hint: #6b7785;       /* 辅助文本 4.6:1（原 #97a0ad 只有 2.6:1，不达标） */
+  --ts-text-inverse: #ffffff;
 
-  /* 移动端安全区域（刘海屏 / 底部手势条） */
-  --ts-safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* ── 侧栏 / 品牌深色 ──────────────────────────────────────── */
+  --ts-nav-bg: #16202e;
+  --ts-nav-bg-hover: #1f2b3d;
+  --ts-nav-bg-active: #2563eb;   /* 选中项整块高亮，不用左侧色条（避免 AI 味） */
+  --ts-nav-text: #a9b6c9;        /* 深底上约 7:1 */
+  --ts-nav-text-muted: #7c8aa0;  /* 分组标题 */
+  --ts-nav-divider: rgb(255 255 255 / 8%);
 
-  /* ============================================================
-     字号层级（治「全站 87% 文字挤在 12 / 14 两档」）
-     原状全站并存 11 / 12 / 13 / 14 / 15 / 16 / 20px 七个档，
-     这里收敛为 4 档 —— 13px / 15px 并入相邻档，11px 提到 12px。
-     页面里原有的 13 / 15px 写法暂不强改，等基座生效后逐页替换。
-     ============================================================ */
-  --ts-fs-page: 20px;    /* 页面标题（原状全站只出现 3 次） */
-  --ts-fs-card: 16px;    /* 卡片 / 区块标题 */
-  --ts-fs-body: 14px;    /* 正文、表单标签、按钮 */
-  --ts-fs-caption: 12px; /* 说明、辅助、表格 */
+  /* ── 强调色（唯一主色，用于主动作 / 当前选中 / 状态指示）───── */
+  --ts-accent: #2563eb;          /* 白字对比 5.2:1 */
+  --ts-accent-hover: #1d4ed8;
+  --ts-accent-active: #1e40af;
+  --ts-accent-soft: #eff4ff;     /* 浅底（选中的次级区块） */
+  --ts-accent-border: #bfd3fe;
 
-  /* ============================================================
-     8px 栅格间距（治「间距无基准」）
-     ============================================================ */
+  /* ── 语义色：只表达状态，三件套（主色 / 浅底 / 描边）────────── */
+  --ts-success: #067647;
+  --ts-success-soft: #ecfdf3;
+  --ts-success-border: #abefc6;
+
+  --ts-warning: #b54708;
+  --ts-warning-soft: #fffaeb;
+  --ts-warning-border: #fedf89;
+
+  --ts-danger: #b42318;
+  --ts-danger-soft: #fef3f2;
+  --ts-danger-border: #fecdca;
+
+  --ts-info: #475467;
+  --ts-info-soft: #f2f4f7;
+  --ts-info-border: #e4e7ec;
+
+  /*
+   * 兼容旧变量名（页面里已有引用，逐步替换，不做一次性大扫除）。
+   * ⚠️ --ts-primary-light 现在被「当前参数分组」当**浅底**用
+   *    （views/system/config/index.vue: background: var(--ts-primary-light, #ecf3ff)），
+   *    因此这里必须给浅色。曾经想把它改成深色以贴合新侧栏，结果会造成
+   *    深底 + 深字，整块文字看不见 —— 改这个变量前先看引用点。
+   */
+  --ts-primary: #16202e;
+  --ts-primary-light: #eff4ff;
+
+  /* ── 字号（5 档，页面里只允许这几档）──────────────────────── */
+  --ts-fs-display: 28px;  /* 登录页 / 首启向导的大标题 */
+  --ts-fs-page: 20px;     /* 页面标题 */
+  --ts-fs-card: 16px;     /* 卡片 / 区块标题 */
+  --ts-fs-body: 14px;     /* 正文、表单标签、按钮 */
+  --ts-fs-caption: 13px;  /* 表格、说明、辅助（原 12px 中文偏小）*/
+  --ts-fs-micro: 12px;    /* 角标、徽标、页脚（唯一的 12px 出口）*/
+
+  --ts-lh-tight: 1.35;
+  --ts-lh-body: 1.6;
+
+  /* ── 间距（4px 栅格，页面里只允许这些值）──────────────────── */
   --ts-sp-1: 4px;
   --ts-sp-2: 8px;
   --ts-sp-3: 12px;
   --ts-sp-4: 16px;
+  --ts-sp-5: 20px;
   --ts-sp-6: 24px;
   --ts-sp-8: 32px;
+  --ts-sp-12: 48px;
+
+  /* ── 圆角（3 档 + 胶囊）───────────────────────────────────── */
+  --ts-r-sm: 6px;    /* 输入框、小标签、行内按钮 */
+  --ts-r-md: 10px;   /* 卡片、常规按钮、下拉 */
+  --ts-r-lg: 14px;   /* 弹窗、抽屉、大面板 */
+  --ts-r-pill: 999px;
+
+  /* ── 阴影（2 档，后台不用重投影）──────────────────────────── */
+  --ts-shadow-sm: 0 1px 2px rgb(16 24 40 / 6%);
+  --ts-shadow-md: 0 8px 24px rgb(16 24 40 / 10%), 0 2px 6px rgb(16 24 40 / 6%);
+
+  /* ── 动效（后台 150–250ms，只表达状态）────────────────────── */
+  --ts-dur-fast: 120ms;
+  --ts-dur: 180ms;
+  --ts-dur-slow: 240ms;
+  --ts-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── 布局尺寸 ─────────────────────────────────────────────── */
+  --ts-header-height: 56px;
+  --ts-sidebar-width: 240px;
+  --ts-sidebar-collapsed: 64px;
+  --ts-content-max: 1200px;
+  --ts-radius: var(--ts-r-md); /* 兼容旧引用 */
+
+  /* 移动端安全区域（刘海屏 / 底部手势条） */
+  --ts-safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* 焦点环：键盘用户必须看得见，鼠标点击不显示（:focus-visible） */
+  --ts-focus-ring: 0 0 0 3px rgb(37 99 235 / 30%);
 }
 
+/* ============================================================
+   Element Plus 颜色令牌对齐
+   ────────────────────────────────────────────────────────────
+   写在 body 上而不是 :root：EP 自己的 :root 是在运行时后注入的，
+   同权重下后写者赢；body 上的声明不与之竞争，而是靠**继承**接管
+   body 子树里所有 EP 组件 —— 这比逐个组件提权稳。
+   ============================================================ */
+body {
+  --el-color-primary: var(--ts-accent);
+  --el-color-primary-light-3: #5b86f0;
+  --el-color-primary-light-5: #8fadf5;
+  --el-color-primary-light-7: #c3d3fa;
+  --el-color-primary-light-8: #dbe4fc;
+  --el-color-primary-light-9: var(--ts-accent-soft);
+  --el-color-primary-dark-2: var(--ts-accent-hover);
+
+  --el-color-success: var(--ts-success);
+  --el-color-success-light-9: var(--ts-success-soft);
+  --el-color-warning: var(--ts-warning);
+  --el-color-warning-light-9: var(--ts-warning-soft);
+  --el-color-danger: var(--ts-danger);
+  --el-color-danger-light-9: var(--ts-danger-soft);
+  --el-color-error: var(--ts-danger);
+  --el-color-error-light-9: var(--ts-danger-soft);
+  --el-color-info: var(--ts-info);
+  --el-color-info-light-9: var(--ts-info-soft);
+
+  --el-text-color-primary: var(--ts-text);
+  --el-text-color-regular: var(--ts-text-secondary);
+  --el-text-color-secondary: var(--ts-text-hint);
+  --el-text-color-placeholder: #98a2b3;
+  --el-text-color-disabled: #b6bec9;
+
+  --el-border-color: var(--ts-border-strong);
+  --el-border-color-light: var(--ts-border);
+  --el-border-color-lighter: var(--ts-border);
+  --el-border-color-extra-light: var(--ts-surface-sunken);
+  --el-border-color-dark: var(--ts-border-strong);
+
+  --el-fill-color: var(--ts-surface-sunken);
+  --el-fill-color-light: var(--ts-surface-sunken);
+  --el-fill-color-lighter: var(--ts-surface-sunken);
+  --el-fill-color-blank: var(--ts-surface);
+  --el-bg-color: var(--ts-surface);
+  --el-bg-color-page: var(--ts-bg);
+  --el-bg-color-overlay: var(--ts-surface);
+
+  --el-border-radius-base: var(--ts-r-md);
+  --el-border-radius-small: var(--ts-r-sm);
+  --el-border-radius-round: var(--ts-r-pill);
+
+  --el-font-size-base: var(--ts-fs-body);
+  --el-box-shadow-light: var(--ts-shadow-sm);
+  --el-box-shadow: var(--ts-shadow-md);
+
+  /*
+   * 字体：只用系统字体栈，不引入 webfont。
+   * 三个理由：① 中文界面 95% 的字是汉字，Inter 只影响拉丁字母；
+   * ② 不加载 webfont = 首屏零字体请求、无 FOUT；③ Inter 是最泛滥的
+   * 「AI 生成界面」字体，放在字体栈首位等于给界面盖章。
+   * 中文优先 PingFang（macOS/iOS）/ 微软雅黑（Windows），拉丁与数字由
+   * Segoe UI / system-ui 接管，二者视觉重量接近，混排不跳。
+   */
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* ============================================================
+   基础重置
+   ============================================================ */
 * {
   box-sizing: border-box;
 }
@@ -74,49 +234,69 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: var(--ts-fs-body);
+  line-height: var(--ts-lh-body);
   color: var(--ts-text);
   background-color: var(--ts-bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-}
-
-/* 禁止无意义的横向滚动（ 明确要求） */
-body {
+  /* 禁止无意义的横向滚动（明确要求） */
   overflow-x: hidden;
+  font-variant-numeric: tabular-nums; /* 表格数字对齐，扫读更快 */
 }
 
 a {
   color: var(--ts-accent);
   text-decoration: none;
+  transition: color var(--ts-dur-fast) var(--ts-ease);
 }
 
-/* 手机档的弹窗与表单（触控目标统一放在文件末尾，见下方「手机档」） */
-@media (max-width: 767px) {
-  /* 移动端弹窗贴合屏幕，避免超出可视区域 */
-  .el-dialog {
-    width: calc(100vw - 24px) !important;
-    margin: 12vh auto 0 !important;
-  }
-
-  .el-dialog__body {
-    padding: 16px;
-  }
+a:hover {
+  color: var(--ts-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-/* 通用工具类 */
+::selection {
+  background: var(--ts-accent-soft);
+  color: var(--ts-text);
+}
+
+/*
+ * 键盘焦点环（全站唯一实现）。
+ * 用 :focus-visible 而不是 :focus —— 鼠标点击不应出现焦点框，
+ * 否则每个按钮点一下都戴个蓝圈，界面显得毛躁。
+ * EP 自己对 .el-button 写死了 outline: none，所以这里要提权覆盖。
+ */
+:focus-visible {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+}
+
+.el-button:focus-visible,
+.el-input__wrapper:focus-within,
+.el-select__wrapper:focus-within {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+/* ============================================================
+   工具类
+   ============================================================ */
 .ts-page {
-  padding: 16px;
+  /* 内容区的留白只在这里定义一次（content 不再叠加） */
+  padding: var(--ts-sp-6);
+  max-width: var(--ts-content-max);
+  margin: 0 auto;
 }
 
 .ts-card {
   background: var(--ts-surface);
-  border-radius: var(--ts-radius);
+  border-radius: var(--ts-r-md);
   border: 1px solid var(--ts-border);
-  padding: 20px;
+  padding: var(--ts-sp-5);
 }
 
 .ts-text-secondary {
@@ -125,19 +305,13 @@ a {
 
 .ts-text-hint {
   color: var(--ts-text-hint);
+  font-size: var(--ts-fs-caption);
+  line-height: var(--ts-lh-body);
 }
 
-.ts-mt-8 {
-  margin-top: 8px;
-}
-
-.ts-mt-16 {
-  margin-top: 16px;
-}
-
-.ts-mb-16 {
-  margin-bottom: 16px;
-}
+.ts-mt-8 { margin-top: var(--ts-sp-2); }
+.ts-mt-16 { margin-top: var(--ts-sp-4); }
+.ts-mb-16 { margin-bottom: var(--ts-sp-4); }
 
 .ts-flex-between {
   display: flex;
@@ -146,126 +320,266 @@ a {
 }
 
 /* 移动端隐藏 PC 专用元素 */
-.ts-pc-only {
-  display: block;
-}
-
-.ts-mobile-only {
-  display: none;
-}
-
-@media (max-width: 767px) {
-  .ts-pc-only {
-    display: none !important;
-  }
-
-  .ts-mobile-only {
-    display: block !important;
-  }
-
-  .ts-page {
-    padding: 12px;
-  }
-}
+.ts-pc-only { display: block; }
+.ts-mobile-only { display: none; }
 
 /* ============================================================
    Element Plus 基座覆盖（桌面档）
    ────────────────────────────────────────────────────────────
-   全站**只有这一处**覆盖 el-table / el-form / el-button 的默认尺寸。
-   页面内不要再各写各的，否则又会回到「七种字号 / 五种控件高度」的状态。
-
-   ⚠️ 两条必须记住的坑（都在浏览器里实测确认过）：
-   ① 同权重规则**靠加载顺序**判胜负。EP 的样式表在运行时**后注入**，
-      所以只写 `.el-form-item { … }` 会被 EP 自己的声明盖掉。
-      凡是要覆盖 EP 的，都要**提权**（见下面 form 那两条）。
-   ② EP 的尺寸变量（`--el-component-size` / `--el-input-height` /
-      `--el-form-item-margin-bottom` …）是声明在**组件根元素自身**上的，
-      写进 `:root` 无效 —— 必须就近覆盖。
+   全站只有这一处统一 el-table / el-form / el-button 的尺寸。
+   页面内不要再各写各的，否则又会回到「七种字号 / 五种控件高度」。
    ============================================================ */
 
-/* ---------- 表格：表头必须与数据行「长得不一样」 ----------
-   实测原状：表头与数据行同为 32px、同为 12px、表头无底色 →
-   用户第一眼找不到表头在哪。
-   作用域限定 .ts-table-page__table（TablePage 渲染的页面主表）：
+/* ---------- 按钮：三档高度 + 明确的视觉层级 ----------
+   改造前实测：163 处 size="small"、高度在 20/32/40px 间跳，
+   且 success/warning 被当装饰色 → 主要动作与次要动作长得一样。
+   现在：默认 34px（桌面主操作），small 28px（行内/次要），
+   表格行内统一 28px；hover 只变底色不位移（后台不做浮起动画）。 */
+.el-button {
+  --el-button-font-weight: 500;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: var(--ts-r-md);
+  font-size: var(--ts-fs-body);
+  transition: background-color var(--ts-dur-fast) var(--ts-ease),
+    border-color var(--ts-dur-fast) var(--ts-ease), color var(--ts-dur-fast) var(--ts-ease),
+    box-shadow var(--ts-dur-fast) var(--ts-ease);
+}
+
+.el-button--small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: var(--ts-fs-caption);
+  border-radius: var(--ts-r-sm);
+}
+
+.el-button--large {
+  min-height: 40px;
+  padding: 0 18px;
+  font-size: var(--ts-fs-body);
+}
+
+/* 次要按钮（默认样式）：白底 + 描边，hover 才出现底色 */
+.el-button:not(.is-text):not(.is-link) {
+  background: var(--ts-surface);
+  border-color: var(--ts-border-strong);
+  color: var(--ts-text);
+}
+
+.el-button:not(.is-text):not(.is-link):hover {
+  background: var(--ts-surface-hover);
+  border-color: var(--ts-accent-border);
+  color: var(--ts-accent);
+}
+
+/* 主动作：实心强调色，一屏最多一个 */
+.el-button--primary {
+  --el-button-bg-color: var(--ts-accent);
+  --el-button-border-color: var(--ts-accent);
+  --el-button-hover-bg-color: var(--ts-accent-hover);
+  --el-button-hover-border-color: var(--ts-accent-hover);
+  --el-button-active-bg-color: var(--ts-accent-active);
+  --el-button-active-border-color: var(--ts-accent-active);
+  color: #fff;
+}
+
+/* 危险动作：只用主色表达，不用浅底大色块 */
+.el-button--danger {
+  --el-button-bg-color: var(--ts-danger);
+  --el-button-border-color: var(--ts-danger);
+  --el-button-hover-bg-color: #912018;
+  --el-button-hover-border-color: #912018;
+  color: #fff;
+}
+
+/*
+ * success / warning / info 保留给「状态动作」（通过、驳回原因入口等），
+ * 但统一压成描边风格，避免满屏彩色实心按钮把主次关系打乱。
+ */
+.el-button--success,
+.el-button--warning,
+.el-button--info {
+  background: var(--ts-surface);
+  border-color: currentcolor;
+}
+
+.el-button--success { color: var(--ts-success); }
+.el-button--warning { color: var(--ts-warning); }
+.el-button--info { color: var(--ts-info); }
+
+.el-button--success:hover { background: var(--ts-success-soft); }
+.el-button--warning:hover { background: var(--ts-warning-soft); }
+.el-button--info:hover { background: var(--ts-info-soft); }
+
+.el-button.is-disabled,
+.el-button.is-disabled:hover {
+  background: var(--ts-surface-sunken);
+  border-color: var(--ts-border);
+  color: var(--ts-text-hint);
+  cursor: not-allowed;
+}
+
+/* ---------- 输入框：统一 34px，描边与焦点态一致 ---------- */
+.el-input__inner,
+.el-select__wrapper,
+.el-textarea__inner {
+  min-height: 34px;
+  font-size: var(--ts-fs-body);
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: var(--ts-r-sm);
+  box-shadow: 0 0 0 1px var(--ts-border-strong) inset;
+  transition: box-shadow var(--ts-dur-fast) var(--ts-ease);
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--ts-text-hint) inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--ts-accent) inset, var(--ts-focus-ring);
+}
+
+/* ---------- 表格：表头与数据行必须长得不一样 ----------
+   作用域限定 .ts-table-page__table（TablePage 渲染的页面主表），
    弹窗 / 抽屉里的 el-table 保持 EP 紧凑档，不被撑高。 */
 .ts-table-page__table th.el-table__cell {
   height: 40px;
-  padding: 0 12px;
+  padding: 0 var(--ts-sp-3);
   font-size: var(--ts-fs-caption);
   font-weight: 600;
-  color: var(--ts-text);
-  background: var(--ts-bg);
+  color: var(--ts-text-secondary);
+  background: var(--ts-surface-sunken);
+  letter-spacing: 0.01em;
 }
 
 .ts-table-page__table td.el-table__cell {
-  height: 44px;
-  padding: 0 12px;
+  height: 48px;
+  padding: 0 var(--ts-sp-3);
   font-size: var(--ts-fs-caption);
   color: var(--ts-text);
 }
 
-/* 斑马纹：原状组件已传 stripe，但底色贴近白色、看不出差异 —— 给一个可辨识的值 */
 .ts-table-page__table.el-table--striped
   .el-table__body tr.el-table__row--striped td.el-table__cell {
-  background: #fafbfc;
+  background: var(--ts-surface-sunken);
 }
 
-/* 悬停高亮 */
 .ts-table-page__table .el-table__body tr:hover > td.el-table__cell {
-  background: #f5f7fa;
+  background: var(--ts-surface-hover);
 }
 
-/* 表头与表体之间的分隔线加重一档 */
 .ts-table-page__table th.el-table__cell.is-leaf {
   border-bottom: 1px solid var(--ts-border);
 }
 
+/* 行内操作按钮：统一 28px，避免密集表格被撑高 */
+.ts-table-page__table .cell > .el-button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: var(--ts-fs-caption);
+}
+
 /* ---------- 表单：标签与控件拉开 ----------
-   ⚠️ 权重必须高于 EP 的 `.el-form-item`（同为 0,1,0 时会输给后注入的 EP），
-      所以这里用 `form .el-form-item` / `.el-form .el-form-item`（0,1,1）。 */
+   ⚠️ 权重必须高于 EP 的 .el-form-item（同为 0,1,0 时会输给后注入的 EP），
+      所以用 form .el-form-item / .el-form .el-form-item（0,1,1）。 */
 form .el-form-item,
 .el-form .el-form-item {
-  --el-form-item-margin-bottom: var(--ts-sp-6);
-  margin-bottom: var(--ts-sp-6);
+  --el-form-item-margin-bottom: var(--ts-sp-5);
+  margin-bottom: var(--ts-sp-5);
 }
 
 .el-form-item__label {
   font-size: var(--ts-fs-body);
   color: var(--ts-text);
+  line-height: var(--ts-lh-tight);
 }
 
-/* ---------- 按钮：统一最小高度 ----------（原状实测在 20 / 32 / 40px 之间跳） */
-.el-button {
-  min-height: 32px;
-}
-
-/* ---------- 输入框：统一高度 ----------（原状实测 24 / 30 / 32 / 38px 混用） */
-.el-input__inner,
-.el-select__wrapper,
-.el-textarea__inner {
-  min-height: 32px;
-}
-
-/* ---------- 卡片标题：全站一个规格 ----------（原状 15px / 16px 两种实现并存） */
+/* ---------- 卡片标题：全站一个规格 ---------- */
 .ts-card > h3,
 .ts-card > .ts-card__title {
   font-size: var(--ts-fs-card);
   font-weight: 600;
+  line-height: var(--ts-lh-tight);
   margin: 0 0 var(--ts-sp-4);
+}
+
+/* ---------- 弹窗 / 抽屉：更大圆角与稳定阴影 ---------- */
+.el-dialog {
+  border-radius: var(--ts-r-lg);
+  box-shadow: var(--ts-shadow-md);
+}
+
+.el-dialog__header {
+  padding: var(--ts-sp-5) var(--ts-sp-6) var(--ts-sp-3);
+  margin-right: 0;
+  border-bottom: 1px solid var(--ts-border);
+}
+
+.el-dialog__title {
+  font-size: var(--ts-fs-card);
+  font-weight: 600;
+  color: var(--ts-text);
+}
+
+.el-dialog__body {
+  padding: var(--ts-sp-5) var(--ts-sp-6);
+}
+
+.el-dialog__footer {
+  padding: var(--ts-sp-3) var(--ts-sp-6) var(--ts-sp-5);
+  border-top: 1px solid var(--ts-border);
+}
+
+.el-drawer__header {
+  margin-bottom: 0;
+  padding: var(--ts-sp-4) var(--ts-sp-5);
+  border-bottom: 1px solid var(--ts-border);
+  font-size: var(--ts-fs-card);
+  font-weight: 600;
+  color: var(--ts-text);
+}
+
+/* ---------- 下拉 / 卡片型浮层：统一的阴影与圆角 ---------- */
+.el-popper.is-light,
+.el-dropdown__popper,
+.el-select__popper {
+  border-radius: var(--ts-r-md) !important;
+  border-color: var(--ts-border) !important;
+  box-shadow: var(--ts-shadow-md) !important;
+}
+
+/* ---------- 分页：与操作条同高 ---------- */
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+  font-size: var(--ts-fs-caption);
 }
 
 /* ============================================================
    手机档 ≤767px：触控目标 ≥44px（WCAG 2.5.5）
-   ────────────────────────────────────────────────────────────
-   ⚠️ 必须放在文件**最末尾**：媒体查询**不增加权重**，
-      同权重下后写的赢 —— 把本块放在基座覆盖之前，
-      就会被上面的 32px 压回去（现象是 matchMedia 命中但高度没变）。
+   ⚠️ 必须在基座覆盖之后：媒体查询不加权重，同权重下后写的赢。
    ============================================================ */
 @media (max-width: 767px) {
+  .ts-page {
+    padding: var(--ts-sp-4);
+  }
+
   .el-button {
     min-height: 44px;
     min-width: 44px;
     padding: 0 14px;
+  }
+
+  .el-button--small {
+    min-height: 40px;
+    padding: 0 12px;
   }
 
   .el-input__inner,
@@ -292,7 +606,17 @@ form .el-form-item,
     margin: 2px 4px 2px 0;
   }
 
-  /* 表单在手机上保持紧凑（16px）；权重与基座覆盖持平，靠位置在后获胜 */
+  /* 弹窗贴合屏幕 */
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin: 12vh auto 0 !important;
+  }
+
+  .el-dialog__body {
+    padding: var(--ts-sp-4);
+  }
+
+  /* 表单在手机上保持紧凑 */
   form .el-form-item,
   .el-form .el-form-item {
     --el-form-item-margin-bottom: var(--ts-sp-4);
@@ -303,15 +627,16 @@ form .el-form-item,
 /* ============================================================
    内屏 / 平板档 768–1023px：触控目标 40px
    ────────────────────────────────────────────────────────────
-   折叠屏展开态就落在这一档，而原状**这一档完全没处理** ——
+   折叠屏展开态落在这一档，而改造前这一档完全没处理 ——
    所以折叠屏的问题不是「新问题」，是「空的中间档」被暴露。
-
-   为什么是 40px 而不是 Google 建议的 48px：
-     内屏信息密度远高于手机，48px 会让 /asset/ledger（单页 90+ 控件）
-     明显臃肿、反而影响扫读。40px 是「触控可达」与「密度可控」的折中，
-     且已高于桌面档的 32px。**手机档仍是 44px，不下调。**
+   40px 而非 48px：内屏信息密度高，48px 会让单页 90+ 控件的台账
+   明显臃肿；40px 已高于桌面档且仍可触达。
    ============================================================ */
 @media (min-width: 768px) and (max-width: 1023px) {
+  .ts-page {
+    padding: var(--ts-sp-5);
+  }
+
   .ts-table-page__bar .el-button,
   .ts-table-page__pager .el-button,
   .ts-layout__header .el-button,
@@ -339,5 +664,23 @@ form .el-form-item,
   .el-table .cell > .el-button {
     min-height: 30px;
     padding: 0 10px;
+  }
+}
+
+/* ============================================================
+   无障碍：尊重系统「减少动态效果」
+   ────────────────────────────────────────────────────────────
+   前庭功能敏感用户会因位移动画眩晕；这不是偏好，是健康需求。
+   注意只关动画，**不隐藏内容** —— 有实现会把 .reveal 设成 opacity:0
+   等动画触发，一旦动画被禁用，内容就永远不出现。
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

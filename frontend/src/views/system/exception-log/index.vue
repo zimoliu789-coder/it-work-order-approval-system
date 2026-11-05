@@ -340,7 +340,7 @@ onMounted(() => {
 }
 
 .ts-exlog__stat-label {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
 }
 
@@ -350,7 +350,7 @@ onMounted(() => {
 }
 
 .ts-exlog__stat-hint {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-exlog__filters {
@@ -393,7 +393,7 @@ onMounted(() => {
 .ts-exlog__card-row {
   display: flex;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.9;
 }
 
@@ -403,7 +403,7 @@ onMounted(() => {
 
 .ts-exlog__card-msg {
   margin: 6px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
   word-break: break-all;
 }
@@ -419,7 +419,7 @@ onMounted(() => {
   padding: 12px;
   overflow: auto;
   font-family: Consolas, Monaco, 'Courier New', monospace;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;

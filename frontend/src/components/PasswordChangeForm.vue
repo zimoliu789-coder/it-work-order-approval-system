@@ -210,7 +210,7 @@ defineExpose({ submit })
 
 .ts-pwd-form__strength {
   margin: -8px 0 16px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-pwd-form__actions {

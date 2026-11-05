@@ -361,7 +361,7 @@ onMounted(() => {
 
 .ts-logs__detail-title {
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 600;
   color: var(--ts-text-secondary);
 }
@@ -372,10 +372,10 @@ onMounted(() => {
   max-height: 320px;
   overflow: auto;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   background: #f7f8fa;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
@@ -391,7 +391,7 @@ onMounted(() => {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-logs__card-head {
@@ -404,12 +404,12 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-logs__card-detail {
   margin: 8px 0 4px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
   word-break: break-all;

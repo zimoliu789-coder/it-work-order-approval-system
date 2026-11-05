@@ -31,7 +31,7 @@ const router = useRouter()
 
 .ts-error__hint {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   text-align: center;
   color: var(--ts-text-hint);
 }

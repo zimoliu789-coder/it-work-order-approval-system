@@ -272,7 +272,7 @@ async function removeItem(item: AttachmentItem): Promise<void> {
 }
 
 .ts-attach__title {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
 }
 
@@ -282,7 +282,7 @@ async function removeItem(item: AttachmentItem): Promise<void> {
 
 .ts-attach__hint {
   margin: 6px 0 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-attach__list {
@@ -333,7 +333,7 @@ async function removeItem(item: AttachmentItem): Promise<void> {
   padding: 0;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   text-align: left;
   color: var(--el-color-primary);
   cursor: pointer;
@@ -350,7 +350,7 @@ async function removeItem(item: AttachmentItem): Promise<void> {
 .ts-attach__empty {
   margin: 0;
   padding: 12px 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   text-align: center;
 }
 

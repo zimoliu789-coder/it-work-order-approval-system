@@ -725,13 +725,13 @@ function deviceText(item: DeviceFaultItem): string {
 
 .ts-df__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-df__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -762,13 +762,13 @@ function deviceText(item: DeviceFaultItem): string {
 
 .ts-df__hint {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
 .ts-df__warn {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--el-color-danger);
 }
@@ -783,7 +783,7 @@ function deviceText(item: DeviceFaultItem): string {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-df__card-title {
@@ -800,7 +800,7 @@ function deviceText(item: DeviceFaultItem): string {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-df__card-actions {

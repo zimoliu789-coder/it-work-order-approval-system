@@ -1259,7 +1259,7 @@ onMounted(loadTypes)
 
 .ts-applycfg__sort-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-applycfg__grid {
@@ -1324,7 +1324,7 @@ onMounted(loadTypes)
 
 .ts-applycfg__card-title h4 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
 }
 
 .ts-applycfg__card-title p {
@@ -1356,7 +1356,7 @@ onMounted(loadTypes)
 .ts-applycfg__builtin-fixed {
   padding: 12px 14px;
   border: 1px dashed var(--el-border-color);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 /* 处理流程（V50）：下拉与单选说明同一宽度，避免每换一次通知方式行宽就跳一下 */
@@ -1366,7 +1366,7 @@ onMounted(loadTypes)
 
 .ts-applycfg__inline-hint {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -1426,7 +1426,7 @@ onMounted(loadTypes)
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   border: 1px solid var(--el-border-color);
   cursor: pointer;
   font-size: 17px;

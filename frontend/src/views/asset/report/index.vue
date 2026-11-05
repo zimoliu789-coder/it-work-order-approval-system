@@ -543,7 +543,7 @@ onMounted(() => {
 
 .ts-rpt__overview-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 600;
 }
 
@@ -561,7 +561,7 @@ onMounted(() => {
 
 .ts-rpt__chart-title {
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--el-text-color-regular);
 }
 
@@ -577,13 +577,13 @@ onMounted(() => {
 
 .ts-rpt__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-rpt__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -616,12 +616,12 @@ onMounted(() => {
   gap: 6px;
   padding: 12px 14px;
   background: #f7f9fc;
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .ts-rpt__stat-sub {
   color: var(--el-text-color-secondary);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.4;
 }
 
@@ -632,7 +632,7 @@ onMounted(() => {
 }
 
 .ts-rpt__stat-danger {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   font-weight: 400;
   color: var(--el-color-danger);
 }
@@ -645,7 +645,7 @@ onMounted(() => {
 
 .ts-rpt__note {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 @media (max-width: 767px) {

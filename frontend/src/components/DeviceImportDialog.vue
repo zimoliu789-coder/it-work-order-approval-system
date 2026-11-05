@@ -319,12 +319,12 @@ function rowClassName({ row }: { row: DeviceImportRowResult }): string {
 
 .ts-import__file {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-import__summary {
   margin: 8px 0 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-import__ok {

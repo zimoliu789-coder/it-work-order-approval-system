@@ -591,7 +591,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 .ts-oa__assign-empty {
   margin-top: 6px;
   color: var(--el-color-warning);
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.6;
 }
 
@@ -602,13 +602,13 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 
 .ts-oa__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-oa__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -622,7 +622,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-oa__card-title {
@@ -639,7 +639,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-oa__card-actions {
@@ -650,7 +650,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 
 .ts-oa__action-hint {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 

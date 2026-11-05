@@ -792,7 +792,7 @@ async function startOnlineUpgrade(): Promise<void> {
 
 .upgrade-page__notice-tip {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .upgrade-page__card {
@@ -822,7 +822,7 @@ async function startOnlineUpgrade(): Promise<void> {
 
 .upgrade-page__muted {
   color: var(--el-text-color-secondary);
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .upgrade-page__upload-icon {
@@ -861,7 +861,7 @@ async function startOnlineUpgrade(): Promise<void> {
 
 .upgrade-page__hint-detail {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   word-break: break-all;
 }
 
@@ -874,7 +874,7 @@ async function startOnlineUpgrade(): Promise<void> {
   align-items: baseline;
   gap: 6px;
   margin-bottom: 6px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 600;
   color: var(--el-color-primary);
   word-break: break-all;

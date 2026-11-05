@@ -43,7 +43,7 @@ const emit = defineEmits<{ (e: 'clear'): void }>()
   gap: 8px;
   margin-bottom: 8px;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
   background: #eef4fd;

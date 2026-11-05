@@ -53,7 +53,7 @@ defineProps<{
   align-items: flex-start;
   gap: 6px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   line-height: 1.7;
   color: var(--ts-text-secondary);
 }
@@ -62,12 +62,12 @@ defineProps<{
   margin-top: 3px;
   flex: 0 0 auto;
   color: #3f8f4f;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-policy__hint {
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-hint);
 }

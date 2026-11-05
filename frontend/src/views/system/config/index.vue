@@ -1162,13 +1162,13 @@ onBeforeUnmount(() => {
 
 .cfg__title {
   margin: 0 0 4px;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .cfg__subtitle {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .cfg__search {
@@ -1198,7 +1198,7 @@ onBeforeUnmount(() => {
 
 .cfg__nav-title {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary);
 }
 
@@ -1215,7 +1215,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 7px 8px;
   margin-bottom: 2px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-regular, #4b5563);
   cursor: pointer;
   border-radius: 6px;
@@ -1234,7 +1234,7 @@ onBeforeUnmount(() => {
 
 .cfg__nav-empty {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 /* ---------------- 右侧卡片 ---------------- */
@@ -1266,13 +1266,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 600;
 }
 
 .cfg__card-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .cfg__card-actions {
@@ -1303,14 +1303,14 @@ onBeforeUnmount(() => {
   gap: 6px;
   align-items: center;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 600;
   color: var(--ts-text-regular, #4b5563);
 }
 
 .cfg__section-desc {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.5;
 }
 
@@ -1331,7 +1331,7 @@ onBeforeUnmount(() => {
 
 .cfg__section-notes p {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
 }
@@ -1378,7 +1378,7 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 10px 12px;
   background: var(--ts-bg);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .cfg__field.is-span-short {
@@ -1411,7 +1411,7 @@ onBeforeUnmount(() => {
 
 .cfg__field-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.5;
   color: var(--ts-text-secondary);
 }
@@ -1429,12 +1429,12 @@ onBeforeUnmount(() => {
 }
 
 .cfg__field-unit {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   color: var(--ts-text-secondary);
 }
 
 .cfg__field-tip {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .cfg__field.is-error .cfg__control {
@@ -1443,7 +1443,7 @@ onBeforeUnmount(() => {
 
 .cfg__field-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--el-color-danger);
   text-align: left;
 }
@@ -1456,7 +1456,7 @@ onBeforeUnmount(() => {
 
 .cfg__card-notes p {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
   color: var(--ts-text-secondary);
 }
@@ -1472,7 +1472,7 @@ onBeforeUnmount(() => {
 }
 
 .cfg__footer-tip {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 /* logo 预览：与侧边栏 mark 同尺寸，看到的就是实际效果 */
@@ -1483,7 +1483,7 @@ onBeforeUnmount(() => {
   width: 44px;
   height: 44px;
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--ts-fs-body);
   font-weight: 500;
   color: #fff;
   background: var(--ts-primary);
@@ -1516,7 +1516,7 @@ onBeforeUnmount(() => {
 }
 
 .cfg__bar-status {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .cfg__bar-ok {

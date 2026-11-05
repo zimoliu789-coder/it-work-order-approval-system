@@ -1437,7 +1437,7 @@ function isOccupied(row: DeviceItem): boolean {
   gap: 10px;
   padding: 10px 12px;
   background: var(--el-fill-color-light);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .ts-dev__head {
@@ -1447,13 +1447,13 @@ function isOccupied(row: DeviceItem): boolean {
 
 .ts-dev__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-dev__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -1487,7 +1487,7 @@ function isOccupied(row: DeviceItem): boolean {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-dev__card-title {
@@ -1499,7 +1499,7 @@ function isOccupied(row: DeviceItem): boolean {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-dev__usage {
@@ -1524,7 +1524,7 @@ function isOccupied(row: DeviceItem): boolean {
 
 .ts-dev__fault-hint {
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 

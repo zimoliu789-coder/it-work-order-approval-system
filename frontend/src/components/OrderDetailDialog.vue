@@ -885,7 +885,7 @@ async function reloadAfterTransfer(): Promise<void> {
 
 .ts-order__node-step {
   color: var(--ts-text-secondary, #909399);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-order__node-name {
@@ -894,7 +894,7 @@ async function reloadAfterTransfer(): Promise<void> {
 
 /* ：FLOW 节点名旁边跟一个次要的审批人名字（两者都要显示，但主次分明） */
 .ts-order__node-approver {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   color: var(--ts-text-secondary, #909399);
 }
 
@@ -929,7 +929,7 @@ async function reloadAfterTransfer(): Promise<void> {
 
 .ts-order__comment {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -938,7 +938,7 @@ async function reloadAfterTransfer(): Promise<void> {
   margin-bottom: 12px;
   border: 1px solid var(--ts-border, #ebeef5);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-order__extend-head {
@@ -950,7 +950,7 @@ async function reloadAfterTransfer(): Promise<void> {
 
 .ts-order__extend-time {
   color: var(--ts-text-secondary, #909399);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-order__extend-range {
@@ -959,7 +959,7 @@ async function reloadAfterTransfer(): Promise<void> {
   gap: 8px;
   align-items: center;
   margin-top: 8px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-order__extend-arrow {

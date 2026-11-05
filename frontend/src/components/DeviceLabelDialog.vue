@@ -422,7 +422,7 @@ function close(): void {
 
 .lb__payload {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 /*
@@ -438,7 +438,7 @@ function close(): void {
   margin-top: 12px;
   overflow: auto;
   background: var(--ts-bg);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .lb__paper {
@@ -464,7 +464,7 @@ function close(): void {
 
 .lb__error {
   color: var(--el-color-danger);
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .lb__actions {
@@ -477,12 +477,12 @@ function close(): void {
   padding: 12px;
   margin-top: 12px;
   border: 1px dashed var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
 }
 
 .lb__calib-title {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   font-weight: 500;
 }
 

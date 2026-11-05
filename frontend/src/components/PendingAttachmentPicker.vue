@@ -132,7 +132,7 @@ function removeAt(index: number): void {
 }
 
 .ts-pick__label {
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-pick__input {
@@ -140,7 +140,7 @@ function removeAt(index: number): void {
 }
 
 .ts-pick__hint {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-pick__list {
@@ -168,7 +168,7 @@ function removeAt(index: number): void {
 .ts-pick__name {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
   word-break: break-all;
 }
 </style>

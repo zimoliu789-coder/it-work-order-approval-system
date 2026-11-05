@@ -629,13 +629,13 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 
 .ts-op__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-op__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -660,7 +660,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-op__card-title {
@@ -677,7 +677,7 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-op__card-actions {
@@ -697,13 +697,13 @@ function useTypeTagType(order: OrderItem): 'warning' | 'success' {
 
 .ts-op__deliver-hint {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
 .ts-op__confirm-effect {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 

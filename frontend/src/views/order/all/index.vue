@@ -764,13 +764,13 @@ function isTimeout(order: OrderItem): boolean {
 
 .ts-all__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--ts-fs-card);
   font-weight: 500;
 }
 
 .ts-all__desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   line-height: 1.6;
 }
 
@@ -819,7 +819,7 @@ function isTimeout(order: OrderItem): boolean {
   padding: 12px;
   border: 1px solid var(--ts-border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
 }
 
 .ts-all__card-title {
@@ -836,7 +836,7 @@ function isTimeout(order: OrderItem): boolean {
   justify-content: space-between;
   gap: 12px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-all__card-actions {

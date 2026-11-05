@@ -848,7 +848,7 @@ defineExpose({ publishProblems })
 .ts-designer__panel {
   padding: 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
+  border-radius: var(--ts-r-md);
   background: #fff;
 }
 
@@ -864,10 +864,10 @@ defineExpose({ publishProblems })
   align-items: center;
   justify-content: center;
   padding: 8px 6px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
   border: 1px dashed var(--ts-border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
   cursor: grab;
 }
 
@@ -916,7 +916,7 @@ defineExpose({ publishProblems })
   padding: 8px 10px;
   border: 1px solid var(--ts-border);
   border-radius: 6px;
-  background: #fbfcfe;
+  background: var(--ts-surface);
   cursor: pointer;
 }
 
@@ -937,11 +937,11 @@ defineExpose({ publishProblems })
   display: flex;
   gap: 6px;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--ts-fs-caption);
 }
 
 .ts-designer__card-summary {
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 .ts-designer__card-actions {
@@ -995,8 +995,8 @@ defineExpose({ publishProblems })
   justify-content: space-between;
   padding: 10px 12px;
   border: 1px solid var(--ts-border);
-  border-radius: 8px;
-  background: #fbfcfe;
+  border-radius: var(--ts-r-md);
+  background: var(--ts-surface);
 }
 
 .ts-designer__footer-actions {

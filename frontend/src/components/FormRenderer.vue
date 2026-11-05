@@ -740,16 +740,18 @@ watch(() => props.schema, loadRefOptions)
   margin-bottom: 16px;
 }
 
-/* 布局元素占满整行，且不需要 label 列 */
+/* 布局元素占满整行，且不需要 label 列。
+   改造前是「灰底 + 左侧 3px 主色条」——整块换成语义化的浅底 + 描边，
+   信息块读起来像提示卡，而不是一张被贴了标签的便签。 */
 .ts-form-render__notice {
-  padding: 8px 12px;
-  margin-bottom: 16px;
-  font-size: 13px;
-  line-height: 1.7;
-  color: var(--el-text-color-regular);
-  background: var(--el-fill-color-light);
-  border-left: 3px solid var(--el-color-primary);
-  border-radius: 4px;
+  padding: var(--ts-sp-2) var(--ts-sp-3);
+  margin-bottom: var(--ts-sp-4);
+  font-size: var(--ts-fs-caption);
+  line-height: var(--ts-lh-body);
+  color: var(--ts-text-secondary);
+  background: var(--ts-accent-soft);
+  border: 1px solid var(--ts-accent-border);
+  border-radius: var(--ts-r-sm);
   white-space: pre-wrap;
 }
 
@@ -767,7 +769,7 @@ watch(() => props.schema, loadRefOptions)
 
 .ts-form-render__help {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--ts-fs-micro);
 }
 
 @media (max-width: 767px) {
