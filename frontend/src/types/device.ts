@@ -465,6 +465,14 @@ export interface FaultDeviceLookup {
    * 传值必须是启用中的一级分部。来源由服务端判定，不要在前端自报。
    */
   currentDivisionId?: number | null
+  /**
+   * 管理员追加的自定义字段值（V59 / 批次 3.5）。
+   *
+   * <p>只放**新增字段**：故障设备 / 发生时间 / 描述 / 分部仍走上方专用字段。
+   * 值随故障记录落 `device_fault.form_data_json`，同时记下当时的表单版本快照，
+   * 之后管理员换绑表单版本，历史记录仍按当初那一版回显。
+   */
+  formData?: Record<string, unknown> | null
 }
 
 /** 故障处理请求（维修完成 / 报废共用） */

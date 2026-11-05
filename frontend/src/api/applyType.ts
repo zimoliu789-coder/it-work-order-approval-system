@@ -8,7 +8,8 @@ import type {
   ApplyTypePayload,
   ApplyTypeStatusCode,
   BuiltInApplyConfig,
-  BuiltInApplyConfigPayload
+  BuiltInApplyConfigPayload,
+  BuiltInExtraForm
 } from '@/types/applyType'
 
 /**
@@ -130,6 +131,17 @@ export const applyTypeApi = {
       page,
       size
     })
+  },
+
+  /**
+   * 内置类型（借用 / 报修）的自定义字段表单（V59 / 批次 3.5）。
+   *
+   * 权限仅需登录 —— 这是普通员工填表要用的数据。不要改用 `builtInConfig`：
+   * 那个端点要求 `apply_type:manage`，员工调它只会 403，而前端 catch 之后
+   * 表现为「自定义字段区永远不出现」，没有任何报错可查。
+   */
+  builtInExtraForm(typeCode: string) {
+    return http.get<BuiltInExtraForm>(`/apply-types/built-in/${typeCode}/extra-form`)
   }
 }
 

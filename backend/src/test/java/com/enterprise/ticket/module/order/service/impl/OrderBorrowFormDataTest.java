@@ -79,7 +79,7 @@ class OrderBorrowFormDataTest {
         assertEquals(Map.of(), service.resolveBorrowExtraFormData(FORM_VERSION_ID, null));
         assertEquals(Map.of(), service.resolveBorrowExtraFormData(FORM_VERSION_ID, Map.of()));
         verify(formTemplateService, never()).requirePublishedSchema(any());
-        verify(formDataValidator, never()).validate(any(), any());
+        verify(formDataValidator, never()).validateExtraFields(any(), any());
     }
 
     @Test
@@ -104,8 +104,10 @@ class OrderBorrowFormDataTest {
         raw.put("need_adapter", "YES");
         Map<String, Object> result = service.resolveBorrowExtraFormData(FORM_VERSION_ID, raw);
 
-        // 必须走一遍 schema 校验：直调接口塞任意 key 就靠这一步拦
-        verify(formDataValidator).validate(any(), any());
+        // 必须走一遍 schema 校验：直调接口塞任意 key 就靠这一步拦。
+        // 且必须是「只校验自定义字段」那一版 —— 系统字段的值在专用入参上，
+        // 用全量校验会把页面上已填的系统字段报成必填未填。
+        verify(formDataValidator).validateExtraFields(any(), any());
         assertEquals("YES", result.get("need_adapter"));
         // 返回新 map 而非入参本身：调用方后续若改动不会反向污染请求对象
         assertTrue(result != raw);

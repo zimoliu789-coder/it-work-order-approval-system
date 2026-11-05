@@ -3,14 +3,18 @@ package com.enterprise.ticket.module.applytype.service.impl;
 import com.enterprise.ticket.common.api.ErrorCode;
 import com.enterprise.ticket.common.constant.ApplyTypeStatus;
 import com.enterprise.ticket.common.constant.ApprovalMode;
+import com.enterprise.ticket.common.constant.FormFieldType;
 import com.enterprise.ticket.common.constant.RoleCode;
 import com.enterprise.ticket.common.constant.SubmitPermissionType;
 import com.enterprise.ticket.common.exception.BusinessException;
+import com.enterprise.ticket.common.form.FormField;
+import com.enterprise.ticket.common.form.FormSchema;
 import com.enterprise.ticket.common.form.FormSchemaCodec;
 import com.enterprise.ticket.common.util.SecurityUtils;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInExtraFormVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlowVersion;
@@ -505,6 +509,58 @@ class ApplyTypeServiceImplTest {
 
         assertEquals(List.of(BuiltInApplyCatalog.CODE_TRIP, "custom_type"),
                 options.stream().map(ApplyTypeOptionVO::getTypeCode).toList());
+    }
+
+    @Test
+    @DisplayName("内置自定义字段表单：剔除系统字段，只回传管理员新增的字段")
+    void builtInExtraFormKeepsOnlyExtraFields() {
+        ApplyType borrow = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        borrow.setTypeCode(BuiltInApplyCatalog.CODE_BORROW);
+        borrow.setFormTemplateVersionId(88L);
+        when(applyTypeMapper.selectOne(any())).thenReturn(borrow);
+
+        FormField system = new FormField();
+        system.setKey("primary_category_id");
+        system.setLabel("设备类别");
+        system.setType(FormFieldType.DEVICE_CATEGORY.name());
+        system.setRequired(true);
+        system.setSystemField(true);
+        FormField extra = new FormField();
+        extra.setKey("need_adapter");
+        extra.setLabel("是否需要电源适配器");
+        extra.setType(FormFieldType.TEXT.name());
+        FormSchema schema = new FormSchema();
+        schema.setFields(new java.util.ArrayList<>(List.of(system, extra)));
+        when(formTemplateService.requirePublishedSchema(88L)).thenReturn(schema);
+
+        BuiltInExtraFormVO vo = service.builtInExtraForm(BuiltInApplyCatalog.CODE_BORROW);
+
+        assertEquals(88L, vo.getFormTemplateVersionId());
+        // 系统字段若也下发，提交页会再画一遍分类选择器，且与专属控件两份值互相覆盖
+        assertEquals(List.of("need_adapter"),
+                vo.getSchema().getFields().stream().map(FormField::getKey).toList());
+    }
+
+    @Test
+    @DisplayName("内置自定义字段表单：尚未播种时返回空 schema（不报错，提交页整块不渲染）")
+    void builtInExtraFormWithoutVersionReturnsEmpty() {
+        ApplyType borrow = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        borrow.setTypeCode(BuiltInApplyCatalog.CODE_BORROW);
+        borrow.setFormTemplateVersionId(null);
+        when(applyTypeMapper.selectOne(any())).thenReturn(borrow);
+
+        BuiltInExtraFormVO vo = service.builtInExtraForm(BuiltInApplyCatalog.CODE_BORROW);
+
+        assertEquals(null, vo.getFormTemplateVersionId());
+        assertEquals(null, vo.getSchema());
+        verify(formTemplateService, never()).requirePublishedSchema(any());
+    }
+
+    @Test
+    @DisplayName("内置自定义字段表单：编码不是内置类型 → PARAM_INVALID（拼错要立刻报，不能静默空表）")
+    void builtInExtraFormRejectsUnknownCode() {
+        assertEquals(ErrorCode.PARAM_INVALID, codeOf(() -> service.builtInExtraForm("CUSTOM_X")));
+        verify(applyTypeMapper, never()).selectOne(any());
     }
 
     // ------------------------------------------------------------------

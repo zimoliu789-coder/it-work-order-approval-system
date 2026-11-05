@@ -198,7 +198,9 @@ public class DeviceFaultServiceImpl implements DeviceFaultService {
         }
         FormSchema schema = formTemplateService.requirePublishedSchema(formVersionId);
         Map<String, Object> data = new LinkedHashMap<>(raw);
-        formDataValidator.validate(schema, data);
+        // 只校验自定义字段（理由同借用单）：故障设备 / 发生时间 / 描述 / 分部走专用入参，
+        // 全量校验会把页面上已填的系统字段报成「必填未填」。
+        formDataValidator.validateExtraFields(schema, data);
         return new ResolvedFaultForm(formVersionId, data);
     }
 

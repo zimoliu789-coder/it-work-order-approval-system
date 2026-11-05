@@ -8,6 +8,7 @@ import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
 import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInExtraFormVO;
 import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
@@ -129,6 +130,22 @@ public interface ApplyTypeService {
      * 与「这个编码不是内置类型」对外不构成有用信息（避免可枚举口径）一致。
      */
     Long builtInFormVersionId(String typeCode);
+
+    /**
+     * 内置类型（借用 / 报修）的**自定义字段**表单定义（V59 / 批次 3.5）。
+     *
+     * <h2>为什么单独开一个对普通员工开放的取数口</h2>
+     * 提交页要在系统字段之后渲染管理员新增的字段，而 {@code built-in-config} 要求
+     * {@code apply_type:manage} 权限 —— 员工调它只会 403，且前端 catch 吞掉后
+     * 表现为「自定义字段区永远不出现」，事后极难定位。故此处只暴露「要填什么」。
+     *
+     * <p>返回的 schema **不含系统字段**（口径见 {@code SystemFields}）：
+     * 系统字段的控件是专属的，通用渲染器画不出来，下发只会导致同一字段两处填写。
+     *
+     * <p>编码不是内置类型 ⇒ {@code PARAM_INVALID}（与「静默返回空」相比，
+     * 拼错编码时应立刻报错，否则表现为「管理员加了字段、提交页没有」）。
+     */
+    BuiltInExtraFormVO builtInExtraForm(String typeCode);
 
     /**
      * 审批流程预览：用「当前表单数据」算一遍命中路径，告诉提交页

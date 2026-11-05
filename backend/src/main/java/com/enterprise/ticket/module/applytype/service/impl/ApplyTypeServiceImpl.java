@@ -21,6 +21,7 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.form.FormSchema;
 import com.enterprise.ticket.common.form.FormSchemaCodec;
 import com.enterprise.ticket.common.form.FormSchemaValidator;
+import com.enterprise.ticket.common.form.SystemFields;
 import com.enterprise.ticket.common.flow.ApproverRule;
 import com.enterprise.ticket.common.flow.ApproverRuleResolver;
 import com.enterprise.ticket.common.flow.ApproverRuleType;
@@ -41,6 +42,7 @@ import com.enterprise.ticket.module.applytype.dto.BuiltInConfigRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
 import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInExtraFormVO;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
 import com.enterprise.ticket.module.applytype.mapper.ApplyTypeMapper;
@@ -1144,6 +1146,27 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 .eq(ApplyType::getTypeCode, typeCode)
                 .last("LIMIT 1"));
         return type == null ? null : type.getFormTemplateVersionId();
+    }
+
+    @Override
+    public BuiltInExtraFormVO builtInExtraForm(String typeCode) {
+        // 先判「是不是内置类型」：编码拼错时立刻报错，而不是返回一份空 schema ——
+        // 后者在前端表现为「管理员加了字段、提交页永远没有」，且没有任何报错可查。
+        if (BuiltInApplyCatalog.of(typeCode) == null) {
+            throw new BusinessException(ErrorCode.PARAM_INVALID, "不是内置申请类型：" + typeCode);
+        }
+        BuiltInExtraFormVO vo = new BuiltInExtraFormVO();
+        vo.setTypeCode(typeCode);
+        Long versionId = builtInFormVersionId(typeCode);
+        vo.setFormTemplateVersionId(versionId);
+        if (versionId == null) {
+            // 尚未播种（升级未跑初始化）：整块不渲染，提交也不带自定义字段，
+            // 与 OrderServiceImpl#resolveBorrowExtraFormData 的容忍口径保持一致。
+            return vo;
+        }
+        vo.setSchema(SystemFields.extraSchemaOf(
+                formTemplateService.requirePublishedSchema(versionId)));
+        return vo;
     }
 
     /** 内置类型的默认借用流程：与 OrderServiceImpl 的预置流程同源，阈值现读系统参数 */

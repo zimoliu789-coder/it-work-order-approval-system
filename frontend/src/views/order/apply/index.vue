@@ -6,6 +6,8 @@ import { uploadAttachments } from '@/api/attachment'
 import { applyTypeApi } from '@/api/applyType'
 import { orderApi } from '@/api/order'
 import PendingAttachmentPicker from '@/components/PendingAttachmentPicker.vue'
+import FormRenderer from '@/components/FormRenderer.vue'
+import { dataFields, validateFormData, type FormData, type FormSchema } from '@/types/form'
 import { useResponsive } from '@/composables/useResponsive'
 import type { ApplyTypeOption } from '@/types/applyType'
 import {
@@ -108,6 +110,8 @@ function selectCustomType(option: ApplyTypeOption): void {
 function selectType(type: ApplyType): void {
   applyType.value = type
   step.value = 'form'
+  // 两种内置类型都可能有管理员追加的自定义字段，进表单时拉一次
+  void loadExtraForm(type)
   if (type === 'FAULT_REPORT') {
     // 只加载当前模式需要的数据：另一个模式在切换时按需加载（省一次无用请求）
     if (faultMode.value === 'MINE') {
@@ -123,6 +127,50 @@ function selectType(type: ApplyType): void {
 function backToSelect(): void {
   applyType.value = null
   step.value = 'select'
+}
+
+// ------------------------------------------------------------------
+// 内置类型的自定义字段（V59 / 批次 3.5）
+//
+// 改造前是「能配不能用」：管理员在配置面板给借用 / 报修加字段能保存发布，
+// 但提交页是硬编码的，员工那边一个字都看不到。
+//
+// 现在按后端下发的 schema 渲染一段「补充信息」，值随提交走 formData
+// （借用落 order_form_data，报修落 device_fault.form_data_json）。
+//
+// 为什么后端只下发**自定义字段**：系统字段（分类 / 型号 / 归还日期 / 故障设备……）
+// 的控件是专属的 —— 三级联动、扫码查设备，通用渲染器表达不了；
+// 若两处都画，同一字段会出现两个输入框，提交时谁覆盖谁全看代码顺序。
+// ------------------------------------------------------------------
+const extraSchema = ref<FormSchema | null>(null)
+const extraData = ref<FormData>({})
+/** 已加载过的类型编码：来回切换类型不重复请求 */
+let extraLoadedFor: ApplyType | null = null
+const extraErrors = computed(() => validateFormData(extraSchema.value, extraData.value))
+const hasExtraFields = computed(() => dataFields(extraSchema.value).length > 0)
+
+async function loadExtraForm(type: ApplyType): Promise<void> {
+  if (extraLoadedFor === type) {
+    return
+  }
+  extraLoadedFor = type
+  extraSchema.value = null
+  extraData.value = {}
+  try {
+    const res = await applyTypeApi.builtInExtraForm(type)
+    extraSchema.value = res.schema ?? null
+  } catch {
+    // 拉不到就整块不渲染：宁可少一段补充信息，也不能让员工卡在「字段加载失败」上提交不了。
+    // 服务端对「没有 formData」是放行的（见 resolveBorrowExtraFormData），所以这条降级是安全的。
+    extraSchema.value = null
+  }
+}
+
+/** 自定义字段的第一条错误（提交前提示用；服务端仍会重校验） */
+function firstExtraError(): string | null {
+  const errors = extraErrors.value
+  const first = Object.keys(errors)[0]
+  return first ? errors[first] : null
 }
 
 // ------------------------------------------------------------------
@@ -526,6 +574,11 @@ async function handleSubmit(): Promise<void> {
     ElMessage.warning(errors[0])
     return
   }
+  const extraError = firstExtraError()
+  if (extraError) {
+    ElMessage.warning(extraError)
+    return
+  }
   submitting.value = true
   try {
     const orderId = await orderApi.create({
@@ -540,7 +593,10 @@ async function handleSubmit(): Promise<void> {
       expectedReturnDate: form.expectedReturnDate,
       // 当前所在分部（V54）：只在员工改过时传自己选的值；
       // 没改过就传预填值（等价于「接受默认」），来源一律交服务端比对判定
-      currentDivisionId: divisionId.value
+      currentDivisionId: divisionId.value,
+      // 管理员追加的自定义字段（V59）：只传这一份，系统字段仍在上面各专用入参里。
+      // 没有字段时不传（传 {} 与不传等价，但少一个字段更干净）
+      formData: hasExtraFields.value ? extraData.value : undefined
     })
     // 申请附件：随单提交；附件可选，失败不阻断申请
     const attached =
@@ -569,6 +625,8 @@ function resetFormAfterSubmit(): void {
   form.reason = ''
   form.expectedReturnDate = null
   applyFiles.value = []
+  // 自定义字段的值随本单结束清空；schema 保留（再次借用还要用）
+  extraData.value = {}
   // 已成功提交，草稿使命完成，清除避免下次进入又恢复成旧内容
   clearDraft()
   // 表单已清空，路径预览随之失效（下一次选择类别时会重新拉取）
@@ -800,6 +858,11 @@ async function submitFault(): Promise<void> {
     ElMessage.warning('请选择故障发生时间')
     return
   }
+  const extraError = firstExtraError()
+  if (extraError) {
+    ElMessage.warning(extraError)
+    return
+  }
   faultSubmitting.value = true
   try {
     const faultId = await deviceFaultApi.report({
@@ -810,7 +873,9 @@ async function submitFault(): Promise<void> {
       faultDescription: faultForm.faultDescription.trim(),
       occurredAt: faultForm.occurredAt,
       // 报修不产生工单，分部只能落在故障记录上（V54）—— 否则「各分部报修量」没有数据源
-      currentDivisionId: divisionId.value
+      currentDivisionId: divisionId.value,
+      // 管理员追加的自定义字段（V59）：落 device_fault.form_data_json + 版本快照指针
+      formData: hasExtraFields.value ? extraData.value : undefined
     })
     // 故障照片：绑定故障记录 id，随登记一并上传；照片可选
     const attached =
@@ -838,6 +903,8 @@ function resetFaultForm(): void {
   faultForm.faultDescription = ''
   faultForm.occurredAt = ''
   faultFiles.value = []
+  // 自定义字段的值随本单结束清空；schema 保留（同一类型再报修还要用）
+  extraData.value = {}
   faultAssetNo.value = ''
   faultLookupResult.value = null
   // 列表缓存一并清掉：下次进入报修时重新拉，才能看到刚变过状态的那台
@@ -1060,6 +1127,13 @@ onBeforeUnmount(() => {
               <div class="ts-text-hint">{{ divisionHint }}</div>
             </el-form-item>
 
+            <!-- 管理员追加的自定义字段（V59）：排在系统字段之后、附件之前。
+                 系统字段仍由上面的专属控件负责（三级联动 / 编号校验），这里只画新增字段。 -->
+            <template v-if="hasExtraFields">
+              <el-divider content-position="left">补充信息</el-divider>
+              <FormRenderer v-model="extraData" :schema="extraSchema" :errors="extraErrors" />
+            </template>
+
             <!-- 申请附件（随单提交，可选；需求方决策 3 保留） -->
             <el-form-item label="申请附件">
               <PendingAttachmentPicker v-model="applyFiles" biz-type="APPLY_ATTACHMENT" label="随申请提交的材料" />
@@ -1248,6 +1322,13 @@ onBeforeUnmount(() => {
                 placeholder="请描述故障现象（如：屏幕出现竖线、无法开机）"
               />
             </el-form-item>
+
+            <!-- 管理员追加的自定义字段（V59）：报修同样只画新增字段，
+                 设备 / 时间 / 描述 / 分部仍是上面的专属控件。 -->
+            <template v-if="hasExtraFields">
+              <el-divider content-position="left">补充信息</el-divider>
+              <FormRenderer v-model="extraData" :schema="extraSchema" :errors="extraErrors" />
+            </template>
 
             <!-- 故障照片（随登记上传，仅图片） -->
             <el-form-item label="故障照片">

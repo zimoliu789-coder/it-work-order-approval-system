@@ -263,3 +263,19 @@ export interface ApplyConfigCreatePayload {
   /** 审批流程定义（第三步配的；由钉钉式线性编辑器产出标准 FlowDefinition） */
   flow: FlowDefinition
 }
+
+/**
+ * 内置类型（借用 / 报修）的**自定义字段**表单定义（V59 / 批次 3.5）。
+ *
+ * `schema` 只含管理员新增的字段：系统字段（一级分类 / 型号 / 故障设备……）的控件是专属的
+ * （三级联动、扫码查设备），由提交页自己渲染，不走通用渲染器 —— 两处都画会让同一字段
+ * 出现两个输入框，提交时谁覆盖谁全看代码顺序。
+ *
+ * `formTemplateVersionId` 为空表示该类型尚未播种表单（升级未跑初始化）：
+ * 此时 `schema` 也为空，提交页整块不渲染、提交不带 `formData`，后端照常受理。
+ */
+export interface BuiltInExtraForm {
+  typeCode: string
+  formTemplateVersionId?: number | null
+  schema?: FormSchema | null
+}

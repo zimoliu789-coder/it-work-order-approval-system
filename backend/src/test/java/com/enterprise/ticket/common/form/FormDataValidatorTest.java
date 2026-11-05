@@ -431,6 +431,50 @@ class FormDataValidatorTest {
     }
 
     // ------------------------------------------------------------------
+    // validateExtraFields（V59：内置类型只校验自定义字段）
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("★ validateExtraFields：跳过必填的系统字段，只校验管理员新增的字段")
+    void validateExtraFieldsSkipsSystemFields() {
+        // 借用单的真实形态：系统字段（分类）必填，值走专用入参；自定义字段在 formData 里。
+        FormField category = field(FormFieldType.DEVICE_CATEGORY.name(), "primary_category_id", "设备类别");
+        category.setRequired(true);
+        category.setSystemField(true);
+        FormField extra = field(FormFieldType.TEXT.name(), "need_adapter", "是否需要电源适配器");
+
+        // formData 里没有系统字段 —— 若走全量校验，这里必报「设备类别为必填项」，
+        // 而页面上员工明明已经选了类别。
+        validator.validateExtraFields(schema(category, extra), data("need_adapter", "需要"));
+    }
+
+    @Test
+    @DisplayName("★ validateExtraFields：schema 之外的 key 仍然拒绝（不因跳过系统字段而放松）")
+    void validateExtraFieldsStillRejectsUndefinedKey() {
+        FormField category = field(FormFieldType.DEVICE_CATEGORY.name(), "primary_category_id", "设备类别");
+        category.setSystemField(true);
+        FormField extra = field(FormFieldType.TEXT.name(), "need_adapter", "是否需要电源适配器");
+
+        BusinessException ex = org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
+                () -> validator.validateExtraFields(schema(category, extra), data("injected", "x")));
+        assertEquals(ErrorCode.FORM_DATA_INVALID, ex.getErrorCode());
+        // 静默丢弃会变成「用户填了、系统没存」，必须明确告诉调用方
+        assertTrue(ex.getMessage().contains("injected"));
+    }
+
+    @Test
+    @DisplayName("validate：系统字段在全量校验里仍然必填（跳过逻辑不能污染原方法）")
+    void validateStillRequiresSystemField() {
+        FormField category = field(FormFieldType.DEVICE_CATEGORY.name(), "primary_category_id", "设备类别");
+        category.setRequired(true);
+        category.setSystemField(true);
+
+        BusinessException ex = org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
+                () -> validator.validate(schema(category), Map.of()));
+        assertTrue(ex.getMessage().contains("设备类别"));
+    }
+
+    // ------------------------------------------------------------------
     // 辅助
     // ------------------------------------------------------------------
 

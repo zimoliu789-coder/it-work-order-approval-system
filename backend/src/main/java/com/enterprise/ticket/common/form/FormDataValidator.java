@@ -89,6 +89,39 @@ public class FormDataValidator {
      * @return 错误描述列表；空表示全部通过
      */
     public List<String> validateAndCollect(FormSchema schema, Map<String, Object> data) {
+        return collect(schema, data, false);
+    }
+
+    /**
+     * 只校验**自定义字段**（跳过 {@code systemField}），用于内置类型（借用 / 报修）。
+     *
+     * <h2>为什么内置类型不能走全量校验</h2>
+     * 借用 / 报修的表单里，系统字段（一级分类 / 型号 / 故障设备 / 发生时间……）的值由
+     * 提交页的**专属控件**填写，走的是 {@code OrderCreateRequest} / {@code DeviceFaultRequest}
+     * 的专用入参；落存档的 {@code formData} 里**只有管理员新增的字段**。
+     *
+     * <p>若这里仍按完整 schema 校验这份「只含新增字段」的数据，每一个必填的系统字段都会报
+     * 「为必填项」—— 员工把界面填满也提交不了，且错误文案指向的字段在页面上明明已经填了。
+     * 系统字段该不该填、填得对不对，由业务层的专用入参校验负责（分类层级、日期不早于今天等），
+     * 两处各管一段，不重复也不互相覆盖。
+     *
+     * <p>「未定义的字段」仍然拒绝：无论是否跳过系统字段，往表单里塞 schema 之外的 key
+     * 都是客户端错误，静默存下来只会在详情页变成看不懂的空白行。
+     */
+    public void validateExtraFields(FormSchema schema, Map<String, Object> data) {
+        List<String> errors = collect(schema, data, true);
+        if (!errors.isEmpty()) {
+            List<String> shown = errors.size() > 5 ? errors.subList(0, 5) : errors;
+            String suffix = errors.size() > 5 ? "（另有 " + (errors.size() - 5) + " 项未通过，请逐项检查）" : "";
+            throw new BusinessException(ErrorCode.FORM_DATA_INVALID,
+                    "表单校验未通过：" + String.join("；", shown) + suffix);
+        }
+    }
+
+    /**
+     * @param skipSystemFields 是否跳过 {@code systemField}（内置类型传 true）
+     */
+    private List<String> collect(FormSchema schema, Map<String, Object> data, boolean skipSystemFields) {
         List<String> errors = new ArrayList<>();
         Map<String, Object> safeData = data == null ? Map.of() : data;
         List<FormField> dataFields = schema.getFields().stream()
@@ -97,6 +130,7 @@ public class FormDataValidator {
                     FormFieldType type = FormFieldType.of(field.getType());
                     return type != null && type.isDataField();
                 })
+                .filter(field -> !skipSystemFields || !Boolean.TRUE.equals(field.getSystemField()))
                 .toList();
 
         // 未定义的字段：直接拒绝而不是静默丢弃。

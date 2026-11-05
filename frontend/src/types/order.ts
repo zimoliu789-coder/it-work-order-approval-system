@@ -776,6 +776,15 @@ export interface OrderPayload {
    * 否则服务端返回参数错误。<b>只传 id，不要传来源</b> —— 来源由服务端比对得出。
    */
   currentDivisionId?: number | null
+  /**
+   * 管理员追加的自定义字段值（V59 / 批次 3.5）。
+   *
+   * <p>只放**新增字段**：系统字段（分类 / 型号 / 归还日期 / 用途 / 分部）仍走上方专用字段，
+   * 两处各司其职。值随工单落 `order_form_data`，详情页按「那时的版本」回显。
+   *
+   * <p>没有自定义字段时不传（与传 `{}` 等价，但少一个字段更干净）。
+   */
+  formData?: Record<string, unknown> | null
 }
 
 /** 延期申请提交载荷（，） */

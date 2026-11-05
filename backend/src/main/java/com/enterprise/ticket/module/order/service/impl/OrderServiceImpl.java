@@ -22,6 +22,7 @@ import com.enterprise.ticket.common.exception.BusinessException;
 import com.enterprise.ticket.common.form.FormDataValidator;
 import com.enterprise.ticket.common.form.FormSchema;
 import com.enterprise.ticket.common.form.FormSchemaCodec;
+import com.enterprise.ticket.common.form.SystemFields;
 import com.enterprise.ticket.common.flow.ApproverRule;
 import com.enterprise.ticket.common.flow.ApproverRuleResolver;
 import com.enterprise.ticket.common.flow.ApproverRuleType;
@@ -952,7 +953,9 @@ public class OrderServiceImpl implements OrderService {
         }
         FormSchema schema = formTemplateService.requirePublishedSchema(formVersionId);
         Map<String, Object> data = new LinkedHashMap<>(raw);
-        formDataValidator.validate(schema, data);
+        // 只校验自定义字段：系统字段（分类 / 型号 / 分部 / 归还日期 / 用途）的值在专用入参上，
+        // 这份 map 里本来就没有它们；按完整 schema 校验会把「已填」误报成「必填」。
+        formDataValidator.validateExtraFields(schema, data);
         return data;
     }
 
@@ -1201,7 +1204,10 @@ public class OrderServiceImpl implements OrderService {
         vo.setApplyTypeName(applyTypeNameOf(order.getApplyTypeId()));
         vo.setFormTemplateVersionId(row.getFormTemplateVersionId());
         vo.setFormTemplateVersionNo(version.getVersionNo());
-        vo.setSchema(version.getSchema());
+        // V59：内置类型的快照里混着系统字段，它们的信息已在工单主信息区展示
+        // （类别 / 型号 / 归还日期）；这里只回显管理员新增的字段，
+        // 否则详情页会多出一排值为空的系统字段。
+        vo.setSchema(SystemFields.extraSchemaOf(version.getSchema()));
         vo.setData(FormSchemaCodec.readData(row.getFormDataJson()));
         vo.setCreatedAt(row.getCreatedAt());
         return vo;

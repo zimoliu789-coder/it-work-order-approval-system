@@ -14,6 +14,7 @@ import com.enterprise.ticket.common.api.PageResult;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeVO;
 import com.enterprise.ticket.module.applytype.dto.vo.BuiltInConfigVO;
+import com.enterprise.ticket.module.applytype.dto.vo.BuiltInExtraFormVO;
 import com.enterprise.ticket.module.applytype.dto.vo.FlowPreviewVO;
 import com.enterprise.ticket.module.applytype.service.ApplyTypeService;
 import jakarta.validation.Valid;
@@ -78,6 +79,23 @@ public class ApplyTypeController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<ApplyTypeVO> detail(@PathVariable Long id) {
         return ApiResponse.success(applyTypeService.getDetail(id));
+    }
+
+    /**
+     * 内置类型（借用 / 报修）的**自定义字段**表单定义，供提交页渲染系统字段之后的那一段。
+     *
+     * <p>仅要求登录：这是普通员工填表要用的数据，他们不会有任何管理权限码。
+     * 与 {@code /{id}/built-in-config} 的区别在于「给谁用」——那个是管理员的面板，
+     * 带流程模板、通知对象等后台概念，员工调它只会 403。
+     *
+     * <p>路径多两段且以字面量 {@code /built-in} 开头，与 {@code /{id}}（Long）不冲突。
+     * 返回的 schema 已剔除系统字段：那些字段的控件是专属的（三级联动 / 扫码查设备），
+     * 下发只会让同一字段在两处填写、值互相覆盖。
+     */
+    @GetMapping("/built-in/{typeCode}/extra-form")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<BuiltInExtraFormVO> builtInExtraForm(@PathVariable String typeCode) {
+        return ApiResponse.success(applyTypeService.builtInExtraForm(typeCode));
     }
 
     /**

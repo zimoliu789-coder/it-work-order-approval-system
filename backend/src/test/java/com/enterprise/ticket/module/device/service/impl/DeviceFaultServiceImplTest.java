@@ -394,8 +394,10 @@ class DeviceFaultServiceImplTest {
 
         service.report(request);
 
-        // 必须走一遍 schema 校验：不校验就意味着任何人都能往 form_data_json 里塞任意 key
-        verify(formDataValidator).validate(any(), any());
+        // 必须走一遍 schema 校验：不校验就意味着任何人都能往 form_data_json 里塞任意 key。
+        // 用「只校验自定义字段」那一版：故障设备 / 时间 / 描述走专用入参，
+        // 全量校验会把页面上已填的系统字段报成必填未填。
+        verify(formDataValidator).validateExtraFields(any(), any());
         ArgumentCaptor<DeviceFault> captor = ArgumentCaptor.forClass(DeviceFault.class);
         verify(faultMapper).insert(captor.capture());
         assertEquals(77L, captor.getValue().getFormTemplateVersionId(),
