@@ -2,6 +2,7 @@ package com.enterprise.ticket.module.device.service;
 
 import com.enterprise.ticket.module.device.dto.DeviceCategorySaveRequest;
 import com.enterprise.ticket.module.device.dto.DeviceCategorySortRequest;
+import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryOptionVO;
 import com.enterprise.ticket.module.device.dto.vo.DeviceCategoryVO;
 
 import java.util.List;

@@ -12,6 +12,7 @@ import com.enterprise.ticket.module.applytype.dto.ApplyTypeSaveRequest;
 import com.enterprise.ticket.module.applytype.dto.ApplyTypeSortRequest;
 import com.enterprise.ticket.module.applytype.dto.vo.ApplyTypeOptionVO;
 import com.enterprise.ticket.module.applytype.entity.ApplyType;
+import com.enterprise.ticket.module.applytype.support.BuiltInApplyCatalog;
 import com.enterprise.ticket.module.approvalflow.entity.ApprovalFlowVersion;
 import com.enterprise.ticket.module.approvalflow.mapper.ApprovalFlowVersionMapper;
 import com.enterprise.ticket.module.approvalflow.service.ApprovalFlowService;
@@ -478,6 +479,32 @@ class ApplyTypeServiceImplTest {
 
         assertEquals(1, options.size());
         assertEquals("all_type", options.get(0).getTypeCode());
+    }
+
+    @Test
+    @DisplayName("可提交列表：借用/报修有专属提交页，不再下发；出差仍走动态表单下发")
+    void listEnabledExcludesBuiltInWithDedicatedForm() {
+        // V59：借用 / 报修也播了真实表单模板，排除条件「内置且无模板」不再能挡住它们。
+        // 若下发，提交页会出现同名第二张卡，点进去是没有分类联动与交付绑定的通用动态表单。
+        ApplyType borrow = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        borrow.setTypeCode(BuiltInApplyCatalog.CODE_BORROW);
+        borrow.setBuiltIn(true);
+        ApplyType fault = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        fault.setTypeCode(BuiltInApplyCatalog.CODE_FAULT_REPORT);
+        fault.setBuiltIn(true);
+        ApplyType trip = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        trip.setTypeCode(BuiltInApplyCatalog.CODE_TRIP);
+        trip.setBuiltIn(true);
+        ApplyType custom = type(ApplyTypeStatus.ENABLED.name(), SubmitPermissionType.ALL.name(), List.of());
+        custom.setTypeCode("custom_type");
+
+        when(applyTypeMapper.selectList(any())).thenReturn(List.of(borrow, fault, trip, custom));
+        when(userMapper.selectById(USER_ID)).thenReturn(user(RoleCode.USER, null));
+
+        List<ApplyTypeOptionVO> options = service.listEnabledForCurrentUser();
+
+        assertEquals(List.of(BuiltInApplyCatalog.CODE_TRIP, "custom_type"),
+                options.stream().map(ApplyTypeOptionVO::getTypeCode).toList());
     }
 
     // ------------------------------------------------------------------

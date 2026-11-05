@@ -181,6 +181,26 @@ public final class BuiltInApplyCatalog {
     }
 
     /**
+     * 该内置类型是否有**专属提交页**（V59 收口判据）。
+     *
+     * <h2>为什么需要这个判据</h2>
+     * V59 给借用 / 报修也播了真实表单模板，于是 {@code form_template_version_id} 不再为 NULL。
+     * 而 {@code listEnabledForCurrentUser} 的排除条件是「内置且**没有**表单模板」——
+     * 这条口径是为出差申请（V53）立的：它没有专属页面，必须靠本列表进动态表单。
+     * 直接沿用到 V59 会把借用 / 报修一并下发，后果是提交页同时出现
+     * 「内置卡片」与「同名自定义卡片」，后者点进去是 {@code custom.vue} 的通用动态表单：
+     * 没有一级分类三级联动、没有扫码预选、没有交付绑定 ⇒ 提交出的借用单
+     * {@code primaryCategoryId} 为空，交付时无从裁决发哪一台。
+     *
+     * <p>因此这里显式区分「表单存在」与「表单可走通用链路」：
+     * 借用 / 报修的提交页仍是带分类联动、扫码、两模式切换的专属页面，
+     * 等它们真正迁到动态表单后，把对应编码从这里移出即可（届时删除本方法）。
+     */
+    public static boolean hasDedicatedForm(String typeCode) {
+        return CODE_BORROW.equals(typeCode) || CODE_FAULT_REPORT.equals(typeCode);
+    }
+
+    /**
      * 内置类型自带的表单 schema；没有表单模板的内置类型返回 {@code null}。
      *
      * <h2>V59 / 批次 3.5：借用与报修从此也有 schema</h2>

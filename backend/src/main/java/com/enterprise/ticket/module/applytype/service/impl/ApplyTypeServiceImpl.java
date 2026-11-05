@@ -215,6 +215,11 @@ public class ApplyTypeServiceImpl implements ApplyTypeService {
                 .orderByAsc(ApplyType::getId));
         // 权限过滤放在服务端：前端过滤等于没过滤（直调接口即可绕过）
         return types.stream()
+                // V59 收口：有专属提交页的内置类型（借用 / 报修）不从这里下发。
+                // 它们的表单模板虽已播种，提交页仍是带分类联动 / 扫码 / 两模式切换的专属页面；
+                // 若一并下发，提交页会出现同名第二张卡，点进去走通用动态表单 ——
+                // 交出的借用单没有 primaryCategoryId，交付时无法裁决发哪一台。
+                .filter(type -> !BuiltInApplyCatalog.hasDedicatedForm(type.getTypeCode()))
                 .filter(type -> canSubmit(type, currentUser))
                 .map(this::toOptionVO)
                 .toList();
